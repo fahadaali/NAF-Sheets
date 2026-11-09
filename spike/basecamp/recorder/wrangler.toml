@@ -1,0 +1,12 @@
+# Phase 0 only: records Basecamp webhook deliveries for the live test.
+# Secrets (never in this file):
+#   npx wrangler secret put RECORDER_SECRET   # random, goes in the webhook URL path
+#   npx wrangler secret put READ_TOKEN        # random, used by live-test.mjs to read events
+name = "naf-sheets-phase0-recorder"
+main = "src/index.js"
+compatibility_date = "2026-07-27"
+
+# npx wrangler kv namespace create naf-sheets-phase0-events
+[[kv_namespaces]]
+binding = "EVENTS"
+id = "REPLACE_WITH_KV_ID"

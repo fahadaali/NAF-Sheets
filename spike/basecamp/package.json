@@ -1,0 +1,9 @@
+{
+  "name": "naf-sheets-spike-basecamp",
+  "private": true,
+  "type": "module",
+  "description": "Phase 0 live Basecamp test kit: webhook recorder Worker + CLI that records which webhook kinds arrive for each UI change.",
+  "scripts": {
+    "test": "node --test \"test/*.test.mjs\""
+  }
+}
