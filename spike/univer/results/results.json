@@ -1,0 +1,157 @@
+{
+  "rtl": {
+    "dir": "rtl",
+    "forceAlign": false,
+    "probeIsolate": false,
+    "fontLoaded": true,
+    "conditionalFormatting": 1,
+    "dataValidationDropdown": "listMultiple",
+    "filter": true,
+    "note": "ملاحظة على الخلية: الجلسة الساعة 10:30",
+    "hyperlink": "report.pdf",
+    "sortCommandAvailable": true,
+    "sortAndUndo": {
+      "before": "إعداد خطة الاتصال للربع الأول",
+      "afterSort": "تصميم إنفوجرافيك النظام الجديد",
+      "afterUndo": "إعداد خطة الاتصال للربع الأول"
+    },
+    "crossSheetFormula": {
+      "firstTask": "إعداد خطة الاتصال للربع الأول",
+      "doneCount": 2,
+      "taskCount": 5,
+      "lenA6": 23
+    },
+    "a6ViaFacade": "\"نشر المقال على LinkedIn\"",
+    "a6RawModel": "\"نشر المقال على LinkedIn\"",
+    "rightToLeftModel": 1,
+    "errors": [],
+    "consoleErrors": [],
+    "externalHosts": [
+      "cdn.jsdelivr.net"
+    ]
+  },
+  "ltr": {
+    "dir": "ltr",
+    "forceAlign": false,
+    "probeIsolate": false,
+    "fontLoaded": true,
+    "conditionalFormatting": 1,
+    "dataValidationDropdown": "listMultiple",
+    "filter": true,
+    "note": "ملاحظة على الخلية: الجلسة الساعة 10:30",
+    "hyperlink": "report.pdf",
+    "sortCommandAvailable": true,
+    "sortAndUndo": {
+      "before": "إعداد خطة الاتصال للربع الأول",
+      "afterSort": "تصميم إنفوجرافيك النظام الجديد",
+      "afterUndo": "إعداد خطة الاتصال للربع الأول"
+    },
+    "crossSheetFormula": {
+      "firstTask": "إعداد خطة الاتصال للربع الأول",
+      "doneCount": 2,
+      "taskCount": 5,
+      "lenA6": 23
+    },
+    "a6ViaFacade": "\"نشر المقال على LinkedIn\"",
+    "a6RawModel": "\"نشر المقال على LinkedIn\"",
+    "rightToLeftModel": 0,
+    "errors": [],
+    "consoleErrors": [],
+    "externalHosts": [
+      "cdn.jsdelivr.net"
+    ]
+  },
+  "rtl-align-right": {
+    "dir": "rtl",
+    "forceAlign": true,
+    "probeIsolate": false,
+    "fontLoaded": true,
+    "conditionalFormatting": 1,
+    "dataValidationDropdown": "listMultiple",
+    "filter": true,
+    "note": "ملاحظة على الخلية: الجلسة الساعة 10:30",
+    "hyperlink": "report.pdf",
+    "sortCommandAvailable": true,
+    "sortAndUndo": {
+      "before": "إعداد خطة الاتصال للربع الأول",
+      "afterSort": "تصميم إنفوجرافيك النظام الجديد",
+      "afterUndo": "إعداد خطة الاتصال للربع الأول"
+    },
+    "crossSheetFormula": {
+      "firstTask": "إعداد خطة الاتصال للربع الأول",
+      "doneCount": 2,
+      "taskCount": 5,
+      "lenA6": 23
+    },
+    "a6ViaFacade": "\"نشر المقال على LinkedIn\"",
+    "a6RawModel": "\"نشر المقال على LinkedIn\"",
+    "rightToLeftModel": 1,
+    "errors": [],
+    "consoleErrors": [],
+    "externalHosts": [
+      "cdn.jsdelivr.net"
+    ]
+  },
+  "rtl-align-right-isolate": {
+    "dir": "rtl",
+    "forceAlign": true,
+    "probeIsolate": true,
+    "fontLoaded": true,
+    "conditionalFormatting": 1,
+    "dataValidationDropdown": "listMultiple",
+    "filter": true,
+    "note": "ملاحظة على الخلية: الجلسة الساعة 10:30",
+    "hyperlink": "report.pdf",
+    "sortCommandAvailable": true,
+    "sortAndUndo": {
+      "before": "إعداد خطة الاتصال للربع الأول",
+      "afterSort": "تصميم إنفوجرافيك النظام الجديد",
+      "afterUndo": "إعداد خطة الاتصال للربع الأول"
+    },
+    "crossSheetFormula": {
+      "firstTask": "إعداد خطة الاتصال للربع الأول",
+      "doneCount": 2,
+      "taskCount": 5,
+      "lenA6": 23
+    },
+    "a6ViaFacade": "\"⁧نشر المقال على LinkedIn⁩\"",
+    "a6RawModel": "\"نشر المقال على LinkedIn\"",
+    "rightToLeftModel": 1,
+    "errors": [],
+    "consoleErrors": [],
+    "externalHosts": [
+      "cdn.jsdelivr.net"
+    ]
+  },
+  "rtl-bidi-marks": {
+    "dir": "rtl",
+    "forceAlign": true,
+    "probeIsolate": false,
+    "fontLoaded": true,
+    "conditionalFormatting": 1,
+    "dataValidationDropdown": "listMultiple",
+    "filter": true,
+    "note": "ملاحظة على الخلية: الجلسة الساعة 10:30",
+    "hyperlink": "report.pdf",
+    "sortCommandAvailable": true,
+    "sortAndUndo": {
+      "before": "إعداد خطة الاتصال للربع الأول",
+      "afterSort": "تصميم إنفوجرافيك النظام الجديد",
+      "afterUndo": "إعداد خطة الاتصال للربع الأول"
+    },
+    "crossSheetFormula": {
+      "firstTask": "إعداد خطة الاتصال للربع الأول",
+      "doneCount": 2,
+      "taskCount": 11,
+      "lenA6": 23
+    },
+    "a6ViaFacade": "\"نشر المقال على LinkedIn\"",
+    "a6RawModel": "\"نشر المقال على LinkedIn\"",
+    "rightToLeftModel": 1,
+    "errors": [],
+    "consoleErrors": [],
+    "externalHosts": [
+      "cdn.jsdelivr.net"
+    ]
+  }
+}

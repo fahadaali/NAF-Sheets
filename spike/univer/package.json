@@ -1,0 +1,35 @@
+{
+  "name": "naf-sheets-spike-univer",
+  "private": true,
+  "type": "module",
+  "description": "Phase 0 spike: verify Univer open-source features required by the spec (RTL, Arabic, conditional formatting, filter, data validation, cross-sheet formulas).",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview --port 4173 --strictPort",
+    "verify": "node verify.mjs",
+    "typecheck": "tsc --noEmit --skipLibCheck --module esnext --moduleResolution bundler --target es2022 --lib es2022,dom src/main.ts",
+    "reference": "node bidi-reference.mjs results",
+    "closeups": "node closeups.mjs"
+  },
+  "dependencies": {
+    "@dawod/thmanyah-font-web": "1.2.0",
+    "@univerjs/core": "1.4.0",
+    "@univerjs/preset-sheets-conditional-formatting": "1.4.0",
+    "@univerjs/preset-sheets-core": "1.4.0",
+    "@univerjs/preset-sheets-data-validation": "1.4.0",
+    "@univerjs/preset-sheets-filter": "1.4.0",
+    "@univerjs/preset-sheets-hyper-link": "1.4.0",
+    "@univerjs/preset-sheets-note": "1.4.0",
+    "@univerjs/preset-sheets-sort": "1.4.0",
+    "@univerjs/presets": "1.4.0",
+    "@univerjs/sheets": "1.4.0",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "rxjs": "7.8.2"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3",
+    "vite": "7.1.12"
+  }
+}
