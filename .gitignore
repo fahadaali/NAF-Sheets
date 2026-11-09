@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.wrangler/
+.dev.vars
+# Phase 0 Basecamp live test: holds IDs from the test account
+spike/basecamp/.live-test-state.json
+spike/basecamp/live-test-report.md
