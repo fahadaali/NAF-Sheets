@@ -1,1 +1,3 @@
 export * from './rtl-grid'
+export * from './rtl-text'
+export * from './bidi'

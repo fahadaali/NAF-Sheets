@@ -6,7 +6,11 @@
 // touch at the cell's on-screen position) and asserts against Univer's own
 // state, or against the pixels actually on screen. Where a mirrored result must
 // look exactly like the unmirrored grid (rotated text, images), the two are
-// compared pixel by pixel.
+// compared pixel by pixel. Document text (cell editor, formula bar, rich-text
+// cells) is compared with the browser's own bidi layout of the same string in
+// a dir="rtl" element: the order of what the canvas really painted (every
+// fillText call, recorded beneath the layer) must equal the order of the same
+// units in the browser's layout.
 //
 // Run while `npm run harness:preview` is serving on :4175.
 //   BROWSER=chromium|firefox|webkit   (default chromium; CI runs all three)
@@ -23,8 +27,30 @@ const TAG = BROWSER === 'chromium' ? '' : `-${BROWSER}`
 
 const browser = await playwright[BROWSER].launch()
 const pageErrors = []
-const openPage = async (query, contextOptions = {}) => {
+// Installed before the page's own scripts, so it wraps the browser's own
+// fillText (beneath the layer): it records what really reaches a canvas, in
+// device pixels of that canvas. Inert unless a test turns recording on.
+const FILLTEXT_RECORDER = () => {
+  const native = CanvasRenderingContext2D.prototype.fillText
+  window.__fillTextLog = null
+  CanvasRenderingContext2D.prototype.fillText = function (text, x, y, maxWidth) {
+    const log = window.__fillTextLog
+    if (log && (log.canvas === null || log.canvas === this.canvas)) {
+      const w = this.measureText(String(text)).width
+      const dir = this.direction === 'inherit' ? getComputedStyle(this.canvas).direction : this.direction
+      const a = this.textAlign
+      const right = a === 'right' || (a === 'end' && dir !== 'rtl') || (a === 'start' && dir === 'rtl')
+      const left = a === 'center' ? x - w / 2 : right ? x - w : x
+      const t = this.getTransform()
+      const xs = [t.a * left + t.c * y + t.e, t.a * (left + w) + t.c * y + t.e]
+      log.items.push({ text: String(text), canvas: this.canvas, x0: Math.min(...xs), x1: Math.max(...xs), y: t.b * left + t.d * y + t.f })
+    }
+    return native.call(this, text, x, y, maxWidth)
+  }
+}
+const openPage = async (query, contextOptions = {}, { record = false } = {}) => {
   const context = await browser.newContext({ viewport: { width: 1280, height: 720 }, deviceScaleFactor: 1, ...contextOptions })
+  if (record) await context.addInitScript(FILLTEXT_RECORDER)
   const page = await context.newPage()
   page.on('pageerror', (e) => pageErrors.push(`${query}: ${String(e).slice(0, 300)}`))
   await page.goto(BASE + query)
@@ -148,6 +174,96 @@ const chooseAlign = async (label, p = page) => {
   await p.waitForTimeout(300)
 }
 
+// --- document text helpers (cell editor, formula bar) --------------------------
+
+const EDITOR_ID = '__INTERNAL_EDITOR__DOCS_NORMAL'
+const FORMULA_BAR_ID = '__INTERNAL_EDITOR__DOCS_FORMULA_BAR'
+const ARABIC_RUN = '[\\u0600-\\u06FF\\u0750-\\u077F\\u0870-\\u08FF\\uFB50-\\uFDFF\\uFE70-\\uFEFF]+'
+// What one document unit's canvas really painted, as units in visual order (left to right, one line).
+const paintedUnits = (p, unitId) => p.evaluate(async (unitId) => {
+  const unit = window.__renderManager.getRenderUnitById(unitId)
+  const canvas = unit.engine.getCanvasElement()
+  window.__fillTextLog = { canvas, items: [] }
+  unit.mainComponent.makeDirty(true)
+  for (let i = 0; i < 4; i++) await new Promise((r) => requestAnimationFrame(r))
+  const items = window.__fillTextLog.items.filter((it) => it.text.trim() && !/^[\u0000-\u001f]+$/.test(it.text))
+  window.__fillTextLog = null
+  const r = canvas.getBoundingClientRect()
+  const s = r.width / canvas.width
+  const seen = new Map() // a frame may paint a line twice: keep one of each
+  for (const it of items) seen.set(`${it.text}|${Math.round(it.x0)}|${Math.round(it.y)}`, { text: it.text, x0: r.left + it.x0 * s, x1: r.left + it.x1 * s })
+  return [...seen.values()].sort((a, b) => a.x0 - b.x0)
+}, unitId)
+// The browser's own layout of `text` in a dir= element, cut into the same units: whole Arabic runs, single other characters, no spaces.
+const browserUnits = (p, text, dir = 'rtl') => p.evaluate(({ text, dir, run }) => {
+  const el = document.createElement('div')
+  el.dir = dir
+  el.style.cssText = 'position:fixed;top:0;left:0;white-space:pre;font:11pt "Thmanyah Sans";visibility:hidden'
+  el.textContent = text
+  document.body.append(el)
+  const re = new RegExp(run, 'y')
+  const units = []
+  for (let i = 0; i < text.length;) {
+    re.lastIndex = i
+    const m = re.exec(text)
+    const len = m ? m[0].length : text.codePointAt(i) > 0xffff ? 2 : 1
+    if (text.slice(i, i + len).trim()) {
+      const range = document.createRange()
+      range.setStart(el.firstChild, i)
+      range.setEnd(el.firstChild, i + len)
+      const b = range.getBoundingClientRect()
+      units.push({ text: text.slice(i, i + len), x0: b.left, x1: b.right, start: i })
+    }
+    i += len
+  }
+  el.remove()
+  return units.sort((a, b) => (a.x0 + a.x1) - (b.x0 + b.x1))
+}, { text, dir, run: ARABIC_RUN })
+const sameUnits = (a, b) => JSON.stringify(a.map((u) => u.text)) === JSON.stringify(b.map((u) => u.text))
+const docText = (p, unitId = EDITOR_ID) => p.evaluate((id) => window.__renderManager.getRenderUnitById(id).mainComponent.getSkeleton().getViewModel().getDataModel().getBody().dataStream.replace(/\r\n$/, ''), unitId)
+// The collapsed caret Univer draws in a document's scene (client x), or null.
+const caretX = (p, unitId = EDITOR_ID) => p.evaluate((id) => {
+  const unit = window.__renderManager.getRenderUnitById(id)
+  const anchor = unit.scene.getAllObjects().find((o) => String(o.oKey).startsWith('__TestSelectionAnchor__') && o.visible !== false)
+  if (!anchor) return null
+  return unit.engine.getCanvasElement().getBoundingClientRect().left + anchor.left + (anchor.width ?? 0) / 2
+}, unitId)
+// The selection highlight rectangles drawn in a document's scene (client x ranges).
+const selectionRects = (p, unitId = EDITOR_ID) => p.evaluate((id) => {
+  const unit = window.__renderManager.getRenderUnitById(id)
+  const left = unit.engine.getCanvasElement().getBoundingClientRect().left
+  const out = []
+  for (const o of unit.scene.getAllObjects()) {
+    if (!String(o.oKey).startsWith('__TestSelectionRange__') || o.visible === false) continue
+    for (const pts of o.pointsGroup ?? []) out.push({ x0: left + o.left + Math.min(...pts.map((q) => q.x)), x1: left + o.left + Math.max(...pts.map((q) => q.x)) })
+  }
+  return out.sort((a, b) => a.x0 - b.x0)
+}, unitId)
+// Where the hidden input that receives keyboard and IME text sits (client coordinates).
+const imeBox = (p, unitId = EDITOR_ID) => p.evaluate((id) => {
+  const el = document.getElementById(`__editor_${id}`)
+  let n = el
+  while (n && getComputedStyle(n).position !== 'fixed') n = n.parentElement
+  const r = (n ?? el)?.getBoundingClientRect()
+  return r ? { left: r.left, top: r.top, focused: document.activeElement === el } : null
+}, unitId)
+const editorTop = (p) => p.evaluate((id) => window.__renderManager.getRenderUnitById(id).engine.getCanvasElement().getBoundingClientRect().top, EDITOR_ID)
+// Type a marker and read where it landed: the caret's logical offset.
+const markerOffset = async (p) => {
+  await p.keyboard.type('X')
+  await p.waitForTimeout(60)
+  return (await docText(p)).indexOf('X')
+}
+const openEditor = async (p, a1) => {
+  const { x, y } = centre(await cellBox(p, a1))
+  await p.mouse.dblclick(x, y)
+  await p.waitForTimeout(350)
+}
+const cancelEdit = async (p) => {
+  await p.keyboard.press('Escape')
+  await p.waitForTimeout(200)
+}
+
 const checks = []
 const check = async (name, fn) => {
   try {
@@ -170,7 +286,10 @@ await check('layer reports mirrored, verified version, no contract problems', as
 // a click at x in the unmirrored grid and at the mirror of x in the mirrored
 // grid must select the same cell. Runs before any check that mutates the sheet.
 
-const plain = await openPage('?dir=rtl&selftest=0')
+// The unmirrored reference grid carries the document-text layer too, so text
+// drawn as documents (rotated cells) is compared like for like: only the
+// mirror differs between the two pages.
+const plain = await openPage('?dir=rtl&selftest=0&textLayer=1')
 // Cell area only, below the data header row (its filter buttons open panels
 // whose own buttons can sort the data), at any zoom. Consecutive points always
 // differ in row, so no two clicks form a double-click.
@@ -579,6 +698,251 @@ await check('stored values are untouched (no direction marks leak into the model
   return { ok: v === 'نشر المقال على LinkedIn', v }
 })
 
+// --- document text: cell editor, formula bar, rich-text cells ----------------
+// Univer lays document text out in logical order with no bidi; src/rtl-text.ts
+// shows it in Unicode bidi order. The oracle is the browser's own layout of
+// the same string in a dir="rtl" element (see browserUnits).
+
+const tp = await openPage('?dir=rtl&grid=mirror&selftest=0', {}, { record: true })
+await sheet(tp, 'bidi')
+// Rows of the harness sheet "bidi" (harness/main.ts).
+const BIDI_ROWS = { 1: 'نشر المقال على LinkedIn Ads', 2: 'موعد التسليم 2026-11-10 بمبلغ 12,400.00 ريال', 3: 'متابعة قضية رقم 2291/ت/1447', 4: 'هل انتهى العمل؟', 5: '(مسودة) خطة الربع الأول.', 6: 'Basecamp API v2', 8: 'إعداد خطة الاتصال' }
+
+await check('text layer applied to the document surfaces, no text contract problems', async () => {
+  const s = await tp.evaluate(() => window.__rtlStatus)
+  return { ok: s?.mirrored === true && s.text?.applied === true && s.textProblems?.length === 0, status: s }
+})
+
+await check('cell editor and formula bar paint every mixed string in the browser\'s bidi order', async () => {
+  const rows = {}
+  let ok = true
+  for (const [row, text] of Object.entries(BIDI_ROWS)) {
+    await openEditor(tp, `A${row}`)
+    const shown = await docText(tp)
+    const ref = await browserUnits(tp, shown)
+    const editor = await paintedUnits(tp, EDITOR_ID)
+    const formulaBar = await paintedUnits(tp, FORMULA_BAR_ID)
+    const same = shown === text && sameUnits(editor, ref) && sameUnits(formulaBar, ref)
+    rows[row] = same ? 'same' : { shown, browser: ref.map((u) => u.text).join(' '), editor: editor.map((u) => u.text).join(' '), formulaBar: formulaBar.map((u) => u.text).join(' ') }
+    ok = ok && same
+    if (row === '1') {
+      await tp.screenshot({ path: `${OUT}mirror-text-editor${TAG}.png`, clip: { x: 0, y: 70, width: 1280, height: 110 } })
+    }
+    await cancelEdit(tp)
+  }
+  return { ok, rows }
+})
+
+await check('a pure-Latin cell stays left to right in the editor', async () => {
+  await openEditor(tp, 'A6')
+  const painted = (await paintedUnits(tp, EDITOR_ID)).map((u) => u.text).join('')
+  await cancelEdit(tp)
+  return { ok: painted === BIDI_ROWS[6].replace(/ /g, ''), painted }
+})
+
+await check('editor text starts on the right like the cell (logical start = visual right)', async () => {
+  const box = await cellBox(tp, 'A1')
+  await openEditor(tp, 'A1')
+  const units = await paintedUnits(tp, EDITOR_ID)
+  await cancelEdit(tp)
+  const right = Math.max(...units.map((u) => u.x1))
+  return { ok: units.length > 0 && near(right, box.right - 2, 4), textRight: right, cellRight: box.right }
+})
+
+await check('a formula with an Arabic sheet name reads left to right in the editor', async () => {
+  await sheet(tp, 'summary')
+  await openEditor(tp, 'B2')
+  const shown = await docText(tp)
+  const ref = await browserUnits(tp, shown, 'ltr')
+  const editor = await paintedUnits(tp, EDITOR_ID)
+  await cancelEdit(tp)
+  await sheet(tp, 'bidi')
+  return { ok: shown === "='المهام'!A2" && sameUnits(editor, ref), shown, browser: ref.map((u) => u.text).join(' '), editor: editor.map((u) => u.text).join(' ') }
+})
+
+await check('click places the caret at the clicked character, drawn on its correct side', async () => {
+  // Row 1: «نشر المقال على LinkedIn Ads». Targets come from the units the editor
+  // painted: 2px inside the start of «على» (offset 11) and the end of «المقال»
+  // (offset 10), both wide letters, and both halves of the Latin «k» (18, 19).
+  const got = []
+  let ok = true
+  const word = (u, t) => u.find((x) => x.text === t)
+  for (const [what, offset, pick] of [
+    ['start of «على»', 11, (u) => word(u, 'على') && { x: word(u, 'على').x1 - 2, edge: word(u, 'على').x1 }],
+    ['end of «المقال»', 10, (u) => word(u, 'المقال') && { x: word(u, 'المقال').x0 + 2, edge: word(u, 'المقال').x0 }],
+    ['before «k»', 18, (u) => word(u, 'k') && { x: word(u, 'k').x0 + 2, edge: word(u, 'k').x0 }],
+    ['after «k»', 19, (u) => word(u, 'k') && { x: word(u, 'k').x1 - 2, edge: word(u, 'k').x1 }],
+  ]) {
+    await openEditor(tp, 'A1')
+    const target = pick(await paintedUnits(tp, EDITOR_ID))
+    if (!target) {
+      ok = false
+      got.push({ what, error: 'unit not painted' })
+      await cancelEdit(tp)
+      continue
+    }
+    await tp.mouse.click(target.x, (await editorTop(tp)) + 12)
+    await tp.waitForTimeout(150)
+    const caret = await caretX(tp)
+    const at = await markerOffset(tp)
+    const pass = at === offset && caret !== null && near(caret, target.edge, 1.5)
+    ok = ok && pass
+    got.push({ what, offset: at, expected: offset, caret, edge: target.edge })
+    await cancelEdit(tp)
+  }
+  return { ok, got }
+})
+
+await check('arrow keys move the caret visually; Home and End go to the logical start and end', async () => {
+  const len = BIDI_ROWS[8].length
+  const run = async (keys) => {
+    await openEditor(tp, 'A8')
+    for (const k of keys) await tp.keyboard.press(k)
+    const at = await markerOffset(tp)
+    await cancelEdit(tp)
+    return at
+  }
+  // Pure Arabic: ArrowLeft goes forward in reading order, ArrowRight back.
+  const got = { home: await run(['Home']), end: await run(['End']), homeLeft3: await run(['Home', 'ArrowLeft', 'ArrowLeft', 'ArrowLeft']), endRight2: await run(['End', 'ArrowRight', 'ArrowRight']) }
+  // Mixed line: the caret must move strictly left on every ArrowLeft until the
+  // visual left end of the text, and strictly right back to the right end.
+  await openEditor(tp, 'A1')
+  await tp.keyboard.press('Home')
+  const units = await paintedUnits(tp, EDITOR_ID)
+  const xs = [await caretX(tp)]
+  for (let i = 0; i < 34; i++) {
+    await tp.keyboard.press('ArrowLeft')
+    xs.push(await caretX(tp))
+  }
+  const back = [xs[xs.length - 1]]
+  for (let i = 0; i < 34; i++) {
+    await tp.keyboard.press('ArrowRight')
+    back.push(await caretX(tp))
+  }
+  await cancelEdit(tp)
+  const textLeft = Math.min(...units.map((u) => u.x0))
+  const textRight = Math.max(...units.map((u) => u.x1))
+  const strict = (a, sign) => {
+    let steps = 0
+    for (let i = 1; i < a.length; i++) {
+      const d = (a[i] - a[i - 1]) * sign
+      if (d > 0.5) steps++
+      else if (Math.abs(d) <= 0.5) { if (a.slice(i).some((x) => Math.abs(x - a[i]) > 0.5)) return -1 } // a stop must be final
+      else return -1
+    }
+    return steps
+  }
+  const leftSteps = strict(xs, -1)
+  const rightSteps = strict(back, 1)
+  const ok = got.home === 0 && got.end === len && got.homeLeft3 === 3 && got.endRight2 === len - 2 &&
+    leftSteps >= BIDI_ROWS[1].length - 2 && rightSteps === leftSteps && near(xs[0], textRight, 1.5) && near(xs[xs.length - 1], textLeft, 1.5) && near(back[back.length - 1], textRight, 1.5)
+  return { ok, got, leftSteps, rightSteps, ends: { start: xs[0], textRight, leftmost: xs[xs.length - 1], textLeft } }
+})
+
+await check('Shift+Arrow and drag select the right glyphs (a split selection is two rectangles)', async () => {
+  // Shift+ArrowLeft x3 from Home in «إعداد خطة الاتصال»: the first three letters, on the right.
+  await openEditor(tp, 'A8')
+  await tp.keyboard.press('Home')
+  const right = Math.max(...(await paintedUnits(tp, EDITOR_ID)).map((u) => u.x1))
+  for (let i = 0; i < 3; i++) await tp.keyboard.press('Shift+ArrowLeft')
+  const shiftRects = await selectionRects(tp)
+  await tp.keyboard.type('Y')
+  const afterShift = await docText(tp)
+  await cancelEdit(tp)
+  // Drag from the start of «على» to the start of the third letter of «LinkedIn»: offsets 11..17.
+  await openEditor(tp, 'A1')
+  const units = await paintedUnits(tp, EDITOR_ID)
+  const ala = units.find((u) => u.text === 'على')
+  const latin = units.filter((u) => /^[A-Za-z]$/.test(u.text))
+  const [L, i1, n1] = latin
+  const s = units.find((u) => u.text === 's')
+  const top = (await editorTop(tp)) + 12
+  await tp.mouse.move(ala.x1 - 2, top)
+  await tp.mouse.down()
+  await tp.mouse.move(n1.x0 + 1.5, top, { steps: 6 })
+  await tp.mouse.up()
+  await tp.waitForTimeout(150)
+  const dragRects = await selectionRects(tp)
+  await tp.keyboard.type('Z')
+  const afterDrag = await docText(tp)
+  await cancelEdit(tp)
+  const r1 = BIDI_ROWS[1]
+  const ok = shiftRects.length === 1 && near(shiftRects[0].x1, right, 1.5) && shiftRects[0].x1 - shiftRects[0].x0 > 8 && afterShift === 'Y' + BIDI_ROWS[8].slice(3) &&
+    dragRects.length === 2 && near(dragRects[0].x0, L.x0, 1.5) && near(dragRects[0].x1, i1.x1, 1.5) && near(dragRects[1].x1, ala.x1, 1.5) && near(dragRects[1].x0, s.x1, 2.5) &&
+    afterDrag === r1.slice(0, 11) + 'Z' + r1.slice(17)
+  return { ok, shiftRects, right, afterShift, dragRects, expected: { latin: [L.x0, i1.x1], arabic: [s.x1, ala.x1] }, afterDrag }
+})
+
+await check('typing Arabic renders in bidi order live; the stored value is what the editor shows', async () => {
+  const typed = 'نص تجريبي LinkedIn 2026 نهاية'
+  await openEditor(tp, 'A7')
+  const steps = []
+  let ok = true
+  for (const piece of typed.split(/(?<= )/)) {
+    await tp.keyboard.type(piece)
+    await tp.waitForTimeout(60)
+    const shown = await docText(tp)
+    const same = sameUnits(await paintedUnits(tp, EDITOR_ID), await browserUnits(tp, shown))
+    ok = ok && same
+    steps.push({ shown, same })
+  }
+  const shown = await docText(tp)
+  await tp.keyboard.press('Enter')
+  await tp.waitForTimeout(300)
+  const stored = await value('A7', tp)
+  return { ok: ok && stored === shown, stored, shown, typedIntact: shown === typed, steps }
+})
+
+await check('IME: the input sits at the caret, and composed text is ordered as it is composed', async () => {
+  await openEditor(tp, 'A8')
+  await tp.keyboard.press('End')
+  const caret = await caretX(tp)
+  const ime = await imeBox(tp)
+  let composition = 'not available in this browser (CDP is Chromium only)'
+  let composedOk = true
+  if (BROWSER === 'chromium') {
+    const cdp = await tp.context().newCDPSession(tp)
+    await cdp.send('Input.imeSetComposition', { text: 'جد', selectionStart: 2, selectionEnd: 2 })
+    await tp.waitForTimeout(150)
+    const during = { text: await docText(tp), caret: await caretX(tp), ime: await imeBox(tp) }
+    await cdp.send('Input.insertText', { text: 'جديد' })
+    await tp.waitForTimeout(200)
+    const shown = await docText(tp)
+    const same = sameUnits(await paintedUnits(tp, EDITOR_ID), await browserUnits(tp, shown))
+    composedOk = during.text === BIDI_ROWS[8] + 'جد' && near(during.caret, during.ime.left, 1.5) && during.caret < caret && shown === BIDI_ROWS[8] + 'جديد' && same
+    composition = { during, committed: shown, same }
+  }
+  await cancelEdit(tp)
+  const ok = caret !== null && ime?.focused === true && near(ime.left, caret, 1.5) && composedOk
+  return { ok, caret, ime, composition }
+})
+
+await check('an Arabic rich-text cell (hyperlink) reads in bidi order in the mirrored grid', async () => {
+  const text = 'تقرير الربع الأول'
+  const words = text.split(' ')
+  const order = await tp.evaluate(async (words) => {
+    window.__fillTextLog = { canvas: null, items: [] }
+    window.univerAPI.getActiveWorkbook().getActiveSheet().refreshCanvas()
+    for (let i = 0; i < 4; i++) await new Promise((r) => requestAnimationFrame(r))
+    const items = window.__fillTextLog.items.filter((it) => words.includes(it.text))
+    window.__fillTextLog = null
+    const byWord = new Map(items.map((it) => [it.text, it]))
+    // The sheet canvas is mirrored by CSS: on screen, a larger device x is further left.
+    return [...byWord.values()].sort((a, b) => b.x0 - a.x0).map((it) => it.text)
+  }, words)
+  const ref = (await browserUnits(tp, text)).map((u) => u.text)
+  return { ok: JSON.stringify(order) === JSON.stringify(ref), painted: order, browser: ref }
+})
+
+await check('stored values are untouched by editing round trips (open, move, select, cancel)', async () => {
+  const got = {}
+  for (const row of Object.keys(BIDI_ROWS)) got[row] = await value(`A${row}`, tp)
+  const ok = Object.entries(BIDI_ROWS).every(([row, text]) => got[row] === text)
+  return { ok, got }
+})
+
+await tp.close()
+
 // --- safety nets --------------------------------------------------------------
 
 await check('safety net: a changed Univer hook leaves the stock grid untouched and working', async () => {
@@ -606,6 +970,19 @@ await check('enabling on a sheet already painted and idle repaints it and stays 
   return { ok: status?.mirrored === true && Boolean(sameInk), status, ink, ref }
 })
 
+await check('enabled right after createWorkbook (as apps/web does): document text applied, arrows visual', async () => {
+  // Univer's cursor controller does not exist yet at that point: the text layer must wait for it.
+  const p = await openPage('?dir=rtl&grid=mirror&selftest=0&enableEarly=1')
+  const status = await p.evaluate(() => window.__rtlStatus)
+  await sheet(p, 'bidi')
+  await openEditor(p, 'A8')
+  await p.keyboard.press('Home')
+  for (let i = 0; i < 3; i++) await p.keyboard.press('ArrowLeft')
+  const at = await markerOffset(p)
+  await p.close()
+  return { ok: status?.mirrored === true && status.text?.applied === true && at === 3, status, offsetAfterHomeAndThreeArrowLeft: at }
+})
+
 await check('control (not the layer): typing Arabic into the editor of the unmirrored grid', async () => {
   // Same keystrokes as the mirrored editing check, on a grid without the layer.
   // If this fails too in a browser, the failure there is not caused by the mirror.
@@ -629,6 +1006,33 @@ await check('safety net: text bypassing the flip-back path withdraws the mirror'
   const flipped = await p.evaluate(() => Boolean(document.querySelector('.naf-rtl-grid')))
   await p.close()
   const ok = status?.mirrored === false && /heartbeat/.test(status.reason ?? '') && !flipped
+  return { ok, status, flipped }
+})
+
+await check('safety net: a changed text hook leaves the editor stock and the grid mirrored', async () => {
+  const p = await openPage('?dir=rtl&grid=mirror&selftest=0&simulateBreak=text-contract', {}, { record: true })
+  const status = await p.evaluate(() => window.__rtlStatus)
+  await sheet(p, 'bidi')
+  await openEditor(p, 'A8')
+  // Stock Univer: the words in logical order from the left.
+  const painted = (await paintedUnits(p, EDITOR_ID)).map((u) => u.text)
+  await p.close()
+  const ok = status?.mirrored === true && status.text?.applied === false && /getRangePointData/.test(status.text?.reason ?? '') && /getRangePointData/.test(status.reason ?? '') &&
+    JSON.stringify(painted) === JSON.stringify(['إعداد', 'خطة', 'الاتصال'])
+  return { ok, status, painted }
+})
+
+await check('safety net: document text painted around the hook withdraws the text layer, not the grid', async () => {
+  const p = await openPage('?dir=rtl&grid=mirror&selftest=0&simulateBreak=text-heartbeat', {}, { record: true })
+  await sheet(p, 'bidi')
+  await openEditor(p, 'A8')
+  await p.keyboard.press('End')
+  await p.keyboard.type('ب')
+  await p.waitForTimeout(600)
+  const status = await p.evaluate(() => window.__rtlStatus)
+  const flipped = await p.evaluate(() => Boolean(document.querySelector('.naf-rtl-grid')))
+  await p.close()
+  const ok = status?.mirrored === true && flipped && status.text?.applied === false && /heartbeat/.test(status.text?.reason ?? '')
   return { ok, status, flipped }
 })
 

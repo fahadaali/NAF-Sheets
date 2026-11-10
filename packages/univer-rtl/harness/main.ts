@@ -8,6 +8,11 @@
 //   ?dir=rtl   Univer UI direction rtl + worksheet.rightToLeft = 1 (default)
 //   ?dir=ltr   both left-to-right, as a baseline for comparison
 //   ?align=1   force horizontalAlign=right on Arabic cells (workaround probe)
+//   ?grid=mirror            mirror the grid (and apply the document-text layer)
+//   ?textLayer=1            unmirrored grid with only the document-text layer
+//                           (the reference for comparisons with the mirrored grid)
+//   ?simulateBreak=contract|heartbeat|text-contract|text-heartbeat
+//                           break the layer on purpose to prove its safety nets
 
 import { UniverSheetsCorePreset } from '@univerjs/preset-sheets-core'
 import SheetsCoreArSA from '@univerjs/preset-sheets-core/locales/ar-SA'
@@ -31,8 +36,10 @@ import { createUniver, LocaleType, mergeLocales } from '@univerjs/presets'
 import type { IWorkbookData } from '@univerjs/presets'
 import { InterceptorEffectEnum, LifecycleStages } from '@univerjs/core'
 import { INTERCEPTOR_POINT, SheetInterceptorService } from '@univerjs/sheets'
-import { enableRtlGrid } from '../src/index'
+import { enableRtlGrid, enableRtlText, textLayerCounters, textLayerState } from '../src/index'
+import type { RtlGridStatus } from '../src/index'
 import { Documents, IRenderManagerService } from '@univerjs/engine-render'
+import { NodePositionConvertToCursor } from '@univerjs/docs-ui'
 
 import '@univerjs/preset-sheets-core/lib/index.css'
 import '@univerjs/preset-sheets-conditional-formatting/lib/index.css'
@@ -101,6 +108,20 @@ if (probeMarks) {
   })
 }
 
+// Sheet "bidi": the mixed-direction strings the document-text layer (cell
+// editor, formula bar) must order as the browser does. Row 7 stays empty for
+// typing; B1 holds an Arabic hyperlink (a rich-text cell drawn as a document).
+const bidiRows = [
+  'نشر المقال على LinkedIn Ads',
+  'موعد التسليم 2026-11-10 بمبلغ 12,400.00 ريال',
+  'متابعة قضية رقم 2291/ت/1447',
+  'هل انتهى العمل؟',
+  '(مسودة) خطة الربع الأول.',
+  'Basecamp API v2',
+  '',
+  'إعداد خطة الاتصال',
+]
+
 const hAlign = forceAlign ? { ht: 3 } : {} // HorizontalAlign.RIGHT = 3
 
 const workbook: Partial<IWorkbookData> = {
@@ -108,7 +129,7 @@ const workbook: Partial<IWorkbookData> = {
   name: 'اختبار الجدوى',
   appVersion: '1.4.0',
   locale: LocaleType.AR_SA,
-  sheetOrder: ['tasks', 'summary', 'extras'],
+  sheetOrder: ['tasks', 'summary', 'extras', 'bidi'],
   styles: {
     hdr: { ff: FONT, fs: 12, bl: 1, bg: { rgb: '#E8F0FE' }, ...hAlign },
     body: { ff: FONT, fs: 11, ...hAlign },
@@ -161,6 +182,15 @@ const workbook: Partial<IWorkbookData> = {
         4: { 0: { v: 30, s: 'body' }, 1: { v: 40, s: 'body' } },
       },
     },
+    bidi: {
+      id: 'bidi',
+      name: 'نصوص',
+      rowCount: 20,
+      columnCount: 6,
+      rightToLeft: dir === 'rtl' ? 1 : 0,
+      columnData: { 0: { w: 420 }, 1: { w: 200 } },
+      cellData: Object.fromEntries(bidiRows.map((v, r) => [r, { 0: { v, s: 'body' } }])),
+    },
   },
 }
 
@@ -209,6 +239,11 @@ univerAPI.addEvent(univerAPI.Event.CommandExecuted, (e) => {
 
 const results: Record<string, unknown> = { dir, forceAlign, probeIsolate, mirrorGrid }
 
+// The layer's status, where the interaction suite reads it.
+function publishStatus(s: RtlGridStatus) {
+  ;(window as unknown as { __rtlStatus: unknown }).__rtlStatus = { mirrored: s.mirrored, reason: s.reason, versions: s.versions, verifiedVersion: s.verifiedVersion, problems: s.problems, textProblems: s.textProblems, text: s.text }
+}
+
 const errors: string[] = []
 const attempt = async (name: string, fn: () => unknown | Promise<unknown>) => {
   try {
@@ -226,6 +261,11 @@ async function run() {
   results.fontLoaded = document.fonts.check(`16px "${FONT}"`, 'ثمانية')
 
   const fWorkbook = univerAPI.createWorkbook(workbook)
+  // ?enableEarly=1 — enable the mirror right after createWorkbook, before
+  // Univer has rendered, as apps/web does (the text layer must then wait for
+  // Univer's cursor controller). Awaited below, after the steady wait.
+  const enableEarly = params.get('enableEarly') === '1'
+  const earlyEnable = mirrorGrid && enableEarly ? enableRtlGrid(univerAPI, 'spike-wb', { onStatus: publishStatus }) : null
 
   // Deterministic start in every mode: wait until Univer is steady and the cell
   // editor is initialised before mutating anything. Otherwise Univer's automatic
@@ -241,10 +281,13 @@ async function run() {
   })
   const ws = fWorkbook.getSheetBySheetId('tasks')!
 
-  // Diagnostic handle for the performance script (rtl-perf.mjs): the sheet scene.
+  // Diagnostic handles for the performance script (rtl-perf.mjs) and the
+  // interaction suite: the sheet scene, and the render manager (the cell
+  // editor's and the formula bar's document skeletons are read through it).
   {
     const rm = (univerAPI as unknown as { _injector: { get: (t: unknown) => { getRenderUnitById: (id: string) => { scene: unknown } | null } } })._injector.get(IRenderManagerService)
     ;(window as unknown as { __sheetScene: unknown }).__sheetScene = rm.getRenderUnitById('spike-wb')?.scene
+    ;(window as unknown as { __renderManager: unknown }).__renderManager = rm
   }
 
   // ?delay=ms — wait before the setup steps (diagnostic: separates timing effects from mirroring effects)
@@ -255,6 +298,16 @@ async function run() {
   // safety nets: a missing Univer hook must leave the stock grid untouched; text
   // that stops flowing through the flip-back path must withdraw the mirror.
   const simulateBreak = params.get('simulateBreak')
+  // The stock glyph-group painter, before the layer wraps it (for text-heartbeat below).
+  const stockGlyphGroup = (Documents.prototype as unknown as { _drawGlyphGroup: unknown })._drawGlyphGroup
+  if (simulateBreak === 'text-contract') {
+    // A docs-ui hook with a different signature: only the text layer must notice.
+    const proto = NodePositionConvertToCursor.prototype as unknown as { getRangePointData: (...a: unknown[]) => unknown }
+    const original = proto.getRangePointData
+    proto.getRangePointData = function (this: unknown, ...a: unknown[]) {
+      return original.apply(this, a)
+    }
+  }
   if (simulateBreak === 'contract') {
     // Same behaviour, different signature — as an upgrade might change it.
     // Univer keeps working; only the layer's contract check notices.
@@ -272,11 +325,11 @@ async function run() {
   const enableAfterIdle = params.get('enableAfterIdle') === '1'
   const enableMirror = () =>
     attempt('rtlGridEnabled', async () => {
-      const status = await enableRtlGrid(univerAPI, 'spike-wb', {
-        onStatus: (s) => {
-          ;(window as unknown as { __rtlStatus: unknown }).__rtlStatus = { mirrored: s.mirrored, reason: s.reason, versions: s.versions, verifiedVersion: s.verifiedVersion, problems: s.problems }
-        },
-      })
+      const status = await enableRtlGrid(univerAPI, 'spike-wb', { onStatus: publishStatus })
+      if (simulateBreak === 'text-heartbeat') {
+        // Univer painting document glyphs another way: the stock painter back in place of the hooks.
+        ;(Documents.prototype as unknown as { _drawGlyphGroup: unknown })._drawGlyphGroup = stockGlyphGroup
+      }
       if (simulateBreak === 'heartbeat') {
         // Put the browser's own fillText back (taken from a fresh realm), so
         // text bypasses the flip-back wrapper as if Univer drew another way.
@@ -287,7 +340,15 @@ async function run() {
       }
       return status.mirrored
     })
-  if (mirrorGrid && !enableAfterIdle) await enableMirror()
+  if (earlyEnable) await attempt('rtlGridEnabled', async () => (await earlyEnable).mirrored)
+  else if (mirrorGrid && !enableAfterIdle) await enableMirror()
+  if (!mirrorGrid && params.get('textLayer') === '1') {
+    await attempt('textLayerOnly', () => {
+      const layer = enableRtlText((univerAPI as unknown as { _injector: unknown })._injector, () => {})
+      ws.refreshCanvas()
+      return layer.applied
+    })
+  }
 
   // A floating image on the special-cases sheet: asymmetric on purpose (an
   // arrow and Latin text), so an accidental mirror is obvious.
@@ -354,6 +415,13 @@ async function run() {
 
   await attempt('sortCommandAvailable', () => typeof ws.getRange('A2:G6').sort === 'function')
 
+  // A rich-text cell with Arabic text: drawn through Univer's document renderer, not fillText per cell.
+  await attempt('arabicHyperlink', async () => {
+    const bidi = fWorkbook.getSheetBySheetId('bidi')!
+    await bidi.getRange('B1').setHyperLink('https://example.com/q1', 'تقرير الربع الأول')
+    return bidi.getRange('B1').getValue()
+  })
+
   // Execute a real sort (due date, descending), then undo it: covers §5.1
   // "sorting" and "undo/redo", and leaves the sheet as it was for screenshots.
   // ?selftest=0 skips this mutate-then-undo check, so interaction tests start
@@ -401,3 +469,5 @@ run().catch((e) => {
 })
 
 ;(window as unknown as { univerAPI: unknown }).univerAPI = univerAPI
+// Diagnostics of the document-text layer, for the interaction suite.
+;(window as unknown as { __rtlText: unknown }).__rtlText = { state: textLayerState, counters: textLayerCounters }

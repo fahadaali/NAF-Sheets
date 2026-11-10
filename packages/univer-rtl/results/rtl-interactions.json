@@ -1,8 +1,8 @@
 {
   "browser": "chromium",
-  "passed": 33,
+  "passed": 48,
   "knownUpstream": 0,
-  "total": 33,
+  "total": 48,
   "pageErrors": [],
   "checks": [
     {
@@ -15,10 +15,15 @@
           "versions": {
             "core": "1.4.0",
             "engine-render": "1.4.0",
-            "sheets-ui": "1.4.0"
+            "sheets-ui": "1.4.0",
+            "docs-ui": "1.4.0"
           },
           "verifiedVersion": true,
-          "problems": []
+          "problems": [],
+          "textProblems": [],
+          "text": {
+            "applied": true
+          }
         }
       }
     },
@@ -404,18 +409,18 @@
         "cells": {
           "A2": {
             "mirrored": {
-              "l": 51,
-              "r": 109,
+              "l": 57,
+              "r": 111,
               "t": 19,
-              "b": 70,
-              "n": 174
+              "b": 73,
+              "n": 180
             },
             "plain": {
-              "l": 52,
-              "r": 110,
+              "l": 58,
+              "r": 112,
               "t": 19,
-              "b": 70,
-              "n": 175
+              "b": 73,
+              "n": 182
             },
             "same": true
           },
@@ -440,16 +445,16 @@
             "mirrored": {
               "l": 2,
               "r": 17,
-              "t": 26,
-              "b": 73,
-              "n": 117
+              "t": 30,
+              "b": 77,
+              "n": 124
             },
             "plain": {
               "l": 3,
               "r": 19,
-              "t": 26,
-              "b": 73,
-              "n": 121
+              "t": 30,
+              "b": 77,
+              "n": 129
             },
             "same": true
           }
@@ -505,6 +510,256 @@
       }
     },
     {
+      "name": "text layer applied to the document surfaces, no text contract problems",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "status": {
+          "mirrored": true,
+          "versions": {
+            "core": "1.4.0",
+            "engine-render": "1.4.0",
+            "sheets-ui": "1.4.0",
+            "docs-ui": "1.4.0"
+          },
+          "verifiedVersion": true,
+          "problems": [],
+          "textProblems": [],
+          "text": {
+            "applied": true
+          }
+        }
+      }
+    },
+    {
+      "name": "cell editor and formula bar paint every mixed string in the browser's bidi order",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "rows": {
+          "1": "same",
+          "2": "same",
+          "3": "same",
+          "4": "same",
+          "5": "same",
+          "6": "same",
+          "8": "same"
+        }
+      }
+    },
+    {
+      "name": "a pure-Latin cell stays left to right in the editor",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "painted": "BasecampAPIv2"
+      }
+    },
+    {
+      "name": "editor text starts on the right like the cell (logical start = visual right)",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "textRight": 1232,
+        "cellRight": 1234
+      }
+    },
+    {
+      "name": "a formula with an Arabic sheet name reads left to right in the editor",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "shown": "='المهام'!A2",
+        "browser": "= ' المهام ' ! A 2",
+        "editor": "= ' المهام ' ! A 2"
+      }
+    },
+    {
+      "name": "click places the caret at the clicked character, drawn on its correct side",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "got": [
+          {
+            "what": "start of «على»",
+            "offset": 11,
+            "expected": 11,
+            "caret": 1169.9598693847656,
+            "edge": 1169.9598693847656
+          },
+          {
+            "what": "end of «المقال»",
+            "offset": 10,
+            "expected": 10,
+            "caret": 1173.6092834472656,
+            "edge": 1173.6092834472656
+          },
+          {
+            "what": "before «k»",
+            "offset": 18,
+            "expected": 18,
+            "caret": 1078.1234741210938,
+            "edge": 1078.1234741210938
+          },
+          {
+            "what": "after «k»",
+            "offset": 19,
+            "expected": 19,
+            "caret": 1086.3016967773438,
+            "edge": 1086.3016967773438
+          }
+        ]
+      }
+    },
+    {
+      "name": "arrow keys move the caret visually; Home and End go to the logical start and end",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "got": {
+          "home": 0,
+          "end": 17,
+          "homeLeft3": 3,
+          "endRight2": 15
+        },
+        "leftSteps": 27,
+        "rightSteps": 27,
+        "ends": {
+          "start": 1232,
+          "textRight": 1232,
+          "leftmost": 1057.5460205078125,
+          "textLeft": 1057.5460205078125
+        }
+      }
+    },
+    {
+      "name": "Shift+Arrow and drag select the right glyphs (a split selection is two rectangles)",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "shiftRects": [
+          {
+            "x0": 1211.7743072509766,
+            "x1": 1232
+          }
+        ],
+        "right": 1232,
+        "afterShift": "Yاد خطة الاتصال",
+        "dragRects": [
+          {
+            "x0": 1057.5460205078125,
+            "x1": 1069.3883209228516
+          },
+          {
+            "x0": 1144.8536224365234,
+            "x1": 1169.9598693847656
+          }
+        ],
+        "expected": {
+          "latin": [
+            1057.5460205078125,
+            1069.3883209228516
+          ],
+          "arabic": [
+            1144.8536224365234,
+            1169.9598693847656
+          ]
+        },
+        "afterDrag": "نشر المقال ZnkedIn Ads"
+      }
+    },
+    {
+      "name": "typing Arabic renders in bidi order live; the stored value is what the editor shows",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "stored": "نص تجريبي LinkedIn 2026 نهاية",
+        "shown": "نص تجريبي LinkedIn 2026 نهاية",
+        "typedIntact": true,
+        "steps": [
+          {
+            "shown": "نص ",
+            "same": true
+          },
+          {
+            "shown": "نص تجريبي ",
+            "same": true
+          },
+          {
+            "shown": "نص تجريبي LinkedIn ",
+            "same": true
+          },
+          {
+            "shown": "نص تجريبي LinkedIn 2026 ",
+            "same": true
+          },
+          {
+            "shown": "نص تجريبي LinkedIn 2026 نهاية",
+            "same": true
+          }
+        ]
+      }
+    },
+    {
+      "name": "IME: the input sits at the caret, and composed text is ordered as it is composed",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "caret": 1122.0922546386719,
+        "ime": {
+          "left": 1122.078125,
+          "top": 295,
+          "focused": true
+        },
+        "composition": {
+          "during": {
+            "text": "إعداد خطة الاتصالجد",
+            "caret": 1108.007553100586,
+            "ime": {
+              "left": 1108,
+              "top": 295,
+              "focused": true
+            }
+          },
+          "committed": "إعداد خطة الاتصالجديد",
+          "same": true
+        }
+      }
+    },
+    {
+      "name": "an Arabic rich-text cell (hyperlink) reads in bidi order in the mirrored grid",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "painted": [
+          "الأول",
+          "الربع",
+          "تقرير"
+        ],
+        "browser": [
+          "الأول",
+          "الربع",
+          "تقرير"
+        ]
+      }
+    },
+    {
+      "name": "stored values are untouched by editing round trips (open, move, select, cancel)",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "got": {
+          "1": "نشر المقال على LinkedIn Ads",
+          "2": "موعد التسليم 2026-11-10 بمبلغ 12,400.00 ريال",
+          "3": "متابعة قضية رقم 2291/ت/1447",
+          "4": "هل انتهى العمل؟",
+          "5": "(مسودة) خطة الربع الأول.",
+          "6": "Basecamp API v2",
+          "8": "إعداد خطة الاتصال"
+        }
+      }
+    },
+    {
       "name": "safety net: a changed Univer hook leaves the stock grid untouched and working",
       "ok": true,
       "detail": {
@@ -515,12 +770,18 @@
           "versions": {
             "core": "1.4.0",
             "engine-render": "1.4.0",
-            "sheets-ui": "1.4.0"
+            "sheets-ui": "1.4.0",
+            "docs-ui": "1.4.0"
           },
           "verifiedVersion": true,
           "problems": [
             "Documents.prototype._drawGlyphGroup(ctx, scale, group, line, alignOffset, centerAngle, vertexAngle, ...)"
-          ]
+          ],
+          "textProblems": [],
+          "text": {
+            "applied": false,
+            "reason": "the grid is not mirrored"
+          }
         },
         "flipped": false,
         "clicked": "B3"
@@ -536,10 +797,15 @@
           "versions": {
             "core": "1.4.0",
             "engine-render": "1.4.0",
-            "sheets-ui": "1.4.0"
+            "sheets-ui": "1.4.0",
+            "docs-ui": "1.4.0"
           },
           "verifiedVersion": true,
-          "problems": []
+          "problems": [],
+          "textProblems": [],
+          "text": {
+            "applied": true
+          }
         },
         "ink": {
           "left": 1061,
@@ -557,6 +823,29 @@
           "meanX": 1143.5759036144577,
           "count": 415
         }
+      }
+    },
+    {
+      "name": "enabled right after createWorkbook (as apps/web does): document text applied, arrows visual",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "status": {
+          "mirrored": true,
+          "versions": {
+            "core": "1.4.0",
+            "engine-render": "1.4.0",
+            "sheets-ui": "1.4.0",
+            "docs-ui": "1.4.0"
+          },
+          "verifiedVersion": true,
+          "problems": [],
+          "textProblems": [],
+          "text": {
+            "applied": true
+          }
+        },
+        "offsetAfterHomeAndThreeArrowLeft": 3
       }
     },
     {
@@ -578,12 +867,74 @@
           "versions": {
             "core": "1.4.0",
             "engine-render": "1.4.0",
-            "sheets-ui": "1.4.0"
+            "sheets-ui": "1.4.0",
+            "docs-ui": "1.4.0"
           },
           "verifiedVersion": true,
-          "problems": []
+          "problems": [],
+          "textProblems": [],
+          "text": {
+            "applied": false,
+            "reason": "the grid mirror was withdrawn"
+          }
         },
         "flipped": false
+      }
+    },
+    {
+      "name": "safety net: a changed text hook leaves the editor stock and the grid mirrored",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "status": {
+          "mirrored": true,
+          "reason": "document text left stock: text contract broken: NodePositionConvertToCursor.prototype.getRangePointData(start, end)",
+          "versions": {
+            "core": "1.4.0",
+            "engine-render": "1.4.0",
+            "sheets-ui": "1.4.0",
+            "docs-ui": "1.4.0"
+          },
+          "verifiedVersion": true,
+          "problems": [],
+          "textProblems": [
+            "NodePositionConvertToCursor.prototype.getRangePointData(start, end)"
+          ],
+          "text": {
+            "applied": false,
+            "reason": "text contract broken: NodePositionConvertToCursor.prototype.getRangePointData(start, end)"
+          }
+        },
+        "painted": [
+          "إعداد",
+          "خطة",
+          "الاتصال"
+        ]
+      }
+    },
+    {
+      "name": "safety net: document text painted around the hook withdraws the text layer, not the grid",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "status": {
+          "mirrored": true,
+          "reason": "document text left stock: heartbeat failed: right-to-left document text was painted without passing through Documents._drawGlyphGroup",
+          "versions": {
+            "core": "1.4.0",
+            "engine-render": "1.4.0",
+            "sheets-ui": "1.4.0",
+            "docs-ui": "1.4.0"
+          },
+          "verifiedVersion": true,
+          "problems": [],
+          "textProblems": [],
+          "text": {
+            "applied": false,
+            "reason": "heartbeat failed: right-to-left document text was painted without passing through Documents._drawGlyphGroup"
+          }
+        },
+        "flipped": true
       }
     }
   ]

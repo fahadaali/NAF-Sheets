@@ -1,60 +1,196 @@
 {
   "runs": 3,
   "plain": {
-    "meanMs": 9.84,
-    "p95Ms": 13.9
+    "meanMs": 9.94,
+    "p95Ms": 13.53
   },
   "mirrored": {
-    "meanMs": 10.72,
-    "p95Ms": 17.17
+    "meanMs": 10.68,
+    "p95Ms": 14.83
   },
   "detail": {
     "plain": [
       {
         "frames": 61,
-        "meanMs": 10.57,
+        "meanMs": 9.99,
         "p50Ms": 10.3,
-        "p95Ms": 16.4,
-        "maxMs": 20.4
-      },
-      {
-        "frames": 62,
-        "meanMs": 9.59,
-        "p50Ms": 9.5,
         "p95Ms": 12.9,
-        "maxMs": 16.6
+        "maxMs": 16.1
       },
       {
-        "frames": 62,
-        "meanMs": 9.36,
-        "p50Ms": 9.1,
-        "p95Ms": 12.4,
-        "maxMs": 15.4
+        "frames": 60,
+        "meanMs": 9.97,
+        "p50Ms": 10.1,
+        "p95Ms": 13.3,
+        "maxMs": 14.3
+      },
+      {
+        "frames": 63,
+        "meanMs": 9.85,
+        "p50Ms": 9.7,
+        "p95Ms": 14.4,
+        "maxMs": 19.5
       }
     ],
     "mirrored": [
       {
-        "frames": 60,
-        "meanMs": 12.05,
-        "p50Ms": 11.4,
-        "p95Ms": 22,
-        "maxMs": 22.4
+        "frames": 61,
+        "meanMs": 11.33,
+        "p50Ms": 11.1,
+        "p95Ms": 14.3,
+        "maxMs": 44.4
       },
       {
-        "frames": 66,
-        "meanMs": 9.65,
-        "p50Ms": 9.8,
-        "p95Ms": 14.1,
-        "maxMs": 16.8
+        "frames": 64,
+        "meanMs": 10.49,
+        "p50Ms": 10.3,
+        "p95Ms": 15.9,
+        "maxMs": 20
       },
       {
-        "frames": 62,
-        "meanMs": 10.46,
-        "p50Ms": 9.5,
-        "p95Ms": 15.4,
-        "maxMs": 35
+        "frames": 63,
+        "meanMs": 10.21,
+        "p50Ms": 10.1,
+        "p95Ms": 14.3,
+        "maxMs": 18.2
+      }
+    ],
+    "editorPlain": [
+      {
+        "open": {
+          "n": 5,
+          "meanMs": 83.3,
+          "p95Ms": 106.1
+        },
+        "keystrokeLatency": {
+          "n": 40,
+          "meanMs": 14.25,
+          "p95Ms": 19.9
+        },
+        "keystrokeWork": {
+          "n": 40,
+          "meanMs": 2.12,
+          "p95Ms": 5.2
+        }
+      },
+      {
+        "open": {
+          "n": 5,
+          "meanMs": 70.3,
+          "p95Ms": 83
+        },
+        "keystrokeLatency": {
+          "n": 40,
+          "meanMs": 13.49,
+          "p95Ms": 18.9
+        },
+        "keystrokeWork": {
+          "n": 40,
+          "meanMs": 1.64,
+          "p95Ms": 2.8
+        }
+      },
+      {
+        "open": {
+          "n": 5,
+          "meanMs": 67.16,
+          "p95Ms": 79.1
+        },
+        "keystrokeLatency": {
+          "n": 40,
+          "meanMs": 14.57,
+          "p95Ms": 20.3
+        },
+        "keystrokeWork": {
+          "n": 40,
+          "meanMs": 2.24,
+          "p95Ms": 4.4
+        }
+      }
+    ],
+    "editorMirrored": [
+      {
+        "open": {
+          "n": 5,
+          "meanMs": 73.04,
+          "p95Ms": 95.2
+        },
+        "keystrokeLatency": {
+          "n": 40,
+          "meanMs": 16.93,
+          "p95Ms": 32.1
+        },
+        "keystrokeWork": {
+          "n": 40,
+          "meanMs": 2.97,
+          "p95Ms": 6.6
+        }
+      },
+      {
+        "open": {
+          "n": 5,
+          "meanMs": 67.68,
+          "p95Ms": 92.7
+        },
+        "keystrokeLatency": {
+          "n": 40,
+          "meanMs": 15.05,
+          "p95Ms": 18.8
+        },
+        "keystrokeWork": {
+          "n": 40,
+          "meanMs": 2.69,
+          "p95Ms": 4.5
+        }
+      },
+      {
+        "open": {
+          "n": 5,
+          "meanMs": 65.68,
+          "p95Ms": 87.9
+        },
+        "keystrokeLatency": {
+          "n": 40,
+          "meanMs": 14.6,
+          "p95Ms": 21.7
+        },
+        "keystrokeWork": {
+          "n": 40,
+          "meanMs": 2.65,
+          "p95Ms": 4.9
+        }
       }
     ]
   },
-  "overheadMeanPct": 8.9
+  "overheadMeanPct": 7.4,
+  "editor": {
+    "stock": {
+      "open": {
+        "meanMs": 73.59,
+        "p95Ms": 89.4
+      },
+      "keystrokeLatency": {
+        "meanMs": 14.1,
+        "p95Ms": 19.7
+      },
+      "keystrokeWork": {
+        "meanMs": 2,
+        "p95Ms": 4.13
+      }
+    },
+    "layered": {
+      "open": {
+        "meanMs": 68.8,
+        "p95Ms": 91.93
+      },
+      "keystrokeLatency": {
+        "meanMs": 15.53,
+        "p95Ms": 24.2
+      },
+      "keystrokeWork": {
+        "meanMs": 2.77,
+        "p95Ms": 5.33
+      }
+    }
+  }
 }

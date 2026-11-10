@@ -10,10 +10,11 @@
 import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
-import { Documents } from '@univerjs/engine-render'
+import { Documents, DocumentSkeleton } from '@univerjs/engine-render'
 import { MoveSelectionCommand } from '@univerjs/sheets-ui'
+import { NodePositionConvertToCursor } from '@univerjs/docs-ui'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { checkUniverContract, VERIFIED_UNIVER_VERSION } from '../src/index'
+import { checkTextContract, checkUniverContract, VERIFIED_UNIVER_VERSION } from '../src/index'
 
 const CANVAS_METHODS = ['fillText', 'strokeText', 'drawImage', 'measureText'] as const
 
@@ -50,8 +51,10 @@ describe('checkUniverContract against the installed Univer', () => {
     vi.unstubAllGlobals()
   })
 
-  it('finds every hooked internal: no problems', () => {
-    expect(checkUniverContract().problems).toEqual([])
+  it('finds every hooked internal: no problems, grid or text', () => {
+    const report = checkUniverContract()
+    expect(report.problems).toEqual([])
+    expect(report.textProblems).toEqual([])
   })
 
   it('reports the installed versions and accepts them as verified', () => {
@@ -60,6 +63,7 @@ describe('checkUniverContract against the installed Univer', () => {
       core: VERIFIED_UNIVER_VERSION,
       'engine-render': VERIFIED_UNIVER_VERSION,
       'sheets-ui': VERIFIED_UNIVER_VERSION,
+      'docs-ui': VERIFIED_UNIVER_VERSION,
     })
     expect(report.verifiedVersion).toBe(true)
   })
@@ -70,6 +74,7 @@ describe('checkUniverContract against the installed Univer', () => {
       core: installedVersion('@univerjs/core'),
       'engine-render': installedVersion('@univerjs/engine-render'),
       'sheets-ui': installedVersion('@univerjs/sheets-ui'),
+      'docs-ui': installedVersion('@univerjs/docs-ui'),
     })
   })
 
@@ -98,6 +103,50 @@ describe('checkUniverContract against the installed Univer', () => {
       expect(checkUniverContract().problems).toEqual(['MoveSelectionCommand (id sheet.command.move-selection, handler)'])
     } finally {
       cmd.handler = original
+    }
+  })
+
+  // The document-text layer (src/rtl-text.ts): its problems are reported apart
+  // from the grid's, so the grid can stay mirrored while the text stays stock.
+  it('reports a changed caret hook as a text problem only (same behaviour, different signature)', () => {
+    // As the harness does with ?simulateBreak=text-contract.
+    const proto = NodePositionConvertToCursor.prototype as unknown as { getRangePointData: (...a: unknown[]) => unknown }
+    const original = proto.getRangePointData
+    proto.getRangePointData = function (this: unknown, ...a: unknown[]) {
+      return original.apply(this, a)
+    }
+    try {
+      const report = checkUniverContract()
+      expect(report.problems).toEqual([])
+      expect(report.textProblems).toEqual(['NodePositionConvertToCursor.prototype.getRangePointData(start, end)'])
+    } finally {
+      proto.getRangePointData = original
+    }
+    expect(checkTextContract()).toEqual([])
+  })
+
+  it('reports a missing hit-test hook of the document skeleton', () => {
+    const proto = DocumentSkeleton.prototype as unknown as Record<string, unknown>
+    const original = proto._collectNearestTextNode
+    proto._collectNearestTextNode = undefined
+    try {
+      expect(checkTextContract()).toEqual(['DocumentSkeleton.prototype._collectNearestTextNode(page, segment, cache, x, y, nestLevel)'])
+    } finally {
+      proto._collectNearestTextNode = original
+    }
+  })
+
+  it('reports a changed document draw entry (the text heartbeat hangs on it)', () => {
+    const proto = Documents.prototype as unknown as Record<string, unknown>
+    const original = proto.draw as (...a: unknown[]) => unknown
+    proto.draw = function (this: unknown, ...a: unknown[]) {
+      return original.apply(this, a)
+    }
+    try {
+      expect(checkTextContract()).toEqual(['Documents.prototype.draw(ctx, bounds)'])
+      expect(checkUniverContract().problems).toEqual([])
+    } finally {
+      proto.draw = original
     }
   })
 

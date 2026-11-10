@@ -19,6 +19,7 @@
   },
   "dependencies": {
     "@univerjs/core": "1.4.0",
+    "@univerjs/docs-ui": "1.4.0",
     "@univerjs/engine-render": "1.4.0",
     "@univerjs/presets": "1.4.0",
     "@univerjs/sheets": "1.4.0",

@@ -19,14 +19,20 @@
 //   6. Alignment is logical in the model (LEFT = start = visual right). The
 //      toolbar and shortcuts are swapped so their left/right buttons mean what
 //      they show; programmatic calls (Facade, sync, import) are not swapped.
+//   7. Document text (the cell editor, the formula bar, rich-text cells) is
+//      laid out by Univer in logical order with no bidi at all; rtl-text.ts
+//      shows it in Unicode bidi order and makes caret, selection, hit testing
+//      and arrow keys follow (see that file).
 //
 // The model is never changed by the mirror itself.
 //
 // Robustness against Univer upgrades: everything this module hooks is listed
-// in `checkUniverContract()`. If any hook is missing, the stock grid is left
-// untouched instead of half-mirroring it. After enabling, a heartbeat confirms
-// that text really went through the flip-back path; if it did not, the mirror
-// is withdrawn. Both outcomes are reported through `RtlGridStatus`.
+// in `checkUniverContract()`. If any grid hook is missing, the stock grid is
+// left untouched instead of half-mirroring it; if only a text hook is missing,
+// the grid is mirrored and the document text stays stock. After enabling, a
+// heartbeat confirms that text really went through the flip-back path; if it
+// did not, the mirror is withdrawn (the text layer has a heartbeat of its own).
+// Every outcome is reported through `RtlGridStatus`.
 
 import { Direction, HorizontalAlign, IUniverInstanceService, Plugin } from '@univerjs/core'
 import { Documents, Font, IRenderManagerService, UniverRenderEnginePlugin } from '@univerjs/engine-render'
@@ -34,8 +40,11 @@ import type { FUniver } from '@univerjs/presets'
 import { SetHorizontalTextAlignCommand } from '@univerjs/sheets'
 import { ExpandSelectionCommand, MoveSelectionCommand, UniverSheetsUIPlugin } from '@univerjs/sheets-ui'
 import { ICanvasPopupService, IMenuManagerService } from '@univerjs/ui'
+import { UniverDocsUIPlugin } from '@univerjs/docs-ui'
 import { filter, firstValueFrom, map } from 'rxjs'
 import type { Observable } from 'rxjs'
+import { checkTextContract, enableRtlText } from './rtl-text'
+import type { TextLayer } from './rtl-text'
 
 /** The Univer release this layer was built and tested against. */
 export const VERIFIED_UNIVER_VERSION = '1.4.0'
@@ -102,12 +111,14 @@ type AnyFn = (...args: any[]) => unknown // eslint-disable-line @typescript-esli
 const isFn = (v: unknown): v is AnyFn => typeof v === 'function'
 
 export interface ContractReport {
-  /** Installed Univer versions (core, engine-render, sheets-ui). */
+  /** Installed Univer versions (core, engine-render, sheets-ui, docs-ui). */
   versions: Record<string, string>
   /** True when every installed version equals VERIFIED_UNIVER_VERSION. */
   verifiedVersion: boolean
-  /** Missing or changed hooks. Empty means the layer can be applied safely. */
+  /** Missing or changed grid hooks. Empty means the grid can be mirrored safely. */
   problems: string[]
+  /** Missing or changed hooks of the document-text layer (rtl-text.ts). Empty means it can be applied. */
+  textProblems: string[]
 }
 
 /** Static part of the contract: module-level hooks that exist before any workbook. */
@@ -116,6 +127,7 @@ export function checkUniverContract(): ContractReport {
     core: String((Plugin as unknown as { version?: string }).version),
     'engine-render': String((UniverRenderEnginePlugin as unknown as { version?: string }).version),
     'sheets-ui': String((UniverSheetsUIPlugin as unknown as { version?: string }).version),
+    'docs-ui': String((UniverDocsUIPlugin as unknown as { version?: string }).version),
   }
   const problems: string[] = []
   const docs = Documents.prototype as unknown as Record<string, unknown>
@@ -134,7 +146,7 @@ export function checkUniverContract(): ContractReport {
   const ctx2d = CanvasRenderingContext2D.prototype as unknown as Record<string, unknown>
   if (!('direction' in CanvasRenderingContext2D.prototype)) problems.push('CanvasRenderingContext2D.direction (browser)')
   for (const m of ['fillText', 'strokeText', 'drawImage', 'measureText']) if (!isFn(ctx2d[m])) problems.push(`CanvasRenderingContext2D.${m}`)
-  return { versions, verifiedVersion: Object.values(versions).every((v) => v === VERIFIED_UNIVER_VERSION), problems }
+  return { versions, verifiedVersion: Object.values(versions).every((v) => v === VERIFIED_UNIVER_VERSION), problems, textProblems: checkTextContract() }
 }
 
 // ---------------------------------------------------------------------------
@@ -359,7 +371,10 @@ export interface RtlGridOptions {
 
 export interface RtlGridStatus extends ContractReport {
   mirrored: boolean
+  /** Set when the grid is not mirrored, or when it is but the text layer is not applied (English, for an administrator). */
   reason?: string
+  /** The document-text layer (cell editor, formula bar, rich-text cells): applied, or why not. */
+  text: { applied: boolean; reason?: string }
   dispose: () => void
 }
 
@@ -375,15 +390,17 @@ export async function enableRtlGrid(univerAPI: FUniver, unitId: string, options:
   const report$ = (status: RtlGridStatus) => {
     options.onStatus?.(status)
     if (!status.mirrored) console.error(`[rtl-grid] grid left unmirrored: ${status.reason}`, status)
+    else if (!status.text.applied) console.error(`[rtl-grid] grid mirrored, document text left stock: ${status.text.reason}`, status)
     return status
   }
-  if (report.problems.length) return report$({ ...report, mirrored: false, reason: `Univer contract broken: ${report.problems.join('; ')}`, dispose: noop })
+  const noText = { applied: false, reason: 'the grid is not mirrored' }
+  if (report.problems.length) return report$({ ...report, mirrored: false, reason: `Univer contract broken: ${report.problems.join('; ')}`, text: noText, dispose: noop })
   if (!report.verifiedVersion && options.onUnverifiedVersion === 'skip') {
-    return report$({ ...report, mirrored: false, reason: `Univer ${JSON.stringify(report.versions)} is not the verified ${VERIFIED_UNIVER_VERSION}`, dispose: noop })
+    return report$({ ...report, mirrored: false, reason: `Univer ${JSON.stringify(report.versions)} is not the verified ${VERIFIED_UNIVER_VERSION}`, text: noText, dispose: noop })
   }
 
   const injector = (univerAPI as unknown as { _injector?: Injector })._injector
-  if (!injector || !isFn(injector.get)) return report$({ ...report, mirrored: false, reason: 'Univer contract broken: FUniver._injector', dispose: noop })
+  if (!injector || !isFn(injector.get)) return report$({ ...report, mirrored: false, reason: 'Univer contract broken: FUniver._injector', text: noText, dispose: noop })
   const manager = injector.get<RenderManagerLike>(IRenderManagerService)
   const renderUnit = manager.getRenderUnitById(unitId) ?? (await firstValueFrom(manager.created$.pipe(filter((r) => r.unitId === unitId))))
   const { scene, engine } = renderUnit
@@ -398,11 +415,20 @@ export async function enableRtlGrid(univerAPI: FUniver, unitId: string, options:
   if (!menuService?._menu || !isFn(menuService.mergeMenu)) instanceProblems.push('IMenuManagerService._menu/mergeMenu')
   else if (findMenuPaths(menuService._menu, SetHorizontalTextAlignCommand.id).length === 0) instanceProblems.push('toolbar item sheet.command.set-horizontal-text-align')
   if (instanceProblems.length) {
-    return report$({ ...report, problems: instanceProblems, mirrored: false, reason: `Univer contract broken: ${instanceProblems.join('; ')}`, dispose: noop })
+    return report$({ ...report, problems: instanceProblems, mirrored: false, reason: `Univer contract broken: ${instanceProblems.join('; ')}`, text: noText, dispose: noop })
   }
   const frame = await waitFor(() => canvas.parentElement, 'the sheet canvas to be mounted')
 
   patchCanvas()
+  // The text layer goes first: its glyph-group hook then sits inside the
+  // grid's flip-back (either order composes; this one is the tested one).
+  let status: RtlGridStatus | null = null
+  const text: TextLayer = enableRtlText(injector, (why) => {
+    if (!status) return
+    status.text = { applied: false, reason: why }
+    if (status.mirrored) status.reason = `document text left stock: ${why}`
+    report$(status)
+  })
   patchDocuments()
   patchFont()
   patchCommands()
@@ -504,6 +530,7 @@ export async function enableRtlGrid(univerAPI: FUniver, unitId: string, options:
   }
 
   const dispose = () => {
+    text.dispose()
     frame.removeEventListener('wheel', onWheel, { capture: true })
     im._getObjectAtEvent = originalGetObjectAtEvent
     popupService.addPopup = originalAddPopup
@@ -515,12 +542,15 @@ export async function enableRtlGrid(univerAPI: FUniver, unitId: string, options:
     redraw() // repaint unmirrored, so no flipped-back text is left on the canvas
   }
 
-  const status: RtlGridStatus = {
+  status = {
     ...report,
+    textProblems: text.problems,
     mirrored: true,
-    reason: report.verifiedVersion ? undefined : `unverified Univer ${JSON.stringify(report.versions)}`,
+    reason: report.verifiedVersion ? (text.applied ? undefined : `document text left stock: ${text.reason}`) : `unverified Univer ${JSON.stringify(report.versions)}`,
+    text: { applied: text.applied, reason: text.reason },
     dispose,
   }
+  const mirroredStatus = status
   // Heartbeat: within a few frames, plain text must have gone through the
   // flip-back path. If Univer stopped drawing through the hooked calls, the
   // mirrored text would be unreadable: withdraw the mirror instead and report it.
@@ -535,10 +565,11 @@ export async function enableRtlGrid(univerAPI: FUniver, unitId: string, options:
     while (performance.now() - start < 3000 && textFlipCount === before) await new Promise((r) => requestAnimationFrame(r))
     if (textFlipCount === before) {
       dispose()
-      status.mirrored = false
-      status.reason = 'heartbeat failed: no text went through the flip-back path'
-      report$(status)
+      mirroredStatus.mirrored = false
+      mirroredStatus.reason = 'heartbeat failed: no text went through the flip-back path'
+      mirroredStatus.text = { applied: false, reason: 'the grid mirror was withdrawn' }
+      report$(mirroredStatus)
     }
   })()
-  return report$(status)
+  return report$(mirroredStatus)
 }
