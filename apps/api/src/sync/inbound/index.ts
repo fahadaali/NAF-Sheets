@@ -9,7 +9,7 @@ import { runReconciliationWith } from './reconcile'
 import type { ReconcileReport } from './reconcile'
 
 export { handleInboundBatchWith, processInbound } from './consumer'
-export { reconcileWorkbook, requeueStalePending, runReconciliationWith, type ReconcileReport } from './reconcile'
+export { reconcileWorkbook, requeueRelinked, requeueStalePending, runReconciliationWith, type ReconcileReport } from './reconcile'
 export { ensureProjectWebhook, publicOrigin, webhookSecret, type WebhookStatus } from './webhooks'
 
 /** `bc-inbound` consumer. */

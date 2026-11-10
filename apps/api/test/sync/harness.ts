@@ -78,11 +78,20 @@ export async function linkUser(h: Harness, userId: string, person: FakePerson): 
   const at = new Date().toISOString()
   await env.DB.prepare(
     `INSERT INTO user_basecamp_links (user_id, bc_person_id, bc_account_id, encrypted_tokens, expires_at, linked_at, status, bc_person_name, updated_at)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'active', ?7, ?6)`,
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'active', ?7, ?6)
+     ON CONFLICT (user_id) DO UPDATE SET bc_person_id = excluded.bc_person_id, encrypted_tokens = excluded.encrypted_tokens,
+       expires_at = excluded.expires_at, linked_at = excluded.linked_at, status = 'active', updated_at = excluded.updated_at`,
   )
     .bind(userId, person.id, h.fake.accountId, sealed, FAR, at, person.name)
     .run()
   return token
+}
+
+/** The link as src/basecamp-link leaves it after a revocation or a refused refresh: no token held. */
+export async function dropLink(userId: string, status: 'revoked' | 'expired'): Promise<void> {
+  await env.DB.prepare(`UPDATE user_basecamp_links SET status = ?2, encrypted_tokens = '', updated_at = ?3 WHERE user_id = ?1`)
+    .bind(userId, status, new Date().toISOString())
+    .run()
 }
 
 /** The service token (an admin's Basecamp account). Returns the access token. */
@@ -250,10 +259,10 @@ export interface SheetView {
   remove(row: number): Record<number, Record<string, unknown>>
 }
 
-export async function readSheetView(l: Linked, user: { id: string } = l.owner): Promise<SheetView> {
+export async function readSheetView(l: Linked, user: { id: string } = l.owner, univerSheetId: string = l.univerSheetId): Promise<SheetView> {
   const res = await call(l.h.app, 'GET', `/api/workbooks/${l.wbId}`, { user, env: l.h.env })
   const wb = await json<{ snapshot: Snapshot; version: number }>(res)
-  const cells = (wb.snapshot.sheets[l.univerSheetId] as SheetData).cellData
+  const cells = (wb.snapshot.sheets[univerSheetId] as SheetData).cellData
   const header = cells[0] ?? {}
   let uidColumn = -1
   for (const [c, cell] of Object.entries(header)) if (cell['v'] === '__uid') uidColumn = Number(c)
@@ -366,7 +375,7 @@ export async function runInbound(h: Harness, bodies: BcInboundQueueMessage[], at
 }
 
 /** A webhook delivery as POST /webhooks/basecamp/:secret would queue it. */
-export async function deliver(l: Linked, kind: string, recording: { id: number; type: string; bucketId?: number }, creatorId = 1) {
+export async function deliver(l: Linked, kind: string, recording: { id: number; type: string; bucketId?: number }, creatorId = 1, attempts = 1) {
   const hook = await env.DB.prepare(`SELECT bc_webhook_id FROM bc_webhooks WHERE bc_project_id = ?1 AND replaced_at IS NULL`).bind(l.project.id).first<{ bc_webhook_id: number }>()
   if (!hook) throw new Error('no webhook registered')
   return runInbound(l.h, [
@@ -377,7 +386,7 @@ export async function deliver(l: Linked, kind: string, recording: { id: number; 
       receivedAt: new Date().toISOString(),
       body: l.h.fake.delivery(kind, { id: recording.id, type: recording.type, bucketId: recording.bucketId ?? l.project.id }, creatorId),
     },
-  ])
+  ], attempts)
 }
 
 export async function reconcile(h: Harness) {

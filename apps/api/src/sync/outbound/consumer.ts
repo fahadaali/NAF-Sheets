@@ -42,6 +42,7 @@ import {
   markAccountInactive,
   openDeletion,
   releaseLease,
+  setRowAwaitingLink,
   setRowError,
   syncLogStatement,
   workbookIdOfTask,
@@ -239,7 +240,8 @@ async function followUps(env: Env, deps: SyncDeps, state: WorkbookState, uid: st
 
 /**
  * The actor has no usable Basecamp link. A person's edit is never sent with
- * another token: the row asks them to link their account. The one exception
+ * another token: the row stays `pending` and asks them to link their account
+ * (spec §3). The one exception
  * (§8.1) is a to-do in automatic mode whose only change is the union of its
  * subtasks' assignees: it goes with the service token, logged «قاعدة تلقائية».
  */
@@ -274,9 +276,10 @@ async function actorWithoutLink(
       if (!(error instanceof LinkFailure)) return refused(env, deps, ctx, uid, error)
     }
   }
-  // OPEN: the brief asks for `error`; spec §3 says the edits stay `pending` with a re-link alert (S17).
-  const message: RowMessageKey = key === 'not_linked' ? 'actor_not_linked' : key === 'link_expired' ? 'actor_link_expired' : 'actor_link_revoked'
-  await setRowError(env.DB, uid, message, ROW_MESSAGES[message])
+  // Spec §3 (S17, decided 2026-11-10): the row stays `pending` with the re-link message;
+  // re-linking alone sends it (reconciliation, and GET …/sync, queue it again).
+  const code = key === 'not_linked' ? 'actor_not_linked' : key === 'link_expired' ? 'actor_link_expired' : 'actor_link_revoked'
+  await setRowAwaitingLink(env.DB, uid, code, ROW_MESSAGES[code])
   return ACK
 }
 

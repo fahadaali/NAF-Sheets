@@ -6,7 +6,7 @@ import { env } from 'cloudflare:workers'
 import { describe, expect, it } from 'vitest'
 import type { AssigneeOptionsResponse, ExternalContact, SyncHealthResponse, WorkbookSyncResponse } from '@naf-sheets/shared'
 import { isArabic } from '../helpers'
-import { call, edit, harness, json, linkUser, seedMember, setupLinked } from './harness'
+import { call, drainOutbound, edit, harness, json, linkUser, readSheetView, runInbound, seedMember, setupLinked, task } from './harness'
 
 async function addMember(workbookId: string, userId: string, role: 'editor' | 'viewer', by: string): Promise<void> {
   await env.DB.prepare(`INSERT INTO workbook_members (workbook_id, user_id, role, added_by, added_at) VALUES (?1, ?2, ?3, ?4, ?5)`).bind(workbookId, userId, role, by, new Date().toISOString()).run()
@@ -94,6 +94,45 @@ describe('POST /api/workbooks/:id/sync-now', () => {
     expect(res.status).toBe(202)
     expect(await res.json()).toEqual({ queued: 1 })
     expect(h.inbound.sent.map((m) => m.body)).toEqual([expect.objectContaining({ kind: 'reconcile', workbookId: l.wbId, requestedBy: l.owner.id })])
+  })
+})
+
+describe('resuming an account stopped by Account Inactive (S6)', () => {
+  it('an editor’s «مزامنة الآن» does not resume it; an admin’s does, audited, and the held rows go out', async () => {
+    const h = harness()
+    const l = await setupLinked(h, { rows: [{ title: 'أ' }], service: true })
+    const admin = l.admin as { id: string }
+    await edit(l, (v) => v.set(v.row('أ'), 'D', '2026-12-31'))
+    h.fake.fail(() => true, 404, { headers: { Reason: 'Account Inactive' } })
+    await drainOutbound(h)
+    const status = async () => (await env.DB.prepare(`SELECT status FROM sync_accounts WHERE bc_account_id = ?1`).bind(h.fake.accountId).first<{ status: string }>())?.status
+    expect(await status()).toBe('inactive')
+    const uid = (await readSheetView(l)).uid('أ')
+    expect((await task(uid)).sync_state).toBe('pending')
+
+    // The owner (a platform editor): queued, but the account stays stopped and nothing is sent.
+    expect((await call(h.app, 'POST', `/api/workbooks/${l.wbId}/sync-now`, { user: l.owner, env: h.env })).status).toBe(202)
+    expect(await status()).toBe('inactive')
+    const calls = h.fake.calls.length
+    await drainOutbound(h)
+    await runInbound(h, h.inbound.take().map((m) => m.body))
+    expect(h.fake.calls.length).toBe(calls)
+    expect((await task(uid)).sync_state).toBe('pending')
+
+    // A platform admin: the account resumes, the reconciliation runs, the held row is sent.
+    const res = await call(h.app, 'POST', `/api/workbooks/${l.wbId}/sync-now`, { user: admin, env: h.env })
+    expect(res.status).toBe(202)
+    expect(await status()).toBe('active')
+    const audit = await env.DB.prepare(`SELECT actor_id FROM audit_log WHERE action = 'basecamp.account.resume' AND entity_id = ?1`).bind(String(h.fake.accountId)).all<{ actor_id: string }>()
+    expect(audit.results.map((r) => r.actor_id)).toEqual([admin.id])
+    await runInbound(h, h.inbound.take().map((m) => m.body))
+    await drainOutbound(h)
+    const put = h.fake.callsTo('PUT', /^\/todos\/\d+\.json$/).at(-1)
+    expect((put?.body as { due_on: string }).due_on).toBe('2026-12-31')
+    expect(put?.token).toBe(l.token)
+    expect(await task(uid)).toMatchObject({ sync_state: 'synced' })
+    const state = await json<{ notice: string | null }>(await call(h.app, 'GET', `/api/workbooks/${l.wbId}/sync`, { user: l.owner, env: h.env }))
+    expect(state.notice).toBeNull()
   })
 })
 

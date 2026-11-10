@@ -13,7 +13,7 @@ import { kvConditionalCache, readClient, syncContext } from '../deps'
 import type { SyncDeps } from '../deps'
 import { enqueueTasks } from '../detect'
 import { loadWorkbookState, syncedSheets } from '../state'
-import { accountInactive, linkedWorkbooks, markAccountInactive } from '../store'
+import { ACTOR_LINK_CODES, accountInactive, linkedWorkbooks, markAccountInactive } from '../store'
 import type { WorkbookSyncRow } from '../store'
 import { reconcileList } from './records'
 import { TaskBusy } from './run'
@@ -113,24 +113,56 @@ export async function reconcileWorkbook(
   return out
 }
 
-/** Pending rows whose message may have been lost, queued again with their own author (§3). */
+const LINK_CODES_SQL = ACTOR_LINK_CODES.map((c) => `'${c}'`).join(', ')
+
+/**
+ * Pending rows queued again, each with its own author (§3):
+ * - a row whose message may have been lost (still pending after 10 minutes);
+ * - a row held for its author's Basecamp link (S17), as soon as that link is
+ *   active again — whatever its age. A row whose author is still not linked
+ *   is left alone, so nothing churns.
+ */
 export async function requeueStalePending(env: Env, deps: SyncDeps, workbookId: string, olderThanMs = STALE_PENDING_MS): Promise<number> {
   const cutoff = new Date(deps.now() - olderThanMs).toISOString()
   const { results } = await env.DB.prepare(
     `SELECT t.task_uid, t.pending_actor_id FROM tasks t JOIN sheets s ON s.id = t.sheet_id
      WHERE s.workbook_id = ?1 AND t.sync_state = 'pending' AND t.pending_actor_id IS NOT NULL
-       AND (t.last_local_change_at IS NULL OR t.last_local_change_at < ?2)
-       AND (t.sync_lease_until IS NULL OR t.sync_lease_until < ?3)`,
+       AND (t.sync_lease_until IS NULL OR t.sync_lease_until < ?3)
+       AND IFNULL(t.last_error_code, '') NOT IN (${LINK_CODES_SQL})
+       AND (t.last_local_change_at IS NULL OR t.last_local_change_at < ?2)`,
   )
     .bind(workbookId, cutoff, new Date(deps.now()).toISOString())
     .all<{ task_uid: string; pending_actor_id: string }>()
+  const stale = results.length === 0 ? 0 : await enqueueTasks(env, workbookId, results.map((r) => ({ uid: r.task_uid, actor: r.pending_actor_id })), deps.now, 0)
+  return stale + (await requeueRelinked(env, deps, workbookId))
+}
+
+/**
+ * Rows held for their author's Basecamp link (spec §3, S17) whose author has
+ * an active link again: queued with that author's identity, and the re-link
+ * message cleared (the row stays `pending` until it is sent). Called by
+ * reconciliation and by GET …/sync, so linking again is enough.
+ */
+export async function requeueRelinked(env: Env, deps: SyncDeps, workbookId: string): Promise<number> {
+  const db = env.DB
+  const { results } = await db
+    .prepare(
+      `SELECT t.task_uid, t.pending_actor_id FROM tasks t
+       JOIN sheets s ON s.id = t.sheet_id
+       JOIN user_basecamp_links l ON l.user_id = t.pending_actor_id AND l.status = 'active' AND l.encrypted_tokens <> ''
+       WHERE s.workbook_id = ?1 AND t.sync_state = 'pending' AND t.last_error_code IN (${LINK_CODES_SQL})
+         AND (t.sync_lease_until IS NULL OR t.sync_lease_until < ?2)`,
+    )
+    .bind(workbookId, new Date(deps.now()).toISOString())
+    .all<{ task_uid: string; pending_actor_id: string }>()
   if (results.length === 0) return 0
-  return enqueueTasks(
-    env,
-    workbookId,
-    results.map((r) => ({ uid: r.task_uid, actor: r.pending_actor_id })),
-    deps.now,
-    0,
+  await db.batch(
+    results.map((r) =>
+      db
+        .prepare(`UPDATE tasks SET last_error = NULL, last_error_code = NULL WHERE task_uid = ?1 AND sync_state = 'pending' AND last_error_code IN (${LINK_CODES_SQL})`)
+        .bind(r.task_uid),
+    ),
   )
+  return enqueueTasks(env, workbookId, results.map((r) => ({ uid: r.task_uid, actor: r.pending_actor_id })), deps.now, 0)
 }
 

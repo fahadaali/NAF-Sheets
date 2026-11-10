@@ -252,7 +252,7 @@ describe('the acting user (§3)', () => {
     expect(byTitle.get('ثانية')).toBe(colleagueToken)
   })
 
-  it('an actor without an active link: row error asking to link, never the service token', async () => {
+  it('an actor without a link: the row stays pending with the re-link message, never the service token; linking again sends it (§3)', async () => {
     const h = harness()
     const l = await setupLinked(h, { rows: [{ title: 'أولى' }], service: true })
     const stranger = await seedMember('editor')
@@ -261,10 +261,28 @@ describe('the acting user (§3)', () => {
     await edit(l, (v) => v.set(v.row('أولى'), 'D', '2026-12-01'), { user: stranger })
     await drainOutbound(h)
     expect(h.fake.writes().length).toBe(writes)
-    const row = await task((await readSheetView(l)).uid('أولى'))
-    expect(row.sync_state).toBe('error')
+    const uid = (await readSheetView(l)).uid('أولى')
+    const row = await task(uid)
+    expect(row.sync_state).toBe('pending')
     expect(row.last_error_code).toBe('actor_not_linked')
     expect(row.last_error).toContain('اربط حسابك')
+    const state = await json<{ tasks: Array<{ uid: string; state: string; message: string | null }> }>(
+      await call(h.app, 'GET', `/api/workbooks/${l.wbId}/sync`, { user: l.owner, env: h.env }),
+    )
+    expect(state.tasks.find((t) => t.uid === uid)).toMatchObject({ state: 'pending', message: row.last_error })
+    // Polling again while still unlinked queues nothing.
+    expect(h.outbound.sent).toEqual([])
+
+    // Linking alone is enough: the next poll queues the row with its own author.
+    const strangerToken = await linkUser(h, stranger.id, h.fake.person('المحرر الجديد'))
+    h.fake.projects.get(l.project.id)?.peopleIds.add(h.fake.tokens.get(strangerToken) as number)
+    await call(h.app, 'GET', `/api/workbooks/${l.wbId}/sync`, { user: l.owner, env: h.env })
+    expect(h.outbound.sent.map((m) => [m.body.taskUid, m.body.actorUserId])).toEqual([[uid, stranger.id]])
+    await drainOutbound(h)
+    const put = h.fake.callsTo('PUT', /^\/todos\/\d+\.json$/).at(-1)
+    expect(put?.token).toBe(strangerToken)
+    expect((put?.body as { due_on: string }).due_on).toBe('2026-12-01')
+    expect(await task(uid)).toMatchObject({ sync_state: 'synced', last_error: null })
   })
 })
 

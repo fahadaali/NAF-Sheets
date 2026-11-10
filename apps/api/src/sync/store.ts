@@ -275,6 +275,21 @@ export async function setRowError(db: D1Database, uid: string, code: string, mes
   await rowErrorStatement(db, uid, code, message).run()
 }
 
+/** Codes of a row held for its author's Basecamp link (spec §3): the row stays `pending`. */
+export const ACTOR_LINK_CODES = ['actor_not_linked', 'actor_link_expired', 'actor_link_revoked'] as const
+
+/**
+ * Spec §3: the edits of a person whose link is missing, expired or revoked
+ * stay `pending`, with the Arabic re-link message, and are never sent under
+ * another account. They go out once that person links again.
+ */
+export async function setRowAwaitingLink(db: D1Database, uid: string, code: (typeof ACTOR_LINK_CODES)[number], message: string): Promise<void> {
+  await db
+    .prepare(`UPDATE tasks SET sync_state = 'pending', last_error = ?2, last_error_code = ?3 WHERE task_uid = ?1`)
+    .bind(uid, message, code)
+    .run()
+}
+
 /** Persists a base: the last synced values (3-way diff base) and its hash (echo suppression). */
 export function baseStatement(db: D1Database, uid: string, base: SyncedBase): D1PreparedStatement {
   return db

@@ -116,6 +116,66 @@ describe('a webhook delivery', () => {
   })
 })
 
+describe('a list restored in Basecamp', () => {
+  for (const [away, back] of [
+    ['archived', 'todolist_unarchived'],
+    ['trashed', 'todolist_untrashed'],
+  ] as const) {
+    it(`${back}: every row marked ${away} is restored (and a to-do trashed on its own stays marked)`, async () => {
+      const h = harness()
+      const l = await setupLinked(h, { hierarchy: { mode: 'indent' }, rows: [{ title: 'أ' }, { title: 'فرعية أ', indent: true }, { title: 'ب' }, { title: 'محذوفة وحدها' }], service: true })
+      const alone = todoByTitle(h, 'محذوفة وحدها')
+      alone.status = 'trashed'
+      await deliver(l, 'todo_trashed', { id: alone.id, type: 'Todo' })
+      const list = h.fake.lists.get(l.list.id)
+      if (!list) throw new Error('no list')
+      list.status = away
+      await deliver(l, `todolist_${away}`, { id: l.list.id, type: 'Todolist' })
+      const view = await readSheetView(l)
+      for (const title of ['أ', 'فرعية أ', 'ب']) expect((await task(view.uid(title))).remote_status, title).toBe(away)
+
+      list.status = 'active'
+      await deliver(l, back, { id: l.list.id, type: 'Todolist' })
+      for (const title of ['أ', 'فرعية أ', 'ب']) expect((await task(view.uid(title))).remote_status, title).toBe('active')
+      expect((await task(view.uid('محذوفة وحدها'))).remote_status).not.toBe('active')
+      const after = await readSheetView(l)
+      for (const title of ['أ', 'فرعية أ', 'ب', 'محذوفة وحدها']) expect(after.row(title)).toBeGreaterThan(0)
+      const uidCell = after.cells[after.row('أ')]?.[after.uidColumn] as { custom?: { nafSheets?: { deletedRemotely?: string } } }
+      expect(uidCell?.custom?.nafSheets?.deletedRemotely).toBeUndefined()
+      expect(h.fake.writes().filter((c) => !c.path.startsWith('/webhooks') && !c.path.startsWith('/buckets'))).toEqual(
+        h.fake.writes().filter((c) => c.method === 'POST' && /\/todos\.json$|\/subtasks\.json$/.test(c.path)),
+      )
+    })
+  }
+})
+
+describe('giving a delivery up', () => {
+  it('retries with backoff, and after the 5th attempt records it and acknowledges it (reconciliation catches up)', async () => {
+    const h = harness()
+    const l = await setupLinked(h, { rows: [{ title: 'مهمة' }], service: true })
+    const todo = todoByTitle(h, 'مهمة')
+    h.fake.fail((c) => c.method === 'GET' && c.path === `/todos/${todo.id}.json`, 503, { times: 100 })
+    const second = await deliver(l, 'todo_changed', { id: todo.id, type: 'Todo' }, 1, 2)
+    expect(second.retryMessages.map((m) => m.delaySeconds)).toEqual([20])
+    const before = await env.DB.prepare(`SELECT COUNT(*) AS n FROM sync_dead_letters WHERE queue = 'bc-inbound'`).first<{ n: number }>()
+    const fifth = await deliver(l, 'todo_changed', { id: todo.id, type: 'Todo' }, 1, 5)
+    expect(fifth.retryMessages).toEqual([])
+    expect(fifth.explicitAcks).toHaveLength(1)
+    const dead = await env.DB.prepare(`SELECT queue, attempts, error_code, body_json FROM sync_dead_letters WHERE id = ?1`).bind(fifth.explicitAcks[0]).first<{
+      queue: string
+      attempts: number
+      error_code: string
+      body_json: string
+    }>()
+    expect(dead).toMatchObject({ queue: 'bc-inbound', attempts: 5, error_code: 'server_error' })
+    // Payloads are never stored (§14): only the message kind.
+    expect(JSON.parse(dead?.body_json ?? '{}')).toEqual({ kind: 'basecamp_webhook' })
+    const after = await env.DB.prepare(`SELECT COUNT(*) AS n FROM sync_dead_letters WHERE queue = 'bc-inbound'`).first<{ n: number }>()
+    expect(after?.n).toBe((before?.n ?? 0) + 1)
+    expect(h.dlq.sent).toEqual([])
+  })
+})
+
 describe('automatic assignment of a to-do from its subtasks (§8.1)', () => {
   async function autoSetup() {
     const h = harness()

@@ -457,11 +457,19 @@ S16. **Out of scope in this wave, data untouched:** comments
     Basecamp invitations (§8.2 case 2) and external-contact e-mail (§17-7).
     Descriptions round-trip byte for byte, so `bc-attachment` tags survive.
 
-S17. **An editor without an active Basecamp link.** Implemented as the brief
-    asks: the row goes to `error` with an Arabic message asking to link
-    (`actor_not_linked` / `actor_link_expired` / `actor_link_revoked`), never
-    the service token. Spec §3 says such edits stay `pending` with a re-link
-    alert. Which state? (The message and the «اربط حسابك» path are the same.)
+S17. **Decided 2026-11-10: spec §3.** An editor whose Basecamp link is
+    missing, expired or revoked keeps their edits `pending`, with the Arabic
+    re-link message in `TaskSyncInfo.message` (`last_error_code`
+    `actor_not_linked` / `actor_link_expired` / `actor_link_revoked`); nothing
+    is ever sent under another account (the §8.1 automatic union alone may go
+    with the service token, logged «قاعدة تلقائية»). Linking again is enough:
+    GET …/sync (which the editor polls) and every reconciliation queue that
+    person's held rows again with their own identity, whatever their age; rows
+    whose author is still unlinked are not re-queued. GET …/sync therefore
+    writes (it clears the message of the rows it queues). The contract's
+    comment on `TaskSyncInfo.message` ("`error` and `conflict` only") should
+    add this `pending` case (S23). Original question: the brief asked for
+    `error`; the spec says `pending` with a re-link alert.
 
 S18. **404 with a person's token** may mean "no access" (§3), not "deleted".
     The outbound consumer then holds the row (`not_found`, never retried) and

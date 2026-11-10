@@ -5,6 +5,7 @@
 import { describe, expect, it } from 'vitest'
 import type { WorkbookConflictsResponse, WorkbookSyncResponse } from '@naf-sheets/shared'
 import { call, drainOutbound, edit, harness, json, readSheetView, setupLinked, syncLog, task, todoByTitle } from './harness'
+import type { SetupOptions } from './harness'
 import type { Linked } from './harness'
 
 async function conflictOnTitle(remoteLater: boolean): Promise<{ l: Linked; uid: string }> {
@@ -90,5 +91,88 @@ describe('conflict routes', () => {
     expect(h.fake.writes().length).toBe(writes)
     const unknown = await call(h.app, 'POST', `/api/workbooks/${l.wbId}/conflicts/nope/dismiss`, { user: l.owner, env: h.env })
     expect(unknown.status).toBe(404)
+  })
+})
+
+describe('restoring a conflict on other fields', () => {
+  async function remoteWins(rows: SetupOptions['rows'], people: string[], change: (l: Linked) => Promise<unknown>, remote: (todo: ReturnType<typeof todoByTitle>, l: Linked) => void) {
+    const h = harness()
+    const l = await setupLinked(h, { rows, people })
+    await change(l)
+    const todo = todoByTitle(h, rows?.[0]?.title ?? '')
+    h.fake.clock = Date.now() + 3600_000
+    remote(todo, l)
+    todo.updatedAt = h.fake.tick()
+    await drainOutbound(h)
+    const list = await json<WorkbookConflictsResponse>(await call(h.app, 'GET', `/api/workbooks/${l.wbId}/conflicts`, { user: l.owner, env: h.env }))
+    return { l, todo, conflicts: list.conflicts }
+  }
+
+  async function restore(l: Linked, id: string): Promise<void> {
+    const res = await call(l.h.app, 'POST', `/api/workbooks/${l.wbId}/conflicts/${id}/restore`, { user: l.owner, env: l.h.env })
+    expect(res.status).toBe(202)
+    await drainOutbound(l.h)
+  }
+
+  it('due date: the sheet’s date comes back and goes to Basecamp in a full PUT', async () => {
+    const { l, todo, conflicts } = await remoteWins(
+      [{ title: 'موعد', due: '2026-12-01', assignees: 'أحمد المالك', notes: 'نص' }],
+      [],
+      (x) => edit(x, (v) => v.set(v.row('موعد'), 'D', '2026-12-10')),
+      (t) => {
+        t.dueOn = '2026-12-20'
+      },
+    )
+    const c = conflicts.find((x) => x.field === 'dueOn')
+    expect(c).toMatchObject({ localValue: '2026-12-10', remoteValue: '2026-12-20', winner: 'remote' })
+    let view = await readSheetView(l)
+    expect(view.text(view.row('موعد'), 'D')).toBe('2026-12-20')
+    await restore(l, c?.id as string)
+    view = await readSheetView(l)
+    expect(view.text(view.row('موعد'), 'D')).toBe('2026-12-10')
+    const put = l.h.fake.callsTo('PUT', new RegExp(`^/todos/${todo.id}\\.json$`)).at(-1)
+    expect(put?.body).toMatchObject({ due_on: '2026-12-10', assignee_ids: [l.ownerPerson.id] })
+    expect((put?.body as { description: string }).description).toContain('نص')
+    expect(todo.dueOn).toBe('2026-12-10')
+    expect((await task(c?.uid as string)).sync_state).toBe('synced')
+  })
+
+  it('assignees: the sheet’s people come back (manual) and Basecamp gets them', async () => {
+    const { l, todo, conflicts } = await remoteWins(
+      [{ title: 'إسناد', assignees: 'أحمد المالك' }],
+      ['سارة', 'بدر'],
+      (x) => edit(x, (v) => v.set(v.row('إسناد'), 'B', 'سارة')),
+      (t, x) => {
+        t.assigneeIds = [x.people['بدر']?.id as number]
+      },
+    )
+    const c = conflicts.find((x) => x.field === 'assignees')
+    expect(c?.winner).toBe('remote')
+    expect(c?.remoteValue).toEqual([l.people['بدر']?.id])
+    let view = await readSheetView(l)
+    expect(view.text(view.row('إسناد'), 'B')).toBe('بدر')
+    await restore(l, c?.id as string)
+    view = await readSheetView(l)
+    expect(view.text(view.row('إسناد'), 'B')).toBe('سارة')
+    expect(todo.assigneeIds).toEqual([l.people['سارة']?.id])
+    expect((await task(c?.uid as string))).toMatchObject({ assign_mode: 'manual', sync_state: 'synced' })
+  })
+
+  it('completion: the sheet’s state comes back and goes through the completion endpoint', async () => {
+    // A completion conflict needs no base: a row matched by title at linking (S3).
+    const h = harness()
+    const l = await setupLinked(h, { rows: [{ title: 'النشر', done: true }], existingTodos: ['النشر'], plan: { existingTasks: 'match_by_title' } })
+    const todo = todoByTitle(h, 'النشر')
+    expect(todo.completed).toBe(false)
+    const list = await json<WorkbookConflictsResponse>(await call(h.app, 'GET', `/api/workbooks/${l.wbId}/conflicts`, { user: l.owner, env: h.env }))
+    const c = list.conflicts.find((x) => x.field === 'completed')
+    expect(c).toMatchObject({ localValue: true, remoteValue: false, winner: 'remote' })
+    let view = await readSheetView(l)
+    expect(view.text(view.row('النشر'), 'E')).not.toBe('منجز')
+    await restore(l, c?.id as string)
+    view = await readSheetView(l)
+    expect(view.text(view.row('النشر'), 'E')).toBe('منجز')
+    expect(h.fake.callsTo('POST', new RegExp(`^/todos/${todo.id}/completion\\.json$`))).toHaveLength(1)
+    expect(todo.completed).toBe(true)
   })
 })

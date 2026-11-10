@@ -162,8 +162,15 @@ export async function syncTask(step: TaskStep): Promise<StepResult> {
 
     // --- The base from the record, once its changes are in the sheet.
     let current: SyncedBase | null = base
-    if (remote !== null && remote.type !== 'deleted' && !(base !== null && isEcho(remote, base))) {
-      const lastKnown = base !== null && !(remote.type === 'todo' && base.listId !== remote.listId) ? base.position : local.position
+    // The list is not part of the echo hash (sync-engine hash.ts): a record that only moved
+    // list is an "echo" by hash, yet its base must learn the new list, or a later move back in
+    // Basecamp would read as a move made here and be undone.
+    const listMovedRemotely = base !== null && remote !== null && remote.type === 'todo' && base.listId !== remote.listId
+    if (remote !== null && remote.type !== 'deleted' && (listMovedRemotely || !(base !== null && isEcho(remote, base)))) {
+      const changedList = base === null || (remote.type === 'todo' && base.listId !== remote.listId)
+      // The row's own position when there is no base or the record changed list (engine
+      // contract item 3) — read after the inbound actions, which may have moved the row.
+      const lastKnown = changedList ? (positionNow(state, uid) ?? local.position) : base.position
       current = baseFromRemote(uid, remote, lastKnown)
       statements.push(baseStatement(db, uid, current))
       row.last_synced_base_json = JSON.stringify(current)
@@ -230,6 +237,15 @@ export async function syncTask(step: TaskStep): Promise<StepResult> {
     row.last_error_code = null
   }
   return { status: 'synced', wroteBasecamp, created, assigneesChanged, level: last?.level ?? 0, parentUid: last?.parentUid ?? null }
+}
+
+/** The row's 1-based position in the sheet it is in now (after any move), from the current snapshot. */
+function positionNow(state: WorkbookState, uid: string): number | null {
+  const row = state.taskRows.get(uid)
+  const sheet = row ? state.sheetsById.get(row.sheet_id) : undefined
+  if (!sheet || !state.plans.has(sheet.id)) return null
+  const read = readSheet(state, sheet)
+  return read.ok ? (read.value.tasks.find((t) => t.uid === uid)?.position ?? null) : null
 }
 
 async function hold(db: D1Database, uid: string, code: string, message: string): Promise<StepResult> {

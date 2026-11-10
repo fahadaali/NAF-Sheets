@@ -37,6 +37,7 @@ import { onSyncError, SyncFailure } from './errors'
 import { commitLink, previewLink } from './link'
 import { CONFLICT_ROW_MESSAGE, NOTICES } from './messages'
 import { publicOrigin } from './inbound/webhooks'
+import { requeueRelinked } from './inbound/reconcile'
 import { applyToSheet, loadWorkbookState, refusal } from './state'
 import { accountInactive, getWorkbookSync, isLinked, markAccountActive } from './store'
 import type { WorkbookSyncRow } from './store'
@@ -96,6 +97,8 @@ export function syncWorkbookRoutes(deps: SyncDeps): Hono<AppEnv> {
   // ── Sync state (§5.2, §9.2.8)
   routes.get('/:id/sync', async (c) => {
     const { wb } = await load(c)
+    // S17: a person who linked Basecamp again gets their held rows sent; the editor polls this route.
+    if (isLinked(wb)) await requeueRelinked(c.env, deps, wb.id)
     return c.json<WorkbookSyncResponse>(await syncResponse(c.env, wb))
   })
 
@@ -315,7 +318,8 @@ async function syncResponse(env: Env, wb: WorkbookSyncRow): Promise<WorkbookSync
     uid: r.task_uid,
     sheetId: r.sheet_id,
     state: r.sync_state,
-    message: r.sync_state === 'error' ? r.last_error : r.sync_state === 'conflict' ? CONFLICT_ROW_MESSAGE : null,
+    // `pending` carries a message only while it waits for its author's Basecamp link (spec §3, S17).
+    message: r.sync_state === 'error' || r.sync_state === 'pending' ? r.last_error : r.sync_state === 'conflict' ? CONFLICT_ROW_MESSAGE : null,
     remoteStatus: r.remote_status,
     bcUrl: r.level === 0 ? url(r.bc_recording_id) : r.bc_recording_id === null ? null : url(byUid.get(r.parent_uid ?? '')?.bc_recording_id ?? null),
     assignMode: r.level === 0 ? r.assign_mode : null,
