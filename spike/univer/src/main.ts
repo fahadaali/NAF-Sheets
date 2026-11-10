@@ -20,11 +20,16 @@ import { UniverSheetsHyperLinkPreset } from '@univerjs/preset-sheets-hyper-link'
 import SheetsLinkArSA from '@univerjs/preset-sheets-hyper-link/locales/ar-SA'
 import { UniverSheetsNotePreset } from '@univerjs/preset-sheets-note'
 import SheetsNoteArSA from '@univerjs/preset-sheets-note/locales/ar-SA'
+import { UniverSheetsDrawingPreset } from '@univerjs/preset-sheets-drawing'
+import SheetsDrawingArSA from '@univerjs/preset-sheets-drawing/locales/ar-SA'
+import { UniverSheetsFindReplacePreset } from '@univerjs/preset-sheets-find-replace'
+import SheetsFindReplaceArSA from '@univerjs/preset-sheets-find-replace/locales/ar-SA'
 import { createUniver, LocaleType, mergeLocales } from '@univerjs/presets'
 import type { IWorkbookData } from '@univerjs/presets'
-import { InterceptorEffectEnum } from '@univerjs/core'
+import { InterceptorEffectEnum, LifecycleStages } from '@univerjs/core'
 import { INTERCEPTOR_POINT, SheetInterceptorService } from '@univerjs/sheets'
 import { enableRtlGrid } from './rtl-grid'
+import { Documents, IRenderManagerService } from '@univerjs/engine-render'
 
 import '@univerjs/preset-sheets-core/lib/index.css'
 import '@univerjs/preset-sheets-conditional-formatting/lib/index.css'
@@ -33,6 +38,8 @@ import '@univerjs/preset-sheets-sort/lib/index.css'
 import '@univerjs/preset-sheets-data-validation/lib/index.css'
 import '@univerjs/preset-sheets-hyper-link/lib/index.css'
 import '@univerjs/preset-sheets-note/lib/index.css'
+import '@univerjs/preset-sheets-drawing/lib/index.css'
+import '@univerjs/preset-sheets-find-replace/lib/index.css'
 // Spike only: community packaging of Thmanyah, served from jsDelivr.
 // Production must self-host the official files (see docs/phase-0-report.md).
 import '@dawod/thmanyah-font-web/sans.css'
@@ -98,11 +105,13 @@ const workbook: Partial<IWorkbookData> = {
   name: 'اختبار الجدوى',
   appVersion: '1.4.0',
   locale: LocaleType.AR_SA,
-  sheetOrder: ['tasks', 'summary'],
+  sheetOrder: ['tasks', 'summary', 'extras'],
   styles: {
     hdr: { ff: FONT, fs: 12, bl: 1, bg: { rgb: '#E8F0FE' }, ...hAlign },
     body: { ff: FONT, fs: 11, ...hAlign },
     wrap: { ff: FONT, fs: 11, tb: 3, ...hAlign }, // WrapStrategy.WRAP
+    rot45: { ff: FONT, fs: 11, tr: { a: 45 } },
+    rot90: { ff: FONT, fs: 11, tr: { a: 90 } },
   },
   sheets: {
     tasks: {
@@ -132,6 +141,23 @@ const workbook: Partial<IWorkbookData> = {
         4: { 0: { v: 'طول A6', s: 'body' }, 1: { f: "=LEN('المهام'!A6)", v: '', s: 'body' } },
       },
     },
+    // Special cases kept off the main sheet so its evidence screenshots stay stable.
+    extras: {
+      id: 'extras',
+      name: 'حالات خاصة',
+      rowCount: 30,
+      columnCount: 10,
+      rightToLeft: dir === 'rtl' ? 1 : 0,
+      columnData: { 0: { w: 120 }, 1: { w: 120 }, 2: { w: 120 }, 3: { w: 140 } },
+      rowData: { 1: { h: 80 } },
+      mergeData: [{ startRow: 0, endRow: 0, startColumn: 0, endColumn: 2 }],
+      cellData: {
+        0: { 0: { v: 'خلية مدمجة على ثلاثة أعمدة A1:C1', s: 'hdr' }, 3: { v: 'نص عادي', s: 'body' } },
+        1: { 0: { v: 'نص مائل 45', s: 'rot45' }, 1: { v: 'Rotated 45', s: 'rot45' }, 2: { v: 'رأسي 90', s: 'rot90' } },
+        3: { 0: { v: 10, s: 'body' }, 1: { v: 20, s: 'body' } },
+        4: { 0: { v: 30, s: 'body' }, 1: { v: 40, s: 'body' } },
+      },
+    },
   },
 }
 
@@ -147,6 +173,8 @@ const { univerAPI } = createUniver({
       SheetsDvArSA,
       SheetsLinkArSA,
       SheetsNoteArSA,
+      SheetsDrawingArSA,
+      SheetsFindReplaceArSA,
     ),
   },
   presets: [
@@ -157,7 +185,23 @@ const { univerAPI } = createUniver({
     UniverSheetsDataValidationPreset(),
     UniverSheetsHyperLinkPreset(),
     UniverSheetsNotePreset(),
+    UniverSheetsDrawingPreset(),
+    UniverSheetsFindReplacePreset(),
   ],
+})
+
+// Every executed command (id + params), from before the workbook exists: lets
+// tests see exactly what changed the model and when.
+const commandLog: Array<{ id: string; params: string }> = []
+;(window as unknown as { __commandLog: typeof commandLog }).__commandLog = commandLog
+univerAPI.addEvent(univerAPI.Event.CommandExecuted, (e) => {
+  let params: string
+  try {
+    params = JSON.stringify(e.params ?? null).slice(0, 300)
+  } catch {
+    params = '[unserialisable]' // some operations carry circular objects
+  }
+  commandLog.push({ id: e.id, params })
 })
 
 const results: Record<string, unknown> = { dir, forceAlign, probeIsolate, mirrorGrid }
@@ -179,9 +223,71 @@ async function run() {
   results.fontLoaded = document.fonts.check(`16px "${FONT}"`, 'ثمانية')
 
   const fWorkbook = univerAPI.createWorkbook(workbook)
+
+  // Deterministic start in every mode: wait until Univer is steady and the cell
+  // editor is initialised before mutating anything. Otherwise Univer's automatic
+  // row heights run or not depending on timing (seen as row 8 = 72 vs 59 px).
+  await new Promise<void>((resolve) => {
+    const started = performance.now()
+    const tick = () => {
+      const ready = univerAPI.getCurrentLifecycleStage() >= LifecycleStages.Steady && commandLog.some((c) => c.id === 'doc.command-replace-snapshot')
+      if (ready || performance.now() - started > 5000) return resolve()
+      requestAnimationFrame(tick)
+    }
+    tick()
+  })
   const ws = fWorkbook.getSheetBySheetId('tasks')!
 
-  if (mirrorGrid) await attempt('rtlGridEnabled', async () => typeof (await enableRtlGrid(univerAPI, 'spike-wb')) === 'function')
+  // Diagnostic handle for the performance script (rtl-perf.mjs): the sheet scene.
+  {
+    const rm = (univerAPI as unknown as { _injector: { get: (t: unknown) => { getRenderUnitById: (id: string) => { scene: unknown } | null } } })._injector.get(IRenderManagerService)
+    ;(window as unknown as { __sheetScene: unknown }).__sheetScene = rm.getRenderUnitById('spike-wb')?.scene
+  }
+
+  // ?delay=ms — wait before the setup steps (diagnostic: separates timing effects from mirroring effects)
+  const delay = Number(params.get('delay') ?? 0)
+  if (delay > 0) await new Promise((r) => setTimeout(r, delay))
+
+  // ?simulateBreak=contract|heartbeat — break the layer on purpose to prove the
+  // safety nets: a missing Univer hook must leave the stock grid untouched; text
+  // that stops flowing through the flip-back path must withdraw the mirror.
+  const simulateBreak = params.get('simulateBreak')
+  if (simulateBreak === 'contract') {
+    // Same behaviour, different signature — as an upgrade might change it.
+    // Univer keeps working; only the layer's contract check notices.
+    const proto = Documents.prototype as unknown as { _drawGlyphGroup: (...a: unknown[]) => unknown }
+    const original = proto._drawGlyphGroup
+    proto._drawGlyphGroup = function (this: unknown, ...a: unknown[]) {
+      return original.apply(this, a)
+    }
+  }
+
+  if (mirrorGrid) {
+    await attempt('rtlGridEnabled', async () => {
+      const status = await enableRtlGrid(univerAPI, 'spike-wb', {
+        onStatus: (s) => {
+          ;(window as unknown as { __rtlStatus: unknown }).__rtlStatus = { mirrored: s.mirrored, reason: s.reason, versions: s.versions, verifiedVersion: s.verifiedVersion, problems: s.problems }
+        },
+      })
+      if (simulateBreak === 'heartbeat') {
+        // Put the browser's own fillText back (taken from a fresh realm), so
+        // text bypasses the flip-back wrapper as if Univer drew another way.
+        const frame = document.createElement('iframe')
+        document.body.append(frame)
+        const native = (frame.contentWindow as unknown as { CanvasRenderingContext2D: typeof CanvasRenderingContext2D }).CanvasRenderingContext2D.prototype.fillText
+        CanvasRenderingContext2D.prototype.fillText = native
+      }
+      return status.mirrored
+    })
+  }
+
+  // A floating image on the special-cases sheet: asymmetric on purpose (an
+  // arrow and Latin text), so an accidental mirror is obvious.
+  await attempt('imageInserted', async () => {
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="160" height="60"><rect width="160" height="60" fill="#fde68a"/><path d="M10 30 H120 M100 12 L124 30 L100 48" stroke="#1d4ed8" stroke-width="8" fill="none"/><text x="128" y="22" font-size="14" font-family="sans-serif" fill="#111">RTL</text></svg>'
+    const url = 'data:image/svg+xml;base64,' + btoa(svg)
+    return fWorkbook.getSheetBySheetId('extras')!.insertImage(url, 4, 3)
+  })
 
   // Sheet services exist only after the first sheet unit is created.
   if (probeIsolate) {
@@ -242,7 +348,10 @@ async function run() {
 
   // Execute a real sort (due date, descending), then undo it: covers §5.1
   // "sorting" and "undo/redo", and leaves the sheet as it was for screenshots.
-  await attempt('sortAndUndo', async () => {
+  // ?selftest=0 skips this mutate-then-undo check, so interaction tests start
+  // from exactly the loaded data (an undo racing Univer's auto row height can
+  // otherwise leave the sort applied).
+  if (params.get('selftest') !== '0') await attempt('sortAndUndo', async () => {
     const before = ws.getRange('A2').getValue()
     await ws.getRange('A2:G6').sort({ column: 3, ascending: false })
     await new Promise((r) => setTimeout(r, 300))

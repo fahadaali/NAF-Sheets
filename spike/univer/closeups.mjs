@@ -1,31 +1,43 @@
-// 2x close-ups of the grid cells cited in docs/phase-0-report.md §2.3.
+// 2x close-ups of the grid cells cited in docs/phase-0-report.md (§2.3, §9).
+// Crops are computed from the cells themselves (Univer's own geometry at the
+// default scroll and zoom), so they stay right when row heights change.
 // Run while `npm run preview` is serving on :4173.
 import { createRequire } from 'node:module'
 
 const { chromium } = createRequire(import.meta.url)('playwright')
 const BASE = process.env.SPIKE_URL ?? 'http://localhost:4173/'
 const OUT = new URL('./results/', import.meta.url).pathname
-const CELLS = { x: 0, y: 125, width: 1040, height: 145 } // header row + the five task rows
-const PROBE_ROWS = { x: 0, y: 408, width: 1040, height: 150 } // rows 11-16 written by ?marks=1 (row 8 is 72px tall)
 
+// `from`..`to` are A1 cells spanning the crop; `mirrored` grids put column A on the right.
 const shots = [
-  { file: 'univer-cells-2x.png', query: '?dir=rtl&align=1', clip: CELLS },
-  { file: 'isolate-0-2x.png', query: '?dir=rtl&align=1&isolate=0', clip: CELLS },
-  { file: 'isolate-1-2x.png', query: '?dir=rtl&align=1&isolate=1', clip: CELLS },
-  { file: 'bidi-marks-probe-2x.png', query: '?dir=rtl&align=1&marks=1', clip: PROBE_ROWS },
-  // Mirrored grid (src/rtl-grid.ts): column A sits on the right, so crop the right side.
-  { file: 'mirror-cells-2x.png', query: '?dir=rtl&grid=mirror', clip: { x: 240, y: 104, width: 1040, height: 166 } },
-  { file: 'mirror-wrapped-2x.png', query: '?dir=rtl&grid=mirror', clip: { x: 940, y: 260, width: 340, height: 90 } },
-  { file: 'plain-wrapped-2x.png', query: '?dir=rtl&align=1', clip: { x: 0, y: 260, width: 340, height: 90 } },
+  { file: 'univer-cells-2x.png', query: '?dir=rtl&align=1&selftest=0', from: 'A1', to: 'G6' },
+  { file: 'isolate-0-2x.png', query: '?dir=rtl&align=1&isolate=0&selftest=0', from: 'A1', to: 'G6' },
+  { file: 'isolate-1-2x.png', query: '?dir=rtl&align=1&isolate=1&selftest=0', from: 'A1', to: 'G6' },
+  { file: 'bidi-marks-probe-2x.png', query: '?dir=rtl&align=1&marks=1&selftest=0', from: 'A11', to: 'G16' },
+  { file: 'mirror-cells-2x.png', query: '?dir=rtl&grid=mirror&selftest=0', from: 'A1', to: 'G6', mirrored: true, headers: true },
+  { file: 'mirror-wrapped-2x.png', query: '?dir=rtl&grid=mirror&selftest=0', from: 'A8', to: 'A8', mirrored: true },
+  { file: 'plain-wrapped-2x.png', query: '?dir=rtl&align=1&selftest=0', from: 'A8', to: 'A8' },
 ]
 
 const browser = await chromium.launch()
 for (const s of shots) {
   const page = await browser.newPage({ viewport: { width: 1280, height: 720 }, deviceScaleFactor: 2 })
   await page.goto(BASE + s.query)
-  await page.waitForFunction(() => document.title === 'SPIKE-READY', null, { timeout: 60000 })
+  await page.waitForFunction(() => document.title === 'SPIKE-READY', null, { timeout: 90000 })
   await page.waitForTimeout(1200)
-  await page.screenshot({ path: OUT + s.file, clip: s.clip })
+  const clip = await page.evaluate(({ from, to, mirrored, headers }) => {
+    const ws = window.univerAPI.getActiveWorkbook().getActiveSheet()
+    const a = ws.getRange(from).getCellRect()
+    const b = ws.getRange(to).getCellRect()
+    const c = document.querySelector('canvas[id^=univer-sheet-main-canvas]').getBoundingClientRect()
+    const left = Math.min(a.left, b.left)
+    const right = Math.max(a.right, b.right) + (mirrored ? 46 : 0) // include the row header beside column A
+    const top = headers ? 0 : Math.min(a.top, b.top)
+    const bottom = Math.max(a.bottom, b.bottom)
+    const x = mirrored ? c.left + c.width - right : c.left + (headers ? 0 : left - 46) + (headers ? 0 : 0)
+    return { x: Math.max(0, x), y: c.top + top, width: right - (mirrored ? left : left - 46), height: bottom - top }
+  }, s)
+  await page.screenshot({ path: OUT + s.file, clip })
   await page.close()
 }
 await browser.close()

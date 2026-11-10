@@ -11,7 +11,9 @@
     "typecheck": "tsc --noEmit --skipLibCheck --module esnext --moduleResolution bundler --target es2022 --lib es2022,dom src/main.ts",
     "reference": "node bidi-reference.mjs results && node wrap-reference.mjs",
     "closeups": "node closeups.mjs",
-    "test:rtl": "node rtl-interactions.mjs"
+    "test:rtl": "node rtl-interactions.mjs",
+    "check:pins": "node check-pins.mjs",
+    "perf:rtl": "node rtl-perf.mjs"
   },
   "dependencies": {
     "@dawod/thmanyah-font-web": "1.2.0",
@@ -20,7 +22,9 @@
     "@univerjs/preset-sheets-conditional-formatting": "1.4.0",
     "@univerjs/preset-sheets-core": "1.4.0",
     "@univerjs/preset-sheets-data-validation": "1.4.0",
+    "@univerjs/preset-sheets-drawing": "1.4.0",
     "@univerjs/preset-sheets-filter": "1.4.0",
+    "@univerjs/preset-sheets-find-replace": "1.4.0",
     "@univerjs/preset-sheets-hyper-link": "1.4.0",
     "@univerjs/preset-sheets-note": "1.4.0",
     "@univerjs/preset-sheets-sort": "1.4.0",
@@ -33,6 +37,7 @@
     "rxjs": "7.8.2"
   },
   "devDependencies": {
+    "playwright": "1.63.0",
     "typescript": "5.9.3",
     "vite": "7.1.12"
   }
