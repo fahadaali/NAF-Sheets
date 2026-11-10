@@ -8,6 +8,7 @@
     "build": "vite build",
     "preview": "vite preview --port 4174 --strictPort",
     "test": "vitest run --passWithNoTests",
+    "test:e2e": "vitest run --config vitest.e2e.config.ts",
     "typecheck": "tsc --noEmit -p ."
   },
   "dependencies": {
