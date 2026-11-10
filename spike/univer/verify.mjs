@@ -17,6 +17,7 @@ const cases = [
   { name: 'rtl-align-right', query: '?dir=rtl&align=1' },
   { name: 'rtl-align-right-isolate', query: '?dir=rtl&align=1&isolate=1' },
   { name: 'rtl-bidi-marks', query: '?dir=rtl&align=1&marks=1' },
+  { name: 'rtl-mirrored-grid', query: '?dir=rtl&grid=mirror' },
 ]
 
 const browser = await chromium.launch()

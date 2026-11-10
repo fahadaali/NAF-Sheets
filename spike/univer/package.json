@@ -9,12 +9,14 @@
     "preview": "vite preview --port 4173 --strictPort",
     "verify": "node verify.mjs",
     "typecheck": "tsc --noEmit --skipLibCheck --module esnext --moduleResolution bundler --target es2022 --lib es2022,dom src/main.ts",
-    "reference": "node bidi-reference.mjs results",
-    "closeups": "node closeups.mjs"
+    "reference": "node bidi-reference.mjs results && node wrap-reference.mjs",
+    "closeups": "node closeups.mjs",
+    "test:rtl": "node rtl-interactions.mjs"
   },
   "dependencies": {
     "@dawod/thmanyah-font-web": "1.2.0",
     "@univerjs/core": "1.4.0",
+    "@univerjs/engine-render": "1.4.0",
     "@univerjs/preset-sheets-conditional-formatting": "1.4.0",
     "@univerjs/preset-sheets-core": "1.4.0",
     "@univerjs/preset-sheets-data-validation": "1.4.0",
@@ -24,6 +26,8 @@
     "@univerjs/preset-sheets-sort": "1.4.0",
     "@univerjs/presets": "1.4.0",
     "@univerjs/sheets": "1.4.0",
+    "@univerjs/sheets-ui": "1.4.0",
+    "@univerjs/ui": "1.4.0",
     "react": "18.3.1",
     "react-dom": "18.3.1",
     "rxjs": "7.8.2"

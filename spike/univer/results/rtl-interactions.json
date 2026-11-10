@@ -1,0 +1,212 @@
+{
+  "passed": 14,
+  "total": 14,
+  "pageErrors": [],
+  "checks": [
+    {
+      "name": "click selects the cell under the pointer",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "got": [
+          "B3",
+          "G4",
+          "A6"
+        ]
+      }
+    },
+    {
+      "name": "ArrowLeft moves to the next column (visually left), ArrowRight back",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "afterLeft": "C3",
+        "afterRight": "A3"
+      }
+    },
+    {
+      "name": "Shift+ArrowLeft extends the selection leftwards on screen",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "got": "B3:C3"
+      }
+    },
+    {
+      "name": "Tab moves to the next column",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "got": "B3"
+      }
+    },
+    {
+      "name": "drag selects the range between the two cells",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "got": "B3:C5"
+      }
+    },
+    {
+      "name": "double-click opens the editor over the cell; typing lands in that cell",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "stored": "تجربة RTL 123",
+        "editor": {
+          "left": 142,
+          "right": 244,
+          "top": 220,
+          "bottom": 244
+        },
+        "cell": {
+          "left": 156,
+          "right": 244,
+          "top": 220,
+          "bottom": 244,
+          "width": 88,
+          "height": 24
+        }
+      }
+    },
+    {
+      "name": "column resize: dragging the C|D border leftwards widens column C",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "before": 110,
+        "after": 158
+      }
+    },
+    {
+      "name": "data-validation dropdown opens under its cell",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "panel": {
+          "left": 884,
+          "right": 1084,
+          "top": 244,
+          "bottom": 459,
+          "width": 200,
+          "height": 215
+        },
+        "cell": {
+          "left": 884,
+          "right": 974,
+          "top": 210,
+          "bottom": 241,
+          "width": 90,
+          "height": 31
+        }
+      }
+    },
+    {
+      "name": "filter panel opens beside its column, level with the header",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "panel": {
+          "left": 611,
+          "right": 1011,
+          "top": 124,
+          "bottom": 592,
+          "width": 400,
+          "height": 468
+        },
+        "cell": {
+          "left": 506,
+          "right": 606,
+          "top": 124,
+          "bottom": 148,
+          "width": 100,
+          "height": 24
+        }
+      }
+    },
+    {
+      "name": "right-click opens the context menu at the pointer",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "menu": {
+          "left": 816,
+          "right": 1021.09375,
+          "top": 259,
+          "bottom": 315,
+          "width": 205.09375,
+          "height": 56
+        },
+        "pointer": {
+          "x": 805,
+          "y": 287.5
+        }
+      }
+    },
+    {
+      "name": "hovering a cell with a note shows the note beside that cell",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "note": {
+          "left": 398,
+          "right": 578,
+          "top": 210,
+          "bottom": 290,
+          "width": 180,
+          "height": 80
+        },
+        "cell": {
+          "left": 196,
+          "right": 396,
+          "top": 210,
+          "bottom": 241,
+          "width": 200,
+          "height": 31
+        }
+      }
+    },
+    {
+      "name": "hovering a link shows the link popup at that cell",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "popup": {
+          "left": 540.515625,
+          "right": 713.921875,
+          "top": 221,
+          "bottom": 241,
+          "width": 173.40625,
+          "height": 20
+        },
+        "cell": {
+          "left": 396,
+          "right": 506,
+          "top": 179,
+          "bottom": 210,
+          "width": 110,
+          "height": 31
+        }
+      }
+    },
+    {
+      "name": "horizontal swipe scrolls the way it looks",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "start": 0,
+        "afterLeftSwipe": 255,
+        "afterRightSwipe": 0
+      }
+    },
+    {
+      "name": "stored values are untouched (no direction marks leak into the model)",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "v": "نشر المقال على LinkedIn"
+      }
+    }
+  ]
+}

@@ -24,6 +24,7 @@ import { createUniver, LocaleType, mergeLocales } from '@univerjs/presets'
 import type { IWorkbookData } from '@univerjs/presets'
 import { InterceptorEffectEnum } from '@univerjs/core'
 import { INTERCEPTOR_POINT, SheetInterceptorService } from '@univerjs/sheets'
+import { enableRtlGrid } from './rtl-grid'
 
 import '@univerjs/preset-sheets-core/lib/index.css'
 import '@univerjs/preset-sheets-conditional-formatting/lib/index.css'
@@ -47,6 +48,8 @@ const probeMarks = params.get('marks') === '1'
 // ?isolate=1 — probe: wrap mixed Arabic/Latin strings in RLI…PDI at display time
 // only, through the CELL_CONTENT interceptor, leaving the stored value untouched.
 const probeIsolate = params.get('isolate') === '1'
+// ?grid=mirror — mirror the whole grid right-to-left (src/rtl-grid.ts)
+const mirrorGrid = params.get('grid') === 'mirror'
 const FONT = 'Thmanyah Sans'
 
 // Arabic cells, plus the mixed-direction strings the spec calls high-risk:
@@ -66,6 +69,12 @@ cellData[0] = Object.fromEntries(header.map((h, c) => [c, { v: h, s: 'hdr' }]))
 rows.forEach((r, i) => {
   cellData[i + 1] = Object.fromEntries(r.map((v, c) => [c, { v, s: 'body' }]))
 })
+// Row 8: a wrapped cell — drawn glyph by glyph through Univer's document
+// renderer, unlike the single-line cells above. Mixed Arabic, Latin and a
+// slash-separated case number on purpose.
+cellData[7] = {
+  0: { v: 'نص طويل يلتف على أكثر من سطر داخل الخلية، فيه كلمة Basecamp ورقم القضية 2291/ت/1447 لاختبار الترتيب', s: 'wrap' },
+}
 
 if (probeMarks) {
   const probe = 'نشر المقال على LinkedIn'
@@ -93,6 +102,7 @@ const workbook: Partial<IWorkbookData> = {
   styles: {
     hdr: { ff: FONT, fs: 12, bl: 1, bg: { rgb: '#E8F0FE' }, ...hAlign },
     body: { ff: FONT, fs: 11, ...hAlign },
+    wrap: { ff: FONT, fs: 11, tb: 3, ...hAlign }, // WrapStrategy.WRAP
   },
   sheets: {
     tasks: {
@@ -104,6 +114,7 @@ const workbook: Partial<IWorkbookData> = {
       rightToLeft: dir === 'rtl' ? 1 : 0,
       freeze: { xSplit: 1, ySplit: 1, startRow: 1, startColumn: 1 },
       columnData: { 0: { w: 260 }, 1: { w: 90 }, 2: { w: 110 }, 3: { w: 120 }, 4: { w: 100 }, 5: { w: 110 }, 6: { w: 200 } },
+      rowData: { 7: { h: 72 } },
       cellData,
     },
     summary: {
@@ -149,7 +160,7 @@ const { univerAPI } = createUniver({
   ],
 })
 
-const results: Record<string, unknown> = { dir, forceAlign, probeIsolate }
+const results: Record<string, unknown> = { dir, forceAlign, probeIsolate, mirrorGrid }
 
 const errors: string[] = []
 const attempt = async (name: string, fn: () => unknown | Promise<unknown>) => {
@@ -169,6 +180,8 @@ async function run() {
 
   const fWorkbook = univerAPI.createWorkbook(workbook)
   const ws = fWorkbook.getSheetBySheetId('tasks')!
+
+  if (mirrorGrid) await attempt('rtlGridEnabled', async () => typeof (await enableRtlGrid(univerAPI, 'spike-wb')) === 'function')
 
   // Sheet services exist only after the first sheet unit is created.
   if (probeIsolate) {
