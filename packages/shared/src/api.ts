@@ -28,6 +28,19 @@ export type ApiErrorCode =
   | 'snapshot_missing'
   | 'queue_unavailable'
   | 'internal'
+  // Google Sheets import (apps/api/src/google-import/errors.ts)
+  | 'google_not_configured'
+  | 'google_not_linked'
+  | 'google_link_expired'
+  | 'google_state_invalid'
+  | 'invalid_source'
+  | 'google_file_forbidden'
+  | 'google_file_not_found'
+  | 'google_file_too_large'
+  | 'google_no_sheets'
+  | 'google_rate_limited'
+  | 'google_unavailable'
+  | 'google_bad_response'
 
 /** Every non-2xx JSON response. `message` is Arabic: what happened and what to do (spec §12.2). */
 export interface ApiError {
@@ -37,6 +50,8 @@ export interface ApiError {
   message: string
   /** naf-auth: where to send the browser to sign in again (401 only). */
   login?: string
+  /** Where to send the browser to (re)connect an integration, e.g. `/auth/google/start`. */
+  link?: string
 }
 
 export interface CurrentUser {

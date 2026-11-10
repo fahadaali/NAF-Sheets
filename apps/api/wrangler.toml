@@ -22,6 +22,16 @@ AUTH_ISSUER = "https://app.naflaw.sa"
 # sign-in fails at naf-id. See apps/api/OPEN_QUESTIONS.md #2.
 PLATFORM_ID = "REPLACE_WITH_PLATFORM_ID"
 
+# Basecamp account linking (src/basecamp-link). NAF's Basecamp account id —
+# not decided/provided yet; no link works until it is set.
+BASECAMP_ACCOUNT_ID = "REPLACE_WITH_BASECAMP_ACCOUNT_ID"
+# Google Sheets import (src/google-import). The OAuth client id is not secret.
+GOOGLE_CLIENT_ID = "REPLACE_WITH_GOOGLE_CLIENT_ID"
+# Secrets for these two modules — only via `wrangler secret put`, never here:
+#   BASECAMP_CLIENT_ID, BASECAMP_CLIENT_SECRET, GOOGLE_CLIENT_SECRET,
+#   TOKEN_ENCRYPTION_KEY (32 random bytes, base64; see src/crypto.ts)
+# Until they are set, these routes answer 503 *_not_configured.
+
 # ─────────────────────────────────────────────────────────────
 # D1 — metadata, mappings, members, audit log
 #   wrangler d1 create naf-sheets

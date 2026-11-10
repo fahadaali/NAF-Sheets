@@ -2,9 +2,9 @@
 // (packages/shared/src/api.ts): `{ ok: false, error, message }`, the message
 // in Arabic saying what happened and what to do (spec §12.2).
 //
-// The codes below are not yet in `ApiErrorCode`, which this module may not
-// edit; they must be added there (see the report / OPEN_QUESTIONS.md
-// "Google import" G8). Errors that already have a code and a message in
+// The codes below are part of the contract's `ApiErrorCode` (added for
+// OPEN_QUESTIONS.md "Google import" G8; the type check under
+// `GoogleImportErrorCode` keeps the two in step). Errors that already have a code and a message in
 // ../errors.ts (forbidden, invalid_json, invalid_title, not_found for a
 // workbook) are thrown as `ApiFailure` and answered by `app.onError`.
 
@@ -43,6 +43,10 @@ export type GoogleImportErrorCode =
   | 'google_rate_limited'
   | 'google_unavailable'
   | 'google_bad_response'
+
+// Compile-time guard: every code this module sends must exist in the contract.
+const _codesInContract: GoogleImportErrorCode extends ApiErrorCode ? true : never = true
+void _codesInContract
 
 const CODES: Record<GoogleErrorKey, GoogleImportErrorCode | ApiErrorCode> = {
   google_not_configured: 'google_not_configured',
