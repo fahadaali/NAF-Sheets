@@ -99,6 +99,7 @@ export interface ColumnPlan {
 }
 
 export interface SheetPlan {
+  /** `SheetMeta.id` (the platform's sheet id), not the Univer sheet id. */
   sheetId: string
   mode: 'existing' | 'new' | 'local'
   /** Required when mode is `existing`. */

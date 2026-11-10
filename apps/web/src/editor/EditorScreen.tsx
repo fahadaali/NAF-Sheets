@@ -3,23 +3,27 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
-import { ArrowRight, CloudCheck, CloudOff, CloudUpload, Eye, FileSpreadsheet, LoaderCircle, TriangleExclamationPoint } from 'lucide-react'
+import { ArrowRight, CloudCheck, CloudOff, CloudUpload, Eye, FileSpreadsheet, LoaderCircle, Settings2, TriangleExclamationPoint } from 'lucide-react'
 import type { WorkbookResponse } from '@naf-sheets/shared'
 import { api, classifySaveError, errorMessage, isAbortError } from '../lib/api'
 import { Autosave } from '../lib/autosave'
 import type { SaveStatus } from '../lib/autosave'
-import { Link, setLeaveGuard } from '../lib/router'
+import type { EditorTarget } from '../lib/cell-target'
+import { Link, navigate, setLeaveGuard } from '../lib/router'
+import { pathFor } from '../lib/routes'
 import { useDocumentTitle } from '../lib/use-document-title'
+import { BasecampLinkBanner, isLinkActive, useBasecampLink } from '../components/BasecampLink'
 import { Notice } from '../components/Notice'
 import { SyncBadge } from '../components/SyncBadge'
 import { t } from '../strings'
+import { FileSettingsPanel } from './FileSettingsPanel'
 import { mountWorkbook } from './univer-host'
 import type { MountedWorkbook, RtlState } from './univer-host'
 import { resolveWorkbookData } from './workbook-data'
 
 type Load = { kind: 'loading' } | { kind: 'error'; message: string } | { kind: 'ready'; data: WorkbookResponse }
 
-export default function EditorScreen({ id }: { id: string }) {
+export default function EditorScreen({ id, target }: { id: string; target?: EditorTarget | undefined }) {
   const [attempt, setAttempt] = useState(0)
   const [load, setLoad] = useState<Load>({ kind: 'loading' })
 
@@ -38,7 +42,7 @@ export default function EditorScreen({ id }: { id: string }) {
   useDocumentTitle(load.kind === 'ready' ? load.data.workbook.title : null)
   const reload = () => setAttempt((n) => n + 1)
 
-  if (load.kind === 'ready') return <WorkbookEditor key={attempt} data={load.data} onReload={reload} />
+  if (load.kind === 'ready') return <WorkbookEditor key={attempt} data={load.data} target={target} onReload={reload} />
 
   return (
     <div className="editor" data-screen="editor">
@@ -92,15 +96,33 @@ function EditorBar({ title, children }: { title: string | null; children?: React
 
 type Engine = 'starting' | 'ready' | 'failed'
 
-function WorkbookEditor({ data, onReload }: { data: WorkbookResponse; onReload: () => void }) {
+/** Univer ids of the sheets that sync with Basecamp. */
+const syncedSheetIds = (data: WorkbookResponse): ReadonlySet<string> =>
+  new Set(data.sheets.filter((s) => s.syncMode === 'synced').map((s) => s.univerSheetId))
+
+function WorkbookEditor({ data, target, onReload }: { data: WorkbookResponse; target?: EditorTarget | undefined; onReload: () => void }) {
   const hostRef = useRef<HTMLDivElement>(null)
   const autosaveRef = useRef<Autosave | null>(null)
+  const mountedRef = useRef<MountedWorkbook | null>(null)
   const resolved = useMemo(() => resolveWorkbookData(data), [data])
   // Workbook viewers never save (spec §3); the API refuses their writes too.
   const canEdit = data.workbook.access !== 'viewer'
   const [engine, setEngine] = useState<Engine>('starting')
   const [rtl, setRtl] = useState<RtlState | null>(null)
   const [save, setSave] = useState<SaveStatus>({ phase: 'saved', version: data.version, message: null })
+  const [activeSheet, setActiveSheet] = useState<string | null>(null)
+  const [selection, setSelection] = useState<{ kind: 'none' } | { kind: 'applied'; where: string } | { kind: 'missing' }>({ kind: 'none' })
+  const [settingsOpen, setSettingsOpen] = useState(false)
+
+  // Spec §3: synced sheets cannot be edited before the user links their own
+  // Basecamp account (local sheets can). Until the link is known to be
+  // active — loading, failed, unlinked, expired, revoked — they stay read-only.
+  // OPEN: the lock follows the shown sheet (apps/web/OPEN_QUESTIONS.md #18).
+  const synced = useMemo(() => syncedSheetIds(data), [data])
+  const needsLink = canEdit && synced.size > 0
+  const basecamp = useBasecampLink(needsLink)
+  const syncedLocked = needsLink && !isLinkActive(basecamp.load)
+  const editable = canEdit && save.phase !== 'conflict' && !(syncedLocked && activeSheet !== null && synced.has(activeSheet))
 
   useEffect(() => {
     const host = hostRef.current
@@ -122,6 +144,14 @@ function WorkbookEditor({ data, onReload }: { data: WorkbookResponse; onReload: 
           return
         }
         mounted = workbook
+        mountedRef.current = workbook
+        // Never editable before the lock below has been applied once.
+        const firstSheet = workbook.activeSheetId()
+        if (synced.size > 0 && firstSheet !== null && synced.has(firstSheet)) workbook.setEditable(false)
+        setActiveSheet(firstSheet)
+        workbook.onActiveSheetChange((sheetId) => {
+          if (!cancelled) setActiveSheet(sheetId)
+        })
         if (!canEdit) {
           workbook.setEditable(false)
         } else {
@@ -153,12 +183,38 @@ function WorkbookEditor({ data, onReload }: { data: WorkbookResponse; onReload: 
     return () => {
       cancelled = true
       autosaveRef.current = null
+      mountedRef.current = null
       // Reads the snapshot synchronously, then the editor can go.
       if (autosave) void autosave.finalize()
       mounted?.dispose()
     }
     // Mounted once per WorkbookEditor; a reload remounts it with a new key.
   }, [])
+
+  // One place decides whether the grid takes edits: role, conflict, synced-sheet lock.
+  useEffect(() => {
+    if (engine === 'ready') mountedRef.current?.setEditable(editable)
+  }, [engine, editable])
+
+  // The place asked for in the address (import report links, spec §7.2).
+  const targetKey = target ? `${target.sheet}|${target.range ? `${target.range.startRow},${target.range.startColumn},${target.range.endRow},${target.range.endColumn}` : ''}` : ''
+  useEffect(() => {
+    if (engine !== 'ready' || !target) return
+    const where = mountedRef.current?.select(target) ?? null
+    setSelection(where === null ? { kind: 'missing' } : { kind: 'applied', where })
+    // `targetKey` stands for `target`.
+  }, [engine, targetKey])
+
+  /** «ربط بمشروع في Basecamp»: store pending edits first, so the wizard reads what is on screen. */
+  const startWizard = async (): Promise<string | null> => {
+    const saver = autosaveRef.current
+    if (saver) {
+      await saver.saveNow()
+      if (saver.hasUnsavedChanges || saver.status.phase === 'error' || saver.status.phase === 'conflict') return t.fileSettings.saveFirstFailed
+    }
+    navigate(pathFor({ name: 'linkWizard', id: data.workbook.id }))
+    return null
+  }
 
   // Unsaved work: the browser asks before closing the tab; in-app navigation
   // asks only when a save failed (otherwise leaving saves it).
@@ -195,10 +251,32 @@ function WorkbookEditor({ data, onReload }: { data: WorkbookResponse; onReload: 
         <div className="editor-bar__end">
           {canEdit && resolved.ok ? <SaveIndicator status={save} /> : null}
           <SyncBadge state={workbook.syncState} />
+          <button
+            type="button"
+            className="icon-button"
+            aria-label={t.editor.fileSettings}
+            title={t.editor.fileSettings}
+            aria-haspopup="dialog"
+            onClick={() => setSettingsOpen(true)}
+            data-testid="file-settings-button"
+          >
+            <Settings2 className="icon" aria-hidden="true" />
+          </button>
         </div>
       </EditorBar>
+      <FileSettingsPanel open={settingsOpen} workbook={workbook} onClose={() => setSettingsOpen(false)} onStartWizard={startWizard} />
 
       <div className="editor-notices">
+        {needsLink ? (
+          <BasecampLinkBanner load={basecamp.load} onRetry={basecamp.reload} showErrors testId="editor-basecamp-link">
+            <p>{t.editor.syncedLocked}</p>
+          </BasecampLinkBanner>
+        ) : null}
+        {selection.kind === 'missing' ? (
+          <Notice tone="info" testId="editor-target-missing">
+            <p>{t.editor.targetMissing}</p>
+          </Notice>
+        ) : null}
         {!canEdit ? (
           <Notice tone="info" testId="editor-read-only">
             <p>{t.editor.readOnlyBanner}</p>
@@ -270,6 +348,9 @@ function WorkbookEditor({ data, onReload }: { data: WorkbookResponse; onReload: 
             data-testid="univer-host"
             data-engine={engine}
             data-rtl-mirrored={rtl === null ? 'pending' : String(rtl.mirrored)}
+            data-active-sheet={activeSheet ?? ''}
+            data-editable={engine === 'ready' ? String(editable) : 'pending'}
+            data-selection={selection.kind === 'applied' ? selection.where : ''}
           />
           {engine === 'starting' ? (
             <div className="editor-overlay" role="status">

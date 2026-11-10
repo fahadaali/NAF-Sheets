@@ -1,0 +1,50 @@
+// The user's settings: their own Basecamp account (spec §3, «اربط حسابك في
+// Basecamp»), and for platform admins the entries of §12.1 item 8 that exist
+// so far (people matching, §3).
+
+import { Users } from 'lucide-react'
+import type { CurrentUser } from '@naf-sheets/shared'
+import { AppBar } from '../components/AppBar'
+import { BasecampAccountCard } from '../components/BasecampLink'
+import { Link } from '../lib/router'
+import { pathFor } from '../lib/routes'
+import { useDocumentTitle } from '../lib/use-document-title'
+import { t } from '../strings'
+
+export function SettingsScreen({ user }: { user: CurrentUser | null }) {
+  useDocumentTitle(t.settings.title)
+  return (
+    <>
+      <a className="skip-link" href="#main">
+        {t.skipToContent}
+      </a>
+      <AppBar user={user} />
+      <main id="main" className="page page--narrow" data-screen="settings">
+        <div className="page-head">
+          <h1>{t.settings.title}</h1>
+        </div>
+        <div className="stack">
+          <BasecampAccountCard />
+          {/* Hidden for everyone but platform admins; the API refuses the rest anyway. */}
+          {user?.role === 'admin' ? (
+            <section className="card" aria-labelledby="admin-heading" data-testid="admin-section">
+              <h2 id="admin-heading">{t.settings.adminSection}</h2>
+              <div className="card__row">
+                <Users className="icon" aria-hidden="true" />
+                <div>
+                  <h3>{t.settings.peopleMatchesTitle}</h3>
+                  <p className="muted">{t.settings.peopleMatchesBody}</p>
+                </div>
+              </div>
+              <div className="card__actions">
+                <Link className="button button--small" href={pathFor({ name: 'peopleMatches' })}>
+                  {t.settings.peopleMatchesOpen}
+                </Link>
+              </div>
+            </section>
+          ) : null}
+        </div>
+      </main>
+    </>
+  )
+}

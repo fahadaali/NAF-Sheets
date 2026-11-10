@@ -14,7 +14,7 @@ export function DeniedScreen({ reason }: { reason: string }) {
   useDocumentTitle(t.denied.title)
   return (
     <>
-      <AppBar user={null} />
+      <AppBar user={null} showSettings={false} />
       <main id="main" className="page" data-screen="denied">
         <section className="panel">
           <CircleExclamationPoint className="panel__icon" aria-hidden="true" />

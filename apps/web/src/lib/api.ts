@@ -7,9 +7,23 @@
 // `onUnauthorized` with the login URL; the app sends the browser there.
 
 import type {
+  BasecampLinkResponse,
+  BasecampPeopleResponse,
+  BasecampProjectsResponse,
+  BasecampTodolistsResponse,
   CreateWorkbookRequest,
   CreateWorkbookResponse,
+  GoogleLinkResponse,
+  ImportGsheetsRequest,
+  ImportGsheetsResponse,
+  ImportReportResponse,
+  LinkPlan,
+  LinkPreviewResponse,
+  LinkWorkbookResponse,
   MeResponse,
+  PeopleMatchesResponse,
+  PutPeopleMatchRequest,
+  RevokeBasecampLinkResponse,
   SaveSnapshotRequest,
   SaveSnapshotResponse,
   WorkbookListResponse,
@@ -95,7 +109,11 @@ type Method = 'GET' | 'POST' | 'PUT'
 export function createApiClient(options: ApiClientOptions = {}) {
   const doFetch = options.fetch ?? ((input: string, init: RequestInit) => fetch(input, init))
 
-  async function request<T>(method: Method, path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
+  /**
+   * `allowEmpty`: a 2xx with no JSON object body resolves with `null` instead
+   * of failing (for endpoints whose success body the contract leaves open).
+   */
+  async function request<T>(method: Method, path: string, body?: unknown, signal?: AbortSignal, allowEmpty = false): Promise<T> {
     const headers: Record<string, string> = { Accept: 'application/json' }
     const init: RequestInit = { method, headers, credentials: 'same-origin' }
     if (signal) init.signal = signal
@@ -123,7 +141,10 @@ export function createApiClient(options: ApiClientOptions = {}) {
     }
 
     if (response.ok) {
-      if (!isObject(payload)) throw new ApiRequestError(response.status, 'invalid_response', t.errors.invalidResponse)
+      if (!isObject(payload)) {
+        if (allowEmpty) return null as T
+        throw new ApiRequestError(response.status, 'invalid_response', t.errors.invalidResponse)
+      }
       return payload as T
     }
     if (response.status === 401) {
@@ -134,6 +155,7 @@ export function createApiClient(options: ApiClientOptions = {}) {
   }
 
   const workbookPath = (id: string) => `/api/workbooks/${encodeURIComponent(id)}`
+  const projectPath = (projectId: number) => `/api/basecamp/projects/${encodeURIComponent(String(projectId))}`
 
   return {
     /** GET /api/me */
@@ -154,6 +176,42 @@ export function createApiClient(options: ApiClientOptions = {}) {
     /** PUT /api/workbooks/:id/snapshot — 409 `version_conflict` when `baseVersion` is stale. */
     saveSnapshot: (id: string, body: SaveSnapshotRequest) =>
       request<SaveSnapshotResponse>('PUT', `${workbookPath(id)}/snapshot`, body),
+
+    // --- Wave 2: packages/shared/src/api-integrations.ts --------------------
+
+    /** GET /api/basecamp/link — the caller's own Basecamp account link (§3). */
+    getBasecampLink: (signal?: AbortSignal) => request<BasecampLinkResponse>('GET', '/api/basecamp/link', undefined, signal),
+    /** POST /api/basecamp/link/revoke — the stored token is discarded. */
+    revokeBasecampLink: () => request<RevokeBasecampLinkResponse>('POST', '/api/basecamp/link/revoke'),
+    /** GET /api/basecamp/projects */
+    listBasecampProjects: (signal?: AbortSignal) => request<BasecampProjectsResponse>('GET', '/api/basecamp/projects', undefined, signal),
+    /** GET /api/basecamp/projects/:projectId/todolists */
+    listBasecampTodolists: (projectId: number, signal?: AbortSignal) =>
+      request<BasecampTodolistsResponse>('GET', `${projectPath(projectId)}/todolists`, undefined, signal),
+    /** GET /api/basecamp/projects/:projectId/people */
+    listBasecampPeople: (projectId: number, signal?: AbortSignal) =>
+      request<BasecampPeopleResponse>('GET', `${projectPath(projectId)}/people`, undefined, signal),
+    /** GET /api/admin/people-matches (admins) */
+    getPeopleMatches: (signal?: AbortSignal) => request<PeopleMatchesResponse>('GET', '/api/admin/people-matches', undefined, signal),
+    /**
+     * PUT /api/admin/people-matches/:userId (admins).
+     * OPEN: the contract gives no success body; any 2xx counts and the caller
+     * reads the list again (OPEN_QUESTIONS.md #22).
+     */
+    putPeopleMatch: (userId: string, body: PutPeopleMatchRequest) =>
+      request<unknown>('PUT', `/api/admin/people-matches/${encodeURIComponent(userId)}`, body, undefined, true).then(() => undefined),
+    /** POST /api/workbooks/:id/link/preview — computes, changes nothing. */
+    previewLink: (id: string, plan: LinkPlan, signal?: AbortSignal) =>
+      request<LinkPreviewResponse>('POST', `${workbookPath(id)}/link/preview`, plan, signal),
+    /** POST /api/workbooks/:id/link — commits the plan and starts sync («بدء المزامنة»). */
+    linkWorkbook: (id: string, plan: LinkPlan) => request<LinkWorkbookResponse>('POST', `${workbookPath(id)}/link`, plan),
+    /** GET /api/google/link */
+    getGoogleLink: (signal?: AbortSignal) => request<GoogleLinkResponse>('GET', '/api/google/link', undefined, signal),
+    /** POST /api/import/gsheets */
+    importGsheets: (body: ImportGsheetsRequest) => request<ImportGsheetsResponse>('POST', '/api/import/gsheets', body),
+    /** GET /api/workbooks/:id/import-report */
+    getImportReport: (id: string, signal?: AbortSignal) =>
+      request<ImportReportResponse>('GET', `${workbookPath(id)}/import-report`, undefined, signal),
   }
 }
 
@@ -208,6 +266,30 @@ export function loginRedirectUrl(login: string, current: { origin: string; pathn
   const next = current.pathname + current.search
   if (next !== '/' && isSafeNext(next) && !url.searchParams.has('next')) url.searchParams.set('next', next)
   return url.toString()
+}
+
+// ---------------------------------------------------------------------------
+// Account-link navigations (not fetch): the API answers them with redirects
+// ---------------------------------------------------------------------------
+
+/** `next` for an OAuth start: the given path when it is safe, otherwise the files screen. */
+function safeNextOrHome(next: string): string {
+  return next !== '' && isSafeNext(next) ? next : '/'
+}
+
+/** GET /auth/basecamp/start?next=… — Launchpad authorisation for the caller's own account (§3). */
+export function basecampStartUrl(next: string): string {
+  return `/auth/basecamp/start?${new URLSearchParams({ next: safeNextOrHome(next) }).toString()}`
+}
+
+/** GET /auth/google/start?next=… — Google consent with the narrowest scope (§7.2). */
+export function googleStartUrl(next: string): string {
+  return `/auth/google/start?${new URLSearchParams({ next: safeNextOrHome(next) }).toString()}`
+}
+
+/** The page the browser shows now, as a `next` value. */
+export function currentPath(): string {
+  return typeof window === 'undefined' ? '/' : window.location.pathname + window.location.search
 }
 
 let redirecting = false

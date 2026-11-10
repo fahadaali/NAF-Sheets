@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@dawod/thmanyah-font-web": "1.2.0",
+    "@naf-sheets/gsheets-import": "0.0.0",
     "@naf-sheets/shared": "0.0.0",
     "@naf-sheets/univer-rtl": "0.0.0",
     "@univerjs/core": "1.4.0",

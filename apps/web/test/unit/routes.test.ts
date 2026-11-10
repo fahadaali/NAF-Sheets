@@ -20,9 +20,37 @@ describe('parseRoute', () => {
   })
 
   it('treats anything else as not found', () => {
-    for (const path of ['/workbooks', '/workbooks/', '/workbooks/a/b', '/workbooks/%E0%A4%A', '/workbooks/%20', '/settings']) {
+    for (const path of ['/workbooks', '/workbooks/', '/workbooks/a/b', '/workbooks/%E0%A4%A', '/workbooks/%20', '/settings/x', '/admin', '/workbooks/a/link/x', '/workbooks/%20/link']) {
       expect(parseRoute(path), path).toEqual({ name: 'notFound' })
     }
+  })
+})
+
+describe('parseRoute — wave 2 screens', () => {
+  it('maps the import report, the linking wizard, settings and people matching', () => {
+    expect(parseRoute('/workbooks/wb-1/import-report')).toEqual({ name: 'importReport', id: 'wb-1' })
+    expect(parseRoute('/workbooks/a%2Fb/link/')).toEqual({ name: 'linkWizard', id: 'a/b' })
+    expect(parseRoute('/settings')).toEqual({ name: 'settings' })
+    expect(parseRoute('/admin/people-matches')).toEqual({ name: 'peopleMatches' })
+  })
+
+  it('reads the editor target: a sheet, and a range when it is valid A1', () => {
+    expect(parseRoute('/workbooks/wb-1', '?sheet=s-2&range=B4%3AC10')).toEqual({
+      name: 'editor',
+      id: 'wb-1',
+      target: { sheet: 's-2', range: { startRow: 3, startColumn: 1, endRow: 9, endColumn: 2 } },
+    })
+    expect(parseRoute('/workbooks/wb-1', '?sheet=s-2')).toEqual({ name: 'editor', id: 'wb-1', target: { sheet: 's-2', range: null } })
+    // An unreadable range still opens the sheet; a range without a sheet is ignored.
+    expect(parseRoute('/workbooks/wb-1', '?sheet=s-2&range=b4')).toEqual({ name: 'editor', id: 'wb-1', target: { sheet: 's-2', range: null } })
+    expect(parseRoute('/workbooks/wb-1', '?range=B4')).toEqual({ name: 'editor', id: 'wb-1' })
+    expect(parseRoute('/workbooks/wb-1', '?sheet=%20')).toEqual({ name: 'editor', id: 'wb-1' })
+  })
+
+  it('reads `import` on the files screen only when it looks like a spreadsheet id', () => {
+    expect(parseRoute('/', '?import=1AbC_d-9')).toEqual({ name: 'files', q: '', importSource: '1AbC_d-9' })
+    expect(parseRoute('/', '?import=https%3A%2F%2Fevil.example')).toEqual({ name: 'files', q: '' })
+    expect(parseRoute('/', '?import=')).toEqual({ name: 'files', q: '' })
   })
 })
 
@@ -31,8 +59,15 @@ describe('pathFor', () => {
     const routes: Route[] = [
       { name: 'files', q: '' },
       { name: 'files', q: 'خطة الربع الأول' },
+      { name: 'files', q: '', importSource: '1AbCdEfGhIjKlMnOpQrStUvWxYz_0123456789-abcd' },
       { name: 'editor', id: 'wb-1' },
       { name: 'editor', id: 'a/b c' },
+      { name: 'editor', id: 'wb-1', target: { sheet: 'sheet 2/ب', range: { startRow: 0, startColumn: 26, endRow: 4, endColumn: 27 } } },
+      { name: 'editor', id: 'wb-1', target: { sheet: 's-1', range: null } },
+      { name: 'importReport', id: 'wb 1' },
+      { name: 'linkWizard', id: 'wb-1' },
+      { name: 'settings' },
+      { name: 'peopleMatches' },
       { name: 'denied', reason: 'not_member' },
     ]
     for (const route of routes) {

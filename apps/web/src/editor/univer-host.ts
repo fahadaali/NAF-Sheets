@@ -24,6 +24,8 @@ import { createUniver, LocaleType, mergeLocales } from '@univerjs/presets'
 import type { IWorkbookData } from '@univerjs/presets'
 import { CommandType } from '@univerjs/core'
 import { enableRtlGrid } from '@naf-sheets/univer-rtl'
+import type { EditorTarget } from '../lib/cell-target'
+import { rangeToA1 } from '../lib/cell-target'
 import { GRID_FONT, isPersistentChange } from './workbook-data'
 
 import '@univerjs/preset-sheets-core/lib/index.css'
@@ -48,6 +50,16 @@ export interface MountedWorkbook {
   setEditable(editable: boolean): void
   /** Called after every change to the stored model (see `isPersistentChange`). */
   onChange(listener: () => void): void
+  /** The Univer id of the sheet shown now. */
+  activeSheetId(): string | null
+  /** Called with the new sheet id whenever another sheet is shown. */
+  onActiveSheetChange(listener: (sheetId: string) => void): void
+  /**
+   * Show `target`'s sheet, select its range and scroll it into view. Returns
+   * the selection as `<sheet id>!<A1>` read back from the grid, or null when
+   * the sheet is not in the workbook (or cannot be shown).
+   */
+  select(target: EditorTarget): string | null
   dispose(): void
 }
 
@@ -165,6 +177,43 @@ export async function mountWorkbook(host: HTMLElement, data: Partial<IWorkbookDa
       return null
     }
 
+    const sheetListeners: Array<(sheetId: string) => void> = []
+    const sheetSubscription = univerAPI.addEvent(univerAPI.Event.ActiveSheetChanged, (event) => {
+      if (event.workbook.getId() !== unitId) return
+      const sheetId = event.activeSheet.getSheetId()
+      for (const listener of sheetListeners) listener(sheetId)
+    })
+    cleanups.push(() => sheetSubscription.dispose())
+
+    const activeSheetId = (): string | null => {
+      try {
+        return workbook.getActiveSheet().getSheetId()
+      } catch {
+        return null
+      }
+    }
+
+    const select = (target: EditorTarget): string | null => {
+      if (disposed) return null
+      try {
+        const sheet = workbook.getSheetBySheetId(target.sheet)
+        if (!sheet || sheet.isSheetHidden()) return null
+        workbook.setActiveSheet(sheet)
+        const active = workbook.getActiveSheet()
+        if (target.range) {
+          const { startRow, startColumn, endRow, endColumn } = target.range
+          active.getRange(startRow, startColumn, endRow - startRow + 1, endColumn - startColumn + 1).activate()
+          // Leave a little context above and before the target instead of pinning it to the corner.
+          active.scrollToCell(Math.max(0, startRow - 2), Math.max(0, startColumn - 1))
+        }
+        const range = active.getActiveRange()
+        return `${active.getSheetId()}!${range ? range.getA1Notation() : target.range ? rangeToA1(target.range) : ''}`
+      } catch (error) {
+        console.error('[editor] could not select the requested place', error)
+        return null
+      }
+    }
+
     return {
       unitId,
       snapshot: () => workbook.save(),
@@ -178,6 +227,11 @@ export async function mountWorkbook(host: HTMLElement, data: Partial<IWorkbookDa
           listener()
         }
       },
+      activeSheetId,
+      onActiveSheetChange: (listener) => {
+        sheetListeners.push(listener)
+      },
+      select,
       dispose,
     }
   } catch (error) {

@@ -1,30 +1,69 @@
 // Client-side routes (History API). Pure: no DOM access, so it is unit-tested.
 //
-//   /                       files screen (§12.1 item 1); `?q=` keeps the search
-//   /workbooks/:id          workbook editor (§12.1 item 2)
-//   /denied?r=<reason>      naf-auth's refusal page for document navigations
+//   /                                   files screen (§12.1 item 1); `?q=` keeps the search;
+//                                       `?import=<spreadsheet id>` reopens «ملف جديد» on the
+//                                       Google Sheets option after Google's consent (§7.2)
+//   /workbooks/:id                      workbook editor (§12.1 item 2);
+//                                       `?sheet=<univer sheet id>&range=B4:C10` selects a place after load
+//   /workbooks/:id/import-report        import report (§7.2, §12.1 item 7)
+//   /workbooks/:id/link                 linking wizard (§7.3), full screen
+//   /settings                           the user's settings: Basecamp account (§3), admin entries
+//   /admin/people-matches               naf-id members ↔ Basecamp people, admins only (§3)
+//   /denied?r=<reason>                  naf-auth's refusal page for document navigations
+
+import { parseA1Range, rangeToA1 } from './cell-target'
+import type { EditorTarget } from './cell-target'
 
 export type Route =
-  | { name: 'files'; q: string }
-  | { name: 'editor'; id: string }
+  | { name: 'files'; q: string; importSource?: string }
+  | { name: 'editor'; id: string; target?: EditorTarget }
+  | { name: 'importReport'; id: string }
+  | { name: 'linkWizard'; id: string }
+  | { name: 'settings' }
+  | { name: 'peopleMatches' }
   | { name: 'denied'; reason: string }
   | { name: 'notFound' }
 
-const EDITOR = /^\/workbooks\/([^/]+)\/?$/
+const WORKBOOK = /^\/workbooks\/([^/]+)(?:\/(import-report|link))?\/?$/
+const IMPORT_ID = /^[A-Za-z0-9_-]{1,128}$/
+
+function decodeId(segment: string): string | null {
+  let id: string
+  try {
+    id = decodeURIComponent(segment)
+  } catch {
+    return null
+  }
+  return id.trim() ? id : null
+}
+
+/** `?sheet=&range=`: a sheet id is required; an unreadable range is dropped (the sheet is still opened). */
+function parseTarget(params: URLSearchParams): EditorTarget | undefined {
+  const sheet = params.get('sheet')
+  if (!sheet || !sheet.trim()) return undefined
+  const rangeText = params.get('range')
+  return { sheet, range: rangeText ? parseA1Range(rangeText) : null }
+}
 
 export function parseRoute(pathname: string, search = ''): Route {
   const params = new URLSearchParams(search)
-  if (pathname === '/' || pathname === '') return { name: 'files', q: params.get('q') ?? '' }
+  if (pathname === '/' || pathname === '') {
+    const route: Route = { name: 'files', q: params.get('q') ?? '' }
+    const importSource = params.get('import')
+    if (importSource && IMPORT_ID.test(importSource)) route.importSource = importSource
+    return route
+  }
   if (pathname === '/denied' || pathname === '/denied/') return { name: 'denied', reason: params.get('r') ?? '' }
-  const match = EDITOR.exec(pathname)
+  if (pathname === '/settings' || pathname === '/settings/') return { name: 'settings' }
+  if (pathname === '/admin/people-matches' || pathname === '/admin/people-matches/') return { name: 'peopleMatches' }
+  const match = WORKBOOK.exec(pathname)
   if (match?.[1]) {
-    let id: string
-    try {
-      id = decodeURIComponent(match[1])
-    } catch {
-      return { name: 'notFound' }
-    }
-    if (id.trim()) return { name: 'editor', id }
+    const id = decodeId(match[1])
+    if (id === null) return { name: 'notFound' }
+    if (match[2] === 'import-report') return { name: 'importReport', id }
+    if (match[2] === 'link') return { name: 'linkWizard', id }
+    const target = parseTarget(params)
+    return target ? { name: 'editor', id, target } : { name: 'editor', id }
   }
   return { name: 'notFound' }
 }
@@ -32,11 +71,28 @@ export function parseRoute(pathname: string, search = ''): Route {
 export function pathFor(route: Route): string {
   switch (route.name) {
     case 'files': {
+      const params = new URLSearchParams()
       const q = route.q.trim()
-      return q ? `/?${new URLSearchParams({ q }).toString()}` : '/'
+      if (q) params.set('q', q)
+      if (route.importSource) params.set('import', route.importSource)
+      const search = params.toString()
+      return search ? `/?${search}` : '/'
     }
-    case 'editor':
-      return `/workbooks/${encodeURIComponent(route.id)}`
+    case 'editor': {
+      const base = `/workbooks/${encodeURIComponent(route.id)}`
+      if (!route.target) return base
+      const params = new URLSearchParams({ sheet: route.target.sheet })
+      if (route.target.range) params.set('range', rangeToA1(route.target.range))
+      return `${base}?${params.toString()}`
+    }
+    case 'importReport':
+      return `/workbooks/${encodeURIComponent(route.id)}/import-report`
+    case 'linkWizard':
+      return `/workbooks/${encodeURIComponent(route.id)}/link`
+    case 'settings':
+      return '/settings'
+    case 'peopleMatches':
+      return '/admin/people-matches'
     case 'denied':
       return route.reason ? `/denied?${new URLSearchParams({ r: route.reason }).toString()}` : '/denied'
     case 'notFound':

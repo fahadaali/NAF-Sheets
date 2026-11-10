@@ -87,4 +87,11 @@
   --dialog-width: 32rem;
   --progress-width: 4.5rem;
   --progress-height: 0.375rem;
+  --narrow-width: 48rem;
+  --side-panel-width: 24rem;
+  --wizard-width: 72rem;
+  --stepper-width: 15rem;
+  --stepper-dot-size: 1.75rem;
+  --select-max-width: 22rem;
+  --input-number-width: 6rem;
 }

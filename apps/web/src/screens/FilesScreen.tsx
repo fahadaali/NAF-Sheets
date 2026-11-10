@@ -11,6 +11,7 @@ import { Link, navigate } from '../lib/router'
 import { pathFor } from '../lib/routes'
 import { useDocumentTitle } from '../lib/use-document-title'
 import { AppBar } from '../components/AppBar'
+import { BasecampLinkBanner, useBasecampLink } from '../components/BasecampLink'
 import { Notice } from '../components/Notice'
 import { SyncBadge } from '../components/SyncBadge'
 import { NewWorkbookDialog } from './NewWorkbookDialog'
@@ -23,15 +24,19 @@ type ListState =
   | { kind: 'error'; message: string }
   | { kind: 'ready'; workbooks: WorkbookSummary[]; q: string }
 
-export function FilesScreen({ initialQuery, user }: { initialQuery: string; user: CurrentUser | null }) {
+export function FilesScreen({ initialQuery, initialImport, user }: { initialQuery: string; initialImport?: string | undefined; user: CurrentUser | null }) {
   useDocumentTitle(t.files.title)
   const [query, setQuery] = useState(initialQuery)
   const [effectiveQuery, setEffectiveQuery] = useState(initialQuery.trim())
   const [list, setList] = useState<ListState>({ kind: 'loading' })
   const [attempt, setAttempt] = useState(0)
-  const [creating, setCreating] = useState(false)
+  // Back from Google's consent (`/?import=<id>`): «ملف جديد» reopens on the import.
+  const [creating, setCreating] = useState(Boolean(initialImport))
   // Platform viewers are read-only everywhere (spec §3); the API enforces it too.
   const canCreate = user?.role !== 'viewer'
+  // «اربط حسابك في Basecamp» (§3): for anyone who may edit, once their role is known.
+  const mayEdit = user !== null && user.role !== 'viewer'
+  const basecamp = useBasecampLink(mayEdit)
 
   useEffect(() => {
     const handle = setTimeout(() => setEffectiveQuery(query.trim()), SEARCH_DEBOUNCE_MS)
@@ -64,6 +69,11 @@ export function FilesScreen({ initialQuery, user }: { initialQuery: string; user
       </a>
       <AppBar user={user} />
       <main id="main" className="page" data-screen="files">
+        {mayEdit ? (
+          <div className="page-banner">
+            <BasecampLinkBanner load={basecamp.load} onRetry={basecamp.reload} />
+          </div>
+        ) : null}
         <div className="page-head">
           <h1>{t.files.title}</h1>
           {list.kind === 'ready' && list.workbooks.length > 0 ? <span className="muted">{t.files.count(list.workbooks.length)}</span> : null}
@@ -105,10 +115,15 @@ export function FilesScreen({ initialQuery, user }: { initialQuery: string; user
       </main>
       <NewWorkbookDialog
         open={creating}
+        initialImport={initialImport}
         onClose={() => setCreating(false)}
         onCreated={(id) => {
           setCreating(false)
           navigate(pathFor({ name: 'editor', id }))
+        }}
+        onImported={(id) => {
+          setCreating(false)
+          navigate(pathFor({ name: 'importReport', id }))
         }}
       />
     </>
