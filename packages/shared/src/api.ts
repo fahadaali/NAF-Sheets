@@ -1,7 +1,7 @@
 // REST contract between apps/web and apps/api (phase 1 surface).
 // Paths are relative to the platform origin. Every error body is `ApiError`.
 
-import type { PlatformRole, SheetSyncMode, SyncState, WorkbookMemberRole, WorkbookSource } from './domain'
+import type { PlatformRole, SheetSyncMode, SyncState, TaskUid, WorkbookMemberRole, WorkbookSource } from './domain'
 
 /**
  * Stable machine codes of `ApiError.error`: exactly the codes apps/api sends
@@ -136,6 +136,14 @@ export interface WorkbookResponse {
 export interface SaveSnapshotRequest {
   baseVersion: number
   snapshot: unknown
+  /**
+   * Synced task rows the person removed AND confirmed in the deletion dialog
+   * (spec §9.2.7). A synced row missing from `snapshot` but not listed here
+   * is never deleted in Basecamp: the API leaves Basecamp untouched and marks
+   * the task `error`. A to-do goes to the trash; a subtask is deleted for
+   * good (no trash), after its full data is kept in the platform's log.
+   */
+  confirmedDeletions?: TaskUid[]
 }
 export interface SaveSnapshotResponse {
   version: number
