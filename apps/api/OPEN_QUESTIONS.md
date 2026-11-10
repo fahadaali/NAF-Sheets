@@ -518,3 +518,105 @@ S26. **Order changes are one call per row.** Inserting a row in the middle
 S27. **Deleting only a to-do's row while its subtask rows stay** trashes the
     to-do in Basecamp (its subtasks go with it), and the subtask rows are left
     in the sheet as they are (sheet-model then reports them as misplaced).
+
+## Realtime room (phase 6)
+
+Decisions the realtime room (`src/room.ts`, `src/room/`, protocol in
+`packages/shared/src/room-protocol.ts`, client in `apps/web/src/lib/room-client.ts`
+and `apps/web/src/collab/`) needed. Marked `OPEN:` in the code with these
+numbers.
+
+R1. **(owner)** **Spec §17-2 is still open; the room is built on default (a).**
+    The phase 6 spike (2026-11-10, local workerd) found headless Univer 1.4.0
+    (core, sheets, formula engine and the model plugins of the editor's
+    presets) runs inside the Durable Object: a 3-sheet × 300-row workbook loads
+    in ~65 ms, computes in ~135–200 ms, applies a mutation in ~0.1 ms and holds
+    ~8 MB of heap. The API Worker bundle grows from 362 KiB (87 KiB gzip) to
+    12.7 MB (2.37 MB gzip); see R15. Confirm (a), or decide on Univer Pro.
+
+R2. **Mutations the room accepts** are an allow-list (`ROOM_MUTATIONS`). Not
+    accepted yet, because their effect on concurrent edits is not settled:
+    sheet and range protection (`*-protection`, permission points), range
+    themes, `set-workbook-calculation-settings`, `sheet.mutation.empty`, and
+    the lazy path of copying a large sheet (`copy-worksheet-end`, sent
+    `syncOnly`). Such an edit is refused and the editor reloads the room's
+    state with an Arabic message. Which of them should be shared?
+
+R3. **Commit cadence.** The room commits 2 s after the last edit (spec §9.2.2's
+    outbound debounce) and at most every 10 s while edits continue (the
+    editor's autosave), and when the last editor leaves. Every commit is a new
+    R2 version and none is ever deleted (CLAUDE.md §3), as with autosave today.
+    Between commits, edits are durable in the room's own log.
+
+R4. **WebSocket message size.** Messages over 256 Ki characters (≤ 768 KiB
+    UTF-8) are split into `chunk` frames, assuming a 1 MiB limit per message.
+    The production limit was not re-checked (no network access during the work).
+
+R5. **Largest workbook opened live: 4,000,000 characters of snapshot JSON**
+    (`MAX_LIVE_SNAPSHOT_CHARS`). Measured: ~3 MB (10,000 task rows) took 66.7 MB
+    of heap after GC but peaked at ~113 MB before GC, and 2.8–4.1 s to load and
+    compute. A larger workbook is refused (close 4413, Arabic message); what
+    should the editor do then — open read-only, or fall back to whole-snapshot
+    autosave?
+
+R6. **The room's op log is never pruned** (Durable Object SQLite, one row per
+    applied op, and `room_events`). Pruning rows already committed would delete
+    data, which needs the owner's approval (CLAUDE.md §3).
+
+R7. **A browser save while a session is live.** PUT /snapshot is unchanged: a
+    tab outside the room that saves before the room's next commit wins version
+    N+1; the room then commits its state on top (N+2) and records the
+    superseded version in `room_events`. Nothing is overwritten (versions are
+    create-only), but that tab's edits are no longer current. Proposed: the
+    PUT route answers 409 while `roomSessionActive(env, id)` is true (one call
+    in `src/routes/workbooks.ts`, not changed here), and the editor stops its
+    PUT autosave while connected to the room.
+
+R8. **The soft lock is enforced.** Spec §11 says a cell being edited "appears
+    locked to others"; the room also refuses (`locked`) an op that touches a
+    cell another connection holds, so a paste over that cell is undone. Locks
+    end on `unlock` or when the connection drops; there is no idle timeout.
+
+R9. **Presence colours.** Each connection gets an index 0–5
+    (`apps/web/src/collab/presence.ts`); the six colours are not in the theme
+    yet (CLAUDE.md §0: what replaces `naf-ui` is open).
+
+R10. **Undo after remote edits.** Undo history is cleared when another
+    editor's op moves rows, columns or sheets. After a remote *cell* edit it is
+    kept: undoing your own earlier edit of that same cell overwrites the other
+    person's value without a conflict.
+
+R11. **A server change that is not cell-only** (inbound sync inserting a row,
+    a new sheet, notes or validation changing, the link wizard adding system
+    columns) reloads every open editor from the committed snapshot; an editor's
+    edits still in flight at that moment are dropped with an Arabic notice.
+    Cell-only changes reach editors as ordinary ops.
+
+R12. **Access is fixed per connection.** The Worker checks access at connect
+    (spec §14); a role changed while a person is connected applies from their
+    next connection.
+
+R13. **Author of a room commit.** R2's `savedBy` on a room commit is the author
+    of the last op it includes (several people's edits may be in one version).
+    Per-edit authors are passed to outbound detection (R14).
+
+R14. **Outbound seam.** After each commit the room calls the detection
+    installed with `setOutboundDetection` (`src/room/outbound-seam.ts`, marked
+    `WAVE3-SEAM: outbound detection`; a no-op until the outbound work installs
+    it) with every edit the commit includes: seq, author, and footprint (cells,
+    rows, columns, sheet/plugin keys, or structural). Mapping cells to
+    `task_uid` is left to the detection. `updateLatestSnapshot` callers'
+    changes are included with `origin: 'server'`.
+
+R15. **Cloudflare limits to confirm on the real plan** (from documentation
+    known before this work, not re-checked): Worker size 3 MB gzip (Free) /
+    10 MB (Paid) — the API is now 2.37 MB gzip; startup — 6–10 ms of CPU with
+    the engine imported lazily (67–274 ms when it was imported eagerly); 128 MB of memory
+    per isolate, which several Durable Objects of one class may share on one
+    machine. Moving `WorkbookRoom` to its own Worker script would keep Univer
+    out of the API Worker; that needs a `wrangler.toml` change (not made).
+
+R16. **The contract comment** for GET /api/workbooks/:id/room in
+    `packages/shared/src/api.ts` still says the message protocol is not
+    defined; it is now `packages/shared/src/room-protocol.ts` (that file was
+    not mine to edit).

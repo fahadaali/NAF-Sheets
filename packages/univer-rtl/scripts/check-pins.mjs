@@ -1,23 +1,30 @@
 // Fails when Univer could change without the RTL layer being re-verified.
 // Adapted from the phase 0 spike (spike/univer/check-pins.mjs) to the workspace:
 //
-//   - every dependency declared by this package and by apps/web (the
-//     application that ships the layer) is pinned to an exact version;
+//   - every dependency declared by any workspace (apps/*, packages/*) is
+//     pinned to an exact version — a git dependency only to an exact
+//     `#vX.Y.Z` tag (CLAUDE.md: naf-auth is a tag, never a branch);
 //   - every @univerjs/* they declare equals VERIFIED_UNIVER_VERSION in
-//     src/rtl-grid.ts;
+//     src/rtl-grid.ts (the API's workbook room runs Univer too, and the
+//     server and the browser must apply the same mutations identically);
 //   - every @univerjs/* the root package-lock.json installs, at any depth,
 //     equals VERIFIED_UNIVER_VERSION too (one exception, by name, below).
 //
 // Raising Univer therefore means raising that constant too — in a pull request
 // whose RTL CI is green.
-import { readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 
 const here = (p) => new URL(p, import.meta.url)
 const readJson = (p) => JSON.parse(readFileSync(here(p), 'utf8'))
-const MANIFESTS = {
-  'packages/univer-rtl/package.json': readJson('../package.json'),
-  'apps/web/package.json': readJson('../../../apps/web/package.json'),
+// Every workspace of the root package.json (`apps/*`, `packages/*`).
+const MANIFESTS = {}
+for (const group of ['apps', 'packages']) {
+  for (const dir of readdirSync(here(`../../../${group}/`), { withFileTypes: true })) {
+    const file = `${group}/${dir.name}/package.json`
+    if (dir.isDirectory() && existsSync(here(`../../../${file}`))) MANIFESTS[file] = readJson(`../../../${file}`)
+  }
 }
+const EXACT = /^(\d+\.\d+\.\d+|github:[\w.-]+\/[\w.-]+#v\d+\.\d+\.\d+)$/
 const LOCKFILE = 'package-lock.json'
 const lock = readJson('../../../package-lock.json')
 const verified = /VERIFIED_UNIVER_VERSION = '([^']+)'/.exec(readFileSync(here('../src/rtl-grid.ts'), 'utf8'))?.[1]
@@ -29,7 +36,7 @@ if (!verified) problems.push('VERIFIED_UNIVER_VERSION not found in packages/univ
 for (const [file, pkg] of Object.entries(MANIFESTS)) {
   const declared = { ...pkg.dependencies, ...pkg.devDependencies }
   for (const [name, range] of Object.entries(declared)) {
-    if (!/^\d+\.\d+\.\d+$/.test(range)) problems.push(`${file}: ${name} "${range}" is not an exact version`)
+    if (!EXACT.test(range)) problems.push(`${file}: ${name} "${range}" is not an exact version`)
     if (name.startsWith('@univerjs/') && range !== verified) problems.push(`${file}: ${name} ${range} differs from VERIFIED_UNIVER_VERSION ${verified}`)
   }
 }

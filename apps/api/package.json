@@ -14,8 +14,22 @@
     "@naf-sheets/shared": "0.0.0",
     "@naf-sheets/sheet-model": "0.0.0",
     "@naf-sheets/sync-engine": "0.0.0",
+    "@univerjs/core": "1.4.0",
+    "@univerjs/data-validation": "1.4.0",
+    "@univerjs/docs": "1.4.0",
+    "@univerjs/engine-formula": "1.4.0",
+    "@univerjs/sheets": "1.4.0",
+    "@univerjs/sheets-conditional-formatting": "1.4.0",
+    "@univerjs/sheets-data-validation": "1.4.0",
+    "@univerjs/sheets-filter": "1.4.0",
+    "@univerjs/sheets-formula": "1.4.0",
+    "@univerjs/sheets-hyper-link": "1.4.0",
+    "@univerjs/sheets-note": "1.4.0",
+    "@univerjs/sheets-numfmt": "1.4.0",
+    "@univerjs/sheets-sort": "1.4.0",
     "hono": "4.13.17",
-    "naf-auth": "github:fahadaali/naf-auth#v3.4.0"
+    "naf-auth": "github:fahadaali/naf-auth#v3.4.0",
+    "rxjs": "7.8.2"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "0.23.0",

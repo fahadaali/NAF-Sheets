@@ -15,7 +15,8 @@ on:
   push:
     paths:
       - 'packages/univer-rtl/**'
-      - 'apps/web/package.json'
+      - 'apps/*/package.json'
+      - 'packages/*/package.json'
       - 'package-lock.json'
       - 'package.json'
       - '.npmrc'
@@ -23,7 +24,8 @@ on:
   pull_request:
     paths:
       - 'packages/univer-rtl/**'
-      - 'apps/web/package.json'
+      - 'apps/*/package.json'
+      - 'packages/*/package.json'
       - 'package-lock.json'
       - 'package.json'
       - '.npmrc'
