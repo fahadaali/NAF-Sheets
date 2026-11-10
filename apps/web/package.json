@@ -1,0 +1,42 @@
+{
+  "name": "@naf-sheets/web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview --port 4174 --strictPort",
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc --noEmit -p ."
+  },
+  "dependencies": {
+    "@dawod/thmanyah-font-web": "1.2.0",
+    "@naf-sheets/shared": "0.0.0",
+    "@naf-sheets/univer-rtl": "0.0.0",
+    "@univerjs/core": "1.4.0",
+    "@univerjs/engine-render": "1.4.0",
+    "@univerjs/preset-sheets-conditional-formatting": "1.4.0",
+    "@univerjs/preset-sheets-core": "1.4.0",
+    "@univerjs/preset-sheets-data-validation": "1.4.0",
+    "@univerjs/preset-sheets-filter": "1.4.0",
+    "@univerjs/preset-sheets-hyper-link": "1.4.0",
+    "@univerjs/preset-sheets-note": "1.4.0",
+    "@univerjs/preset-sheets-sort": "1.4.0",
+    "@univerjs/presets": "1.4.0",
+    "@univerjs/sheets": "1.4.0",
+    "@univerjs/sheets-ui": "1.4.0",
+    "@univerjs/ui": "1.4.0",
+    "lucide-react": "1.70.0",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "rxjs": "7.8.2"
+  },
+  "devDependencies": {
+    "@types/react": "18.3.31",
+    "@types/react-dom": "18.3.7",
+    "@vitejs/plugin-react": "5.2.0",
+    "playwright": "1.63.0",
+    "vite": "7.1.12"
+  }
+}

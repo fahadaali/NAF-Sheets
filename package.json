@@ -1,0 +1,18 @@
+{
+  "name": "naf-sheets",
+  "private": true,
+  "type": "module",
+  "description": "NAF Sheets — Google-Sheets-like workbooks synced two-way with Basecamp 5 (spec: docs/spec.md).",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "test": "npm run test --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3",
+    "vitest": "4.1.12"
+  }
+}

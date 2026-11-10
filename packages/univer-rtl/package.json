@@ -1,0 +1,23 @@
+{
+  "name": "@naf-sheets/univer-rtl",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Right-to-left grid for Univer 1.4.0 (production copy of spike/univer/src/rtl-grid.ts).",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p ."
+  },
+  "dependencies": {
+    "@univerjs/core": "1.4.0",
+    "@univerjs/engine-render": "1.4.0",
+    "@univerjs/presets": "1.4.0",
+    "@univerjs/sheets": "1.4.0",
+    "@univerjs/sheets-ui": "1.4.0",
+    "@univerjs/ui": "1.4.0",
+    "rxjs": "7.8.2"
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "name": "@naf-sheets/api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p ."
+  },
+  "dependencies": {
+    "@naf-sheets/basecamp": "0.0.0",
+    "@naf-sheets/gsheets-import": "0.0.0",
+    "@naf-sheets/shared": "0.0.0",
+    "@naf-sheets/sync-engine": "0.0.0",
+    "hono": "4.13.17",
+    "naf-auth": "github:fahadaali/naf-auth#v3.4.0"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "0.23.0",
+    "@cloudflare/workers-types": "4.20260702.1",
+    "wrangler": "4.124.0"
+  }
+}
