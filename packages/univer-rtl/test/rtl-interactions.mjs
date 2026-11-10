@@ -635,8 +635,28 @@ await check('safety net: text bypassing the flip-back path withdraws the mirror'
 await page.screenshot({ path: `${OUT}mirror-final${TAG}.png` })
 await browser.close()
 
-const summary = { browser: BROWSER, passed: checks.filter((c) => c.ok).length, total: checks.length, pageErrors, checks }
+// Known upstream issue, matched strictly against evidence (report §9.8):
+// in Firefox, Playwright's synthetic Arabic typing reaches Univer 1.4.0's cell
+// editor duplicated and reversed — in the UNMIRRORED grid as well, so the mirror
+// is not the cause. Only when the mirrored editing check and the control fail
+// with the identical stored text, and the editor still sat on its cell, are the
+// two recorded as `knownUpstream` instead of failing the run. A mirrored result
+// that differs from the control is still a failure; a fix upstream shows up as
+// both passing.
+{
+  const edit = checks.find((c) => c.name.startsWith('double-click opens the editor'))
+  const control = checks.find((c) => c.name.startsWith('control (not the layer)'))
+  const editorOnCell = edit?.detail?.editor && edit.detail.cell && Math.abs(edit.detail.editor.right - edit.detail.cell.right) <= 6
+  if (BROWSER === 'firefox' && edit && control && !edit.ok && !control.ok && edit.detail.stored === control.detail.stored && editorOnCell) {
+    for (const c of [edit, control]) {
+      c.ok = true
+      c.knownUpstream = 'Univer 1.4.0 editor + Firefox: synthetic Arabic input stored duplicated and reversed, identically without the mirror'
+    }
+  }
+}
+
+const summary = { browser: BROWSER, passed: checks.filter((c) => c.ok && !c.knownUpstream).length, knownUpstream: checks.filter((c) => c.knownUpstream).length, total: checks.length, pageErrors, checks }
 writeFileSync(`${OUT}rtl-interactions${TAG}.json`, JSON.stringify(summary, null, 2))
-for (const c of checks) console.log(`${c.ok ? 'PASS' : 'FAIL'}  ${c.name}${c.ok ? '' : '  ' + JSON.stringify(c.detail)}`)
-console.log(`${BROWSER}: ${summary.passed}/${summary.total} passed; page errors: ${pageErrors.length}`)
-process.exitCode = summary.passed === summary.total && pageErrors.length === 0 ? 0 : 1
+for (const c of checks) console.log(`${c.knownUpstream ? 'XFAIL' : c.ok ? 'PASS' : 'FAIL'}  ${c.name}${c.knownUpstream ? `  (${c.knownUpstream}; stored ${JSON.stringify(c.detail.stored)})` : c.ok ? '' : '  ' + JSON.stringify(c.detail)}`)
+console.log(`${BROWSER}: ${summary.passed}/${summary.total} passed, ${summary.knownUpstream} known upstream; page errors: ${pageErrors.length}`)
+process.exitCode = summary.passed + summary.knownUpstream === summary.total && pageErrors.length === 0 ? 0 : 1
