@@ -20,6 +20,16 @@ async function expectApiError(res: Response, status: number, error: string) {
 }
 
 describe('POST /api/workbooks', () => {
+  it('gives the blank sheet Thmanyah as its default font, not Univer\'s Arial (spec §4.1)', async () => {
+    const owner = await seedMember('editor')
+    const id = await createWorkbook(app, owner)
+    const res = await call(app, 'GET', `/api/workbooks/${id}`, { user: owner })
+    const { snapshot } = await json<{ snapshot: { sheets: Record<string, { defaultStyle?: { ff?: string } }> } }>(res)
+    const sheets = Object.values(snapshot.sheets)
+    expect(sheets).toHaveLength(1)
+    expect(sheets[0]?.defaultStyle?.ff).toBe('Thmanyah Sans')
+  })
+
   it('creates a blank workbook: row, sheet «ورقة 1», snapshot v1 in R2 with the §7.1 columns, audit entry', async () => {
     const owner = await seedMember('editor')
     const res = await call(app, 'POST', '/api/workbooks', { user: owner, body: { title: '  خطة رمضان  ', source: 'blank' } })

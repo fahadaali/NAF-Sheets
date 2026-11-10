@@ -14,6 +14,13 @@ export const UNIVER_APP_VERSION = '1.4.0'
 /** Title of the first sheet of a blank workbook (spec §7.1); Latin digit (§12.2). */
 export const FIRST_SHEET_TITLE = 'ورقة 1'
 
+/**
+ * The grid's font family (spec §4.1). It must equal the family the web app
+ * loads (`--font-sans` in apps/web/src/styles/theme.css), or Univer falls back
+ * to its own default (Arial).
+ */
+export const GRID_FONT_FAMILY = 'Thmanyah Sans'
+
 /** Rows and columns of a blank sheet. */
 const BLANK_ROW_COUNT = 1000
 const BLANK_COLUMN_COUNT = 26
@@ -55,6 +62,8 @@ export interface BlankWorkbookData {
       columnCount: number
       /** Stored for the model; the grid is mirrored by @naf-sheets/univer-rtl. */
       rightToLeft: 1
+      /** Every cell without its own font uses Thmanyah (spec §4.1). */
+      defaultStyle: { ff: typeof GRID_FONT_FAMILY }
       cellData: Record<number, Record<number, { v: string; s: string }>>
     }
   >
@@ -81,6 +90,7 @@ export function blankWorkbookSnapshot(input: { workbookId: string; title: string
         rowCount: BLANK_ROW_COUNT,
         columnCount: BLANK_COLUMN_COUNT,
         rightToLeft: 1,
+        defaultStyle: { ff: GRID_FONT_FAMILY },
         cellData: { 0: header },
       },
     },
