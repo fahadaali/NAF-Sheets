@@ -265,8 +265,13 @@ async function run() {
     }
   }
 
-  if (mirrorGrid) {
-    await attempt('rtlGridEnabled', async () => {
+  // ?enableAfterIdle=1 — enable the mirror only once the sheet has been painted
+  // and has gone idle, as apps/web does when it opens a file (regression test:
+  // without a repaint on enable, the idle sheet kept mirrored glyphs and the
+  // heartbeat withdrew the mirror).
+  const enableAfterIdle = params.get('enableAfterIdle') === '1'
+  const enableMirror = () =>
+    attempt('rtlGridEnabled', async () => {
       const status = await enableRtlGrid(univerAPI, 'spike-wb', {
         onStatus: (s) => {
           ;(window as unknown as { __rtlStatus: unknown }).__rtlStatus = { mirrored: s.mirrored, reason: s.reason, versions: s.versions, verifiedVersion: s.verifiedVersion, problems: s.problems }
@@ -282,7 +287,7 @@ async function run() {
       }
       return status.mirrored
     })
-  }
+  if (mirrorGrid && !enableAfterIdle) await enableMirror()
 
   // A floating image on the special-cases sheet: asymmetric on purpose (an
   // arrow and Latin text), so an accidental mirror is obvious.
@@ -377,6 +382,11 @@ async function run() {
   // What the API and the stored model return for the mixed cell: must stay raw.
   results.a6ViaFacade = JSON.stringify(ws.getRange('A6').getValue())
   results.a6RawModel = JSON.stringify(some(ws.getSheet().getCellRaw(5, 0))?.v)
+
+  if (mirrorGrid && enableAfterIdle) {
+    await new Promise((r) => setTimeout(r, 1500))
+    await enableMirror()
+  }
 
   results.rightToLeftModel = (ws.getSheet().getConfig() as { rightToLeft?: number }).rightToLeft
   results.errors = errors

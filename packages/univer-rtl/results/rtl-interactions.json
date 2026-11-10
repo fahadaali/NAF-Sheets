@@ -1,0 +1,589 @@
+{
+  "browser": "chromium",
+  "passed": 33,
+  "total": 33,
+  "pageErrors": [],
+  "checks": [
+    {
+      "name": "layer reports mirrored, verified version, no contract problems",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "status": {
+          "mirrored": true,
+          "versions": {
+            "core": "1.4.0",
+            "engine-render": "1.4.0",
+            "sheets-ui": "1.4.0"
+          },
+          "verifiedVersion": true,
+          "problems": []
+        }
+      }
+    },
+    {
+      "name": "hit testing equals the unmirrored grid at the mirrored point (default view)",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "label": "default",
+        "points": 60,
+        "rowsEqual": true,
+        "mismatches": []
+      }
+    },
+    {
+      "name": "hit testing equals the unmirrored grid after scrolling right of the frozen column",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "label": "scrolled",
+        "points": 60,
+        "rowsEqual": true,
+        "mismatches": [],
+        "states": [
+          "{\"sheetViewStartRow\":0,\"sheetViewStartColumn\":0,\"offsetX\":207,\"offsetY\":0}",
+          "{\"sheetViewStartRow\":0,\"sheetViewStartColumn\":0,\"offsetX\":207,\"offsetY\":0}"
+        ]
+      }
+    },
+    {
+      "name": "hit testing equals the unmirrored grid at 150% zoom",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "label": "zoom 1.5",
+        "points": 60,
+        "rowsEqual": true,
+        "mismatches": []
+      }
+    },
+    {
+      "name": "horizontal swipe scrolls the way it looks",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "start": 0,
+        "afterLeftSwipe": 207,
+        "afterRightSwipe": 0
+      }
+    },
+    {
+      "name": "click selects the cell under the pointer",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "got": [
+          "B3",
+          "G4",
+          "A6"
+        ]
+      }
+    },
+    {
+      "name": "ArrowLeft moves to the next column (visually left), ArrowRight back, repeatedly",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "seen": [
+          "C3",
+          "B3",
+          "A3",
+          "B3",
+          "C3"
+        ]
+      }
+    },
+    {
+      "name": "Shift+ArrowLeft extends the selection leftwards on screen",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "got": "B3:C3"
+      }
+    },
+    {
+      "name": "Tab moves to the next column",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "got": "B3"
+      }
+    },
+    {
+      "name": "drag selects the range between the two cells",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "got": "B3:C5"
+      }
+    },
+    {
+      "name": "column header click selects the whole column; row header (on the right) selects the row",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "col": {
+          "startRow": 0,
+          "startColumn": 2,
+          "endRow": 49,
+          "endColumn": 2,
+          "rangeType": 2,
+          "unitId": "spike-wb",
+          "sheetId": "tasks"
+        },
+        "row": {
+          "startRow": 3,
+          "startColumn": 0,
+          "endRow": 3,
+          "endColumn": 11,
+          "rangeType": 1,
+          "unitId": "spike-wb",
+          "sheetId": "tasks"
+        }
+      }
+    },
+    {
+      "name": "double-click opens the editor over the cell; typing lands in that cell",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "stored": "تجربة RTL 123",
+        "editor": {
+          "left": 142,
+          "right": 244,
+          "top": 241,
+          "bottom": 272
+        },
+        "cell": {
+          "left": 156,
+          "right": 244,
+          "top": 241,
+          "bottom": 272,
+          "width": 88,
+          "height": 31
+        }
+      }
+    },
+    {
+      "name": "column resize: dragging the C|D border leftwards widens column C",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "before": 110,
+        "after": 158
+      }
+    },
+    {
+      "name": "toolbar: with no alignment the button shows \"right\" (where the text sits)",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "shown": "يمين"
+      }
+    },
+    {
+      "name": "toolbar \"left\" puts the text on the left, highlights \"left\", stores logical RIGHT",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "ink": {
+          "left": 199,
+          "right": 300,
+          "top": 194,
+          "bottom": 204,
+          "meanX": 249.48230088495575,
+          "count": 226
+        },
+        "cell": {
+          "left": 196,
+          "right": 396,
+          "top": 179,
+          "bottom": 210,
+          "width": 200,
+          "height": 31
+        },
+        "shown": "يسار",
+        "ht": 3
+      }
+    },
+    {
+      "name": "toolbar \"right\" puts the text on the right, highlights \"right\", stores logical LEFT",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "ink": {
+          "left": 290,
+          "right": 391,
+          "top": 194,
+          "bottom": 204,
+          "meanX": 339.9282700421941,
+          "count": 237
+        },
+        "cell": {
+          "left": 196,
+          "right": 396,
+          "top": 179,
+          "bottom": 210,
+          "width": 200,
+          "height": 31
+        },
+        "shown": "يمين",
+        "ht": 1
+      }
+    },
+    {
+      "name": "programmatic alignment (Facade) is stored as given, not swapped",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "ht": 1
+      }
+    },
+    {
+      "name": "data-validation dropdown opens under its cell, aligned to its right edge",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "panel": {
+          "left": 774,
+          "right": 974,
+          "top": 244,
+          "bottom": 455,
+          "width": 200,
+          "height": 211
+        },
+        "cell": {
+          "left": 884,
+          "right": 974,
+          "top": 210,
+          "bottom": 241,
+          "width": 90,
+          "height": 31
+        }
+      }
+    },
+    {
+      "name": "filter panel opens on the left of its column, level with the header",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "panel": {
+          "left": 101,
+          "right": 501,
+          "top": 124,
+          "bottom": 592,
+          "width": 400,
+          "height": 468
+        },
+        "cell": {
+          "left": 506,
+          "right": 606,
+          "top": 124,
+          "bottom": 148,
+          "width": 100,
+          "height": 24
+        }
+      }
+    },
+    {
+      "name": "note shows on the left of its cell on hover",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "note": {
+          "left": 16,
+          "right": 196,
+          "top": 210,
+          "bottom": 290,
+          "width": 180,
+          "height": 80
+        },
+        "cell": {
+          "left": 196,
+          "right": 396,
+          "top": 210,
+          "bottom": 241,
+          "width": 200,
+          "height": 31
+        }
+      }
+    },
+    {
+      "name": "link popup shows under its cell on hover",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "popup": {
+          "left": 300,
+          "right": 473.40625,
+          "top": 221,
+          "bottom": 241,
+          "width": 173.40625,
+          "height": 20
+        },
+        "cell": {
+          "left": 396,
+          "right": 506,
+          "top": 179,
+          "bottom": 210,
+          "width": 110,
+          "height": 31
+        }
+      }
+    },
+    {
+      "name": "right-click opens the context menu at the pointer",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "menu": {
+          "left": 816,
+          "right": 1021.09375,
+          "top": 259,
+          "bottom": 315,
+          "width": 205.09375,
+          "height": 56
+        },
+        "pointer": {
+          "x": 805,
+          "y": 287.5
+        }
+      }
+    },
+    {
+      "name": "find (Ctrl+F): one match, highlighted over its cell",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "highlight": {
+          "left": 505,
+          "right": 606,
+          "top": 209,
+          "bottom": 241,
+          "meanX": 554.3021893308664,
+          "count": 3243
+        },
+        "cell": {
+          "left": 506,
+          "right": 606,
+          "top": 210,
+          "bottom": 241,
+          "width": 100,
+          "height": 31
+        }
+      }
+    },
+    {
+      "name": "autofill: dragging the fill handle continues the series",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "got": [
+          50,
+          70,
+          90
+        ]
+      }
+    },
+    {
+      "name": "formula reference by dragging over cells while typing =SUM(",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "formula": "=SUM(A4:B5)",
+        "value": 100
+      }
+    },
+    {
+      "name": "rotated text: same ink position, extent and amount as in the unmirrored grid",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "cells": {
+          "A2": {
+            "mirrored": {
+              "l": 51,
+              "r": 109,
+              "t": 19,
+              "b": 70,
+              "n": 174
+            },
+            "plain": {
+              "l": 52,
+              "r": 110,
+              "t": 19,
+              "b": 70,
+              "n": 175
+            },
+            "same": true
+          },
+          "B2": {
+            "mirrored": {
+              "l": 53,
+              "r": 109,
+              "t": 15,
+              "b": 70,
+              "n": 201
+            },
+            "plain": {
+              "l": 54,
+              "r": 110,
+              "t": 15,
+              "b": 70,
+              "n": 197
+            },
+            "same": true
+          },
+          "C2": {
+            "mirrored": {
+              "l": 2,
+              "r": 17,
+              "t": 26,
+              "b": 73,
+              "n": 117
+            },
+            "plain": {
+              "l": 3,
+              "r": 19,
+              "t": 26,
+              "b": 73,
+              "n": 121
+            },
+            "same": true
+          }
+        }
+      }
+    },
+    {
+      "name": "floating image is not mirrored: arrow points right, text top-right",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "image": {
+          "x": 574,
+          "y": 252,
+          "width": 159,
+          "height": 59
+        },
+        "arrow": {
+          "left": 584,
+          "right": 703,
+          "top": 261,
+          "bottom": 302,
+          "meanX": 653.4791344667697,
+          "count": 1294
+        },
+        "label": {
+          "left": 703,
+          "right": 727,
+          "top": 265,
+          "bottom": 273,
+          "meanX": 713.1551724137931,
+          "count": 58
+        }
+      }
+    },
+    {
+      "name": "touch: a tap selects the cell under the finger",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "got": [
+          "B3",
+          "G4"
+        ]
+      }
+    },
+    {
+      "name": "stored values are untouched (no direction marks leak into the model)",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "v": "نشر المقال على LinkedIn"
+      }
+    },
+    {
+      "name": "safety net: a changed Univer hook leaves the stock grid untouched and working",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "status": {
+          "mirrored": false,
+          "reason": "Univer contract broken: Documents.prototype._drawGlyphGroup(ctx, scale, group, line, alignOffset, centerAngle, vertexAngle, ...)",
+          "versions": {
+            "core": "1.4.0",
+            "engine-render": "1.4.0",
+            "sheets-ui": "1.4.0"
+          },
+          "verifiedVersion": true,
+          "problems": [
+            "Documents.prototype._drawGlyphGroup(ctx, scale, group, line, alignOffset, centerAngle, vertexAngle, ...)"
+          ]
+        },
+        "flipped": false,
+        "clicked": "B3"
+      }
+    },
+    {
+      "name": "enabling on a sheet already painted and idle repaints it and stays mirrored",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "status": {
+          "mirrored": true,
+          "versions": {
+            "core": "1.4.0",
+            "engine-render": "1.4.0",
+            "sheets-ui": "1.4.0"
+          },
+          "verifiedVersion": true,
+          "problems": []
+        },
+        "ink": {
+          "left": 1061,
+          "right": 1230,
+          "top": 161,
+          "bottom": 175,
+          "meanX": 1143.5759036144577,
+          "count": 415
+        },
+        "ref": {
+          "left": 1061,
+          "right": 1230,
+          "top": 161,
+          "bottom": 175,
+          "meanX": 1143.5759036144577,
+          "count": 415
+        }
+      }
+    },
+    {
+      "name": "control (not the layer): typing Arabic into the editor of the unmirrored grid",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "stored": "تجربة RTL 123"
+      }
+    },
+    {
+      "name": "safety net: text bypassing the flip-back path withdraws the mirror",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "status": {
+          "mirrored": false,
+          "reason": "heartbeat failed: no text went through the flip-back path",
+          "versions": {
+            "core": "1.4.0",
+            "engine-render": "1.4.0",
+            "sheets-ui": "1.4.0"
+          },
+          "verifiedVersion": true,
+          "problems": []
+        },
+        "flipped": false
+      }
+    }
+  ]
+}

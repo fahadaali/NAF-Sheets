@@ -594,6 +594,34 @@ await check('safety net: a changed Univer hook leaves the stock grid untouched a
   return { ok, status, flipped, clicked: got }
 })
 
+await check('enabling on a sheet already painted and idle repaints it and stays mirrored', async () => {
+  const p = await openPage('?dir=rtl&grid=mirror&selftest=0&enableAfterIdle=1')
+  await p.waitForTimeout(4000) // past the 3 s heartbeat window
+  const status = await p.evaluate(() => window.__rtlStatus)
+  // The repaint must have gone through the hooks: same ink as an RTL page enabled at once.
+  const ink = await inkBox(p, clipOf(await cellBox(p, 'A2'), 3))
+  const ref = await inkBox(page, clipOf(await cellBox(page, 'A2'), 3))
+  await p.close()
+  const sameInk = ink && ref && near(ink.right - ink.left, ref.right - ref.left, 3) && ink.count / ref.count > 0.85 && ink.count / ref.count < 1.15
+  return { ok: status?.mirrored === true && Boolean(sameInk), status, ink, ref }
+})
+
+await check('control (not the layer): typing Arabic into the editor of the unmirrored grid', async () => {
+  // Same keystrokes as the mirrored editing check, on a grid without the layer.
+  // If this fails too in a browser, the failure there is not caused by the mirror.
+  const p = await openPage('?dir=rtl&selftest=0')
+  const box = await cellBox(p, 'H5', false)
+  await p.mouse.dblclick(box.left + box.width / 2, box.top + box.height / 2)
+  await p.waitForTimeout(300)
+  const typed = 'تجربة RTL 123'
+  await p.keyboard.type(typed)
+  await p.keyboard.press('Enter')
+  await p.waitForTimeout(300)
+  const stored = await value('H5', p)
+  await p.close()
+  return { ok: stored === typed, stored }
+})
+
 await check('safety net: text bypassing the flip-back path withdraws the mirror', async () => {
   const p = await openPage('?dir=rtl&grid=mirror&selftest=0&simulateBreak=heartbeat')
   await p.waitForTimeout(4000)

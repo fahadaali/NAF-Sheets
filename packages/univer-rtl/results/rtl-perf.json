@@ -1,0 +1,60 @@
+{
+  "runs": 3,
+  "plain": {
+    "meanMs": 9.84,
+    "p95Ms": 13.9
+  },
+  "mirrored": {
+    "meanMs": 10.72,
+    "p95Ms": 17.17
+  },
+  "detail": {
+    "plain": [
+      {
+        "frames": 61,
+        "meanMs": 10.57,
+        "p50Ms": 10.3,
+        "p95Ms": 16.4,
+        "maxMs": 20.4
+      },
+      {
+        "frames": 62,
+        "meanMs": 9.59,
+        "p50Ms": 9.5,
+        "p95Ms": 12.9,
+        "maxMs": 16.6
+      },
+      {
+        "frames": 62,
+        "meanMs": 9.36,
+        "p50Ms": 9.1,
+        "p95Ms": 12.4,
+        "maxMs": 15.4
+      }
+    ],
+    "mirrored": [
+      {
+        "frames": 60,
+        "meanMs": 12.05,
+        "p50Ms": 11.4,
+        "p95Ms": 22,
+        "maxMs": 22.4
+      },
+      {
+        "frames": 66,
+        "meanMs": 9.65,
+        "p50Ms": 9.8,
+        "p95Ms": 14.1,
+        "maxMs": 16.8
+      },
+      {
+        "frames": 62,
+        "meanMs": 10.46,
+        "p50Ms": 9.5,
+        "p95Ms": 15.4,
+        "maxMs": 35
+      }
+    ]
+  },
+  "overheadMeanPct": 8.9
+}

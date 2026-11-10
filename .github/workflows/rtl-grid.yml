@@ -1,20 +1,32 @@
-# Gate for the RTL grid layer (spike/univer/src/rtl-grid.ts).
+# Gate for the RTL grid layer (packages/univer-rtl/src/rtl-grid.ts).
 #
 # The layer hooks Univer internals. This workflow is what keeps a Univer
 # upgrade, a dependency change or a browser change from silently breaking it:
-# it builds the spike page and runs the interaction suite in Chromium, Firefox
-# and WebKit (Safari's engine). A pull request that changes any @univerjs
-# version must pass it before merging.
+# from the root workspace install it checks the @univerjs pins, runs the unit
+# tests, builds the package's harness page and runs the interaction suite in
+# Chromium, Firefox and WebKit (Safari's engine). A pull request that changes
+# any @univerjs version must pass it before merging.
+#
+# spike/univer keeps the phase 0 copy of the harness as evidence; it is no
+# longer what this workflow tests.
 name: RTL grid
 
 on:
   push:
     paths:
-      - 'spike/univer/**'
+      - 'packages/univer-rtl/**'
+      - 'apps/web/package.json'
+      - 'package-lock.json'
+      - 'package.json'
+      - '.npmrc'
       - '.github/workflows/rtl-grid.yml'
   pull_request:
     paths:
-      - 'spike/univer/**'
+      - 'packages/univer-rtl/**'
+      - 'apps/web/package.json'
+      - 'package-lock.json'
+      - 'package.json'
+      - '.npmrc'
       - '.github/workflows/rtl-grid.yml'
   workflow_dispatch:
 
@@ -29,25 +41,32 @@ jobs:
         browser: [chromium, firefox, webkit]
     defaults:
       run:
-        working-directory: spike/univer
+        working-directory: packages/univer-rtl
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: spike/univer/package-lock.json
-      - run: npm ci
-      - run: npx playwright install --with-deps ${{ matrix.browser }}
+          cache-dependency-path: package-lock.json
+      - name: Install the workspace (root lockfile and .npmrc)
+        run: npm ci
+        working-directory: .
+      - name: Univer pins equal VERIFIED_UNIVER_VERSION
+        run: npm run check:pins
       - run: npm run typecheck
-      - run: npm run build
-      - name: Serve the built page
+      - name: Unit tests (pure helpers, Univer contract)
+        run: npm test
+      - run: npx playwright install --with-deps ${{ matrix.browser }}
+      - run: npm run harness:typecheck
+      - run: npm run harness:build
+      - name: Serve the built harness on :4175
         run: |
-          npx vite preview --port 4173 --strictPort > preview.log 2>&1 &
-          for i in $(seq 1 60); do curl -sf http://localhost:4173/ > /dev/null && exit 0; sleep 1; done
-          cat preview.log; exit 1
+          npm run harness:preview > "$RUNNER_TEMP/preview.log" 2>&1 &
+          for i in $(seq 1 60); do curl -sf http://localhost:4175/ > /dev/null && exit 0; sleep 1; done
+          cat "$RUNNER_TEMP/preview.log"; exit 1
       - name: Interaction suite
-        run: node rtl-interactions.mjs
+        run: npm run test:rtl
         env:
           BROWSER: ${{ matrix.browser }}
       - if: always()
@@ -55,6 +74,6 @@ jobs:
         with:
           name: rtl-grid-${{ matrix.browser }}
           path: |
-            spike/univer/results/rtl-interactions*.json
-            spike/univer/results/mirror-*.png
+            packages/univer-rtl/results/rtl-interactions*.json
+            packages/univer-rtl/results/mirror-*.png
           retention-days: 30

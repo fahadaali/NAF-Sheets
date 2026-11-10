@@ -28,6 +28,13 @@ describe('firstStrongDirection', () => {
     // Arabic presentation forms (A and B).
     ['ﭐ', 'rtl'],
     ['ﻻ', 'rtl'],
+    // Not strong (Unicode bidi): Arabic-Indic digits (AN/EN) and combining marks (NSM),
+    // so they are skipped exactly like dir="auto" skips them.
+    ['١٢٣ abc', 'ltr'],
+    ['۱۲۳ abc', 'ltr'],
+    ['ًabc', 'ltr'],
+    // Letters of other scripts are strong LTR.
+    ['漢字 نص', 'ltr'],
   ] as const)('%s -> %s', (text, expected) => {
     expect(firstStrongDirection(text)).toBe(expected)
   })

@@ -44,25 +44,17 @@ export const VERIFIED_UNIVER_VERSION = '1.4.0'
 // Pure helpers (no Univer)
 // ---------------------------------------------------------------------------
 
-const RTL_RANGES: ReadonlyArray<readonly [number, number]> = [
-  [0x0590, 0x08ff], // Hebrew, Arabic, Syriac, Thaana, NKo, Samaritan, Arabic Extended
-  [0xfb1d, 0xfdff], // Hebrew and Arabic presentation forms A
-  [0xfe70, 0xfeff], // Arabic presentation forms B
-]
-const LTR_RANGES: ReadonlyArray<readonly [number, number]> = [
-  [0x0041, 0x005a], [0x0061, 0x007a], // Basic Latin letters
-  [0x00c0, 0x024f], // Latin-1 and Latin Extended letters
-  [0x0370, 0x03ff], // Greek
-  [0x0400, 0x04ff], // Cyrillic
-]
-const inRanges = (cp: number, ranges: ReadonlyArray<readonly [number, number]>) => ranges.some(([a, b]) => cp >= a && cp <= b)
+// Strong characters in the Unicode bidi sense are letters (Bidi_Class L, R, AL).
+// Digits (EN/AN, incl. Arabic-Indic) and combining marks (NSM) are not strong,
+// exactly as the browser's `dir="auto"` treats them.
+const RTL_LETTER = /[\p{Script=Arabic}\p{Script=Hebrew}\p{Script=Syriac}\p{Script=Thaana}\p{Script=Nko}\p{Script=Samaritan}\p{Script=Mandaic}\p{Script=Adlam}]/u
+const LETTER = /\p{L}/u
 
 /** Paragraph direction the way `dir="auto"` decides it: the first strong character wins. */
 export function firstStrongDirection(text: string): 'rtl' | 'ltr' {
   for (const ch of text) {
-    const cp = ch.codePointAt(0) ?? 0
-    if (inRanges(cp, RTL_RANGES)) return 'rtl'
-    if (inRanges(cp, LTR_RANGES)) return 'ltr'
+    if (!LETTER.test(ch)) continue
+    return RTL_LETTER.test(ch) ? 'rtl' : 'ltr'
   }
   return 'rtl' // digits and punctuation only: follow the sheet
 }
@@ -502,6 +494,15 @@ export async function enableRtlGrid(univerAPI: FUniver, unitId: string, options:
     menuService.mergeMenu(patch)
   }
 
+  // Full repaint of the workbook's active sheet through the public Facade.
+  const redraw = () => {
+    try {
+      ;(univerAPI as unknown as { getWorkbook: (id: string) => { getActiveSheet: () => { refreshCanvas: () => unknown } } | null }).getWorkbook(unitId)?.getActiveSheet().refreshCanvas()
+    } catch (e) {
+      console.error('[rtl-grid] redraw failed', e)
+    }
+  }
+
   const dispose = () => {
     frame.removeEventListener('wheel', onWheel, { capture: true })
     im._getObjectAtEvent = originalGetObjectAtEvent
@@ -511,6 +512,7 @@ export async function enableRtlGrid(univerAPI: FUniver, unitId: string, options:
     for (const child of Array.from(frame.children)) child.classList.remove('naf-rtl-unflip')
     scene.render = originalRender
     mirroredUnits.delete(unitId)
+    redraw() // repaint unmirrored, so no flipped-back text is left on the canvas
   }
 
   const status: RtlGridStatus = {
@@ -523,6 +525,11 @@ export async function enableRtlGrid(univerAPI: FUniver, unitId: string, options:
   // flip-back path. If Univer stopped drawing through the hooked calls, the
   // mirrored text would be unreadable: withdraw the mirror instead and report it.
   const before = textFlipCount
+  // Whatever was painted before the mirror existed is now shown flipped by the
+  // CSS transform: glyphs mirrored. Repaint everything now, through the hooks.
+  // (Without this, a sheet that was already painted and then sits idle shows
+  // mirrored text and fails the heartbeat — found by the apps/web e2e suite.)
+  redraw()
   void (async () => {
     const start = performance.now()
     while (performance.now() - start < 3000 && textFlipCount === before) await new Promise((r) => requestAnimationFrame(r))
