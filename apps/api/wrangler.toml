@@ -27,6 +27,11 @@ PLATFORM_ID = "REPLACE_WITH_PLATFORM_ID"
 BASECAMP_ACCOUNT_ID = "REPLACE_WITH_BASECAMP_ACCOUNT_ID"
 # Google Sheets import (src/google-import). The OAuth client id is not secret.
 GOOGLE_CLIENT_ID = "REPLACE_WITH_GOOGLE_CLIENT_ID"
+# Sync (src/sync): the public HTTPS origin Basecamp posts webhooks to, e.g.
+# "https://sheets.naflaw.sa" (spec §17-4, not decided). Until it is an HTTPS
+# origin no webhook is registered and reconciliation (every 15 min) carries
+# Basecamp's changes alone. See apps/api/OPEN_QUESTIONS.md "Sync (wave 3)".
+PUBLIC_API_ORIGIN = "REPLACE_WITH_PUBLIC_API_ORIGIN"
 # Secrets for these two modules — only via `wrangler secret put`, never here:
 #   BASECAMP_CLIENT_ID, BASECAMP_CLIENT_SECRET, GOOGLE_CLIENT_SECRET,
 #   TOKEN_ENCRYPTION_KEY (32 random bytes, base64; see src/crypto.ts)
@@ -76,9 +81,15 @@ bucket_name = "naf-sheets-attachments"
 #   wrangler queues create bc-inbound
 #   wrangler queues create bc-inbound-dlq
 #
-# bc-outbound: platform → Basecamp writes (§9.2). 5 retries, then DLQ (§9.2.8).
+# bc-outbound: platform → Basecamp writes (§9.2). The consumer retries with
+#              message.retry (Retry-After on 429, exponential backoff on 5xx)
+#              and gives a message up after its 5th attempt itself: it sends
+#              it to bc-outbound-dlq (BC_OUTBOUND_DLQ), records it in D1
+#              sync_dead_letters and puts the row in `error` (§9.2.8).
+#              max_retries / dead_letter_queue below are the platform's
+#              backstop for a consumer that crashes.
 # bc-inbound: raw Basecamp webhook deliveries, acknowledged with 200 at once
-#             and processed here (§9.3.3).
+#             and processed here (§9.3.3), and «مزامنة الآن» requests.
 # ─────────────────────────────────────────────────────────────
 [[queues.producers]]
 binding = "BC_OUTBOUND"
@@ -88,13 +99,19 @@ queue = "bc-outbound"
 binding = "BC_INBOUND"
 queue = "bc-inbound"
 
+[[queues.producers]]
+binding = "BC_OUTBOUND_DLQ"
+queue = "bc-outbound-dlq"
+
 [[queues.consumers]]
 queue = "bc-outbound"
+max_batch_size = 10
 max_retries = 5
 dead_letter_queue = "bc-outbound-dlq"
 
 [[queues.consumers]]
 queue = "bc-inbound"
+max_batch_size = 10
 max_retries = 5
 dead_letter_queue = "bc-inbound-dlq"
 

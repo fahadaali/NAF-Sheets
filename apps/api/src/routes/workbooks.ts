@@ -21,6 +21,7 @@ import { ApiFailure } from '../errors'
 import { callerOf, isPlainObject, nowIso, readJson } from '../request'
 import { roomRequest } from '../room'
 import { FIRST_SHEET_TITLE, blankWorkbookSnapshot, readSnapshot, writeSnapshotVersion } from '../snapshot'
+import { detectAfterSave, parseConfirmedDeletions } from '../sync/detect'
 
 export interface WorkbookRouteOptions {
   /** See DEFAULT_SNAPSHOT_ORPHAN_AGE_MS. */
@@ -175,6 +176,10 @@ export function workbookRoutes(options: WorkbookRouteOptions): Hono<AppEnv> {
       throw new ApiFailure(400, 'invalid_base_version')
     }
     if (!isPlainObject(snapshot)) throw new ApiFailure(400, 'invalid_snapshot')
+    // Spec §9.2.7: only rows listed here may be deleted in Basecamp. A malformed
+    // list is refused before anything is written, so it can never delete.
+    const confirmedDeletions = parseConfirmedDeletions(body.confirmedDeletions)
+    if (confirmedDeletions === null) throw new ApiFailure(400, 'invalid_snapshot')
 
     // Nothing is written on a stale base.
     if (baseVersion !== row.current_snapshot_version) throw new ApiFailure(409, 'version_conflict')
@@ -198,6 +203,9 @@ export function workbookRoutes(options: WorkbookRouteOptions): Hono<AppEnv> {
       .bind(next, nowIso(), row.id, baseVersion)
       .run()
     if (result.meta.changes !== 1) throw new ApiFailure(409, 'version_conflict')
+
+    // Outbound sync (§9.2): changed task rows go to Basecamp. Never fails the save.
+    await detectAfterSave(c.env, { workbookId: row.id, actorUserId: caller.id, snapshot, version: next, confirmedDeletions })
 
     return c.json<SaveSnapshotResponse>({ version: next })
   })

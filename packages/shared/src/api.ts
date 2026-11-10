@@ -56,6 +56,14 @@ export type ApiErrorCode =
   | 'basecamp_todoset_disabled'
   | 'invalid_request'
   | 'person_already_matched'
+  // Sync (apps/api/src/sync/errors.ts)
+  | 'workbook_already_linked'
+  | 'workbook_not_linked'
+  | 'invalid_link_plan'
+  | 'basecamp_todolist_not_found'
+  | 'basecamp_project_taken'
+  | 'conflict_already_resolved'
+  | 'sheet_write_refused'
 
 /** Every non-2xx JSON response. `message` is Arabic: what happened and what to do (spec §12.2). */
 export interface ApiError {

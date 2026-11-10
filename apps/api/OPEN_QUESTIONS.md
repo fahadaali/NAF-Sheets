@@ -358,3 +358,163 @@ B19. **Live test: account and profile fields.** A Basecamp 5 account is
     expected as `product: "bc3"` in `authorization.json` (the SDK README says
     so); `/my/profile.json` is expected to carry `admin` / `owner` (people.md's
     person example), which decides whether a service account may connect.
+
+## Sync (wave 3)
+
+`src/sync/` (spec §7.3, §8, §9; contracts `packages/shared/src/api-sync.ts` and
+the link wizard of `api-integrations.ts`) and `migrations/0003_sync.sql`.
+Referenced from the code as `(Sn)`. Each is implemented with the safe
+default: nothing in Basecamp or in the sheet is deleted or overwritten
+without a person's action or a logged, restorable conflict. Every test runs
+on a fake Basecamp (`test/sync/fake-basecamp.ts`); nothing here is accepted
+against the real service until the phase 0 live test (CLAUDE.md §1).
+
+S1. **Rows without a uid.** sheet-model OPEN #1 puts protection of the system
+    columns in the editor. A synced row the browser saves without a `__uid`
+    (`untracked_row`) is not synced and has no row state to report (no uid).
+    The API does not write uids after a browser save: a server write would
+    make the editor's next save fail with 409 until the room carries server
+    edits (phase 6). Decide: the editor assigns uids to new rows (proposed),
+    or the API does it through the room.
+
+S2. **Attribution per row, not per field.** A queue message names a task;
+    the consumer sends the row's full state. When two people edit the same
+    row before it syncs, both changes go out under the token of the message
+    being processed. (Different rows are always attributed to their own
+    editors, §16 scenario 11.)
+
+S3. **`match_by_title` at link time.** The plan cannot carry the pairs the
+    person reviewed (`SheetPlan` has no field for them), so the commit applies
+    the same deterministic matching the preview showed (unique titles on both
+    sides only). For a matched row Basecamp's values win where they differ
+    (the row has no local change time), and every difference is stored as a
+    conflict the person can restore from the conflicts routes. Confirm the
+    direction, and whether the plan should carry the accepted pairs.
+
+S4. **Interrupted link commit.** Linking creates things in Basecamp before
+    the snapshot and D1 are written, and nothing in Basecamp is ever deleted.
+    `workbooks.link_state = 'linking'` keeps the project and the lists already
+    created; the next commit reuses them. While `linking`, the workbook already
+    has `bc_project_id` and reads as linked in the workbook list.
+
+S5. **Positions of completed to-dos.** Reconciliation reads the pending and
+    the completed lists separately. Whether they share one position sequence
+    (and how it relates to the sheet's order, where completed rows are
+    interleaved) is unknown until the live test; completed to-dos' positions
+    are therefore not compared (no reorder from them).
+
+S6. **Resuming after `Reason: Account Inactive`.** The whole account's sync
+    stops (`sync_accounts`), rows stay `pending`, every workbook shows the
+    notice, an audit row is written. There is no dedicated route: a platform
+    admin's «مزامنة الآن» resumes the account. Decide the resume path.
+
+S7. **Subtasks deleted in Basecamp and the automatic union (§8.1).** Their
+    rows stay (struck through, §9.3.10) but their assignees leave the to-do's
+    union.
+
+S8. **«محذوفة في Basecamp» style.** §9.3.10 asks for strikethrough and grey.
+    The snapshot needs a literal colour (Univer styles cannot read the theme)
+    and the platform theme (CLAUDE.md §0) is undecided: only the
+    strikethrough is written. Which grey, and from which theme file?
+
+S9. **A Basecamp value the sheet cannot take** (a formula in the mapped cell,
+    a checkbox driven by a formula, an assignee the name caches do not know):
+    the row goes to `error` (`inbound:<code>`, the sheet-model message) and its
+    base is *not* moved, so the next outbound push cannot revert Basecamp. The
+    row waits until the cell is fixed or the caches learn the name (refreshed
+    once per inbound run when an unknown id appears).
+
+S10. **`PUBLIC_API_ORIGIN`** (a `[vars]` placeholder) is the HTTPS origin in
+    the webhook `payload_url` (spec §17-4, not decided). Until it is set, no
+    webhook is registered, the workbook shows the «webhook pending» notice and
+    reconciliation carries the inbound sync alone.
+
+S11. **Assignee candidates in the link preview.** An assignee text is
+    confident when exactly one project person (or external contact) has that
+    name after normalisation; otherwise up to 5 candidates with a similarity
+    ≥ 0.5 (Levenshtein on the wizard's folded labels, at least 0.8 when one
+    name contains the other). Threshold and count are not in the spec.
+
+S12. **A uid owned by another workbook** (a row copied across workbooks) is
+    not tracked in this one (`tasks.task_uid` is global); it is logged.
+
+S13. **`TaskSyncInfo.bcUrl`** is built from the documented app URL pattern
+    `https://3.basecamp.com/{account}/buckets/{project}/todos/{id}`; a subtask
+    links to its to-do (no documented subtask URL). Confirm at the live test,
+    or store `app_url` from the records.
+
+S14. **A sheet the platform creates for a new list** (§9.3.9, default
+    `create_sheet`) gets the default columns of §7.1 and «منجز» as the value
+    that means completed in «الحالة». Confirm.
+
+S15. **Assignee options without the caller's own link.** The project people
+    are then served from the cache as it is (no refresh), so a viewer who never
+    linked Basecamp still sees the names the sheet already shows. Emails go to
+    platform admins only (as basecamp-link B13).
+
+S16. **Out of scope in this wave, data untouched:** comments
+    (`comment_created` is logged as ignored), attachments and uploads,
+    Basecamp invitations (§8.2 case 2) and external-contact e-mail (§17-7).
+    Descriptions round-trip byte for byte, so `bc-attachment` tags survive.
+
+S17. **An editor without an active Basecamp link.** Implemented as the brief
+    asks: the row goes to `error` with an Arabic message asking to link
+    (`actor_not_linked` / `actor_link_expired` / `actor_link_revoked`), never
+    the service token. Spec §3 says such edits stay `pending` with a re-link
+    alert. Which state? (The message and the «اربط حسابك» path are the same.)
+
+S18. **404 with a person's token** may mean "no access" (§3), not "deleted".
+    The outbound consumer then holds the row (`not_found`, never retried) and
+    never marks it deleted; only a service-token read (webhook,
+    reconciliation) marks a row deleted in Basecamp.
+
+S19. **§8.1's automatic update and reconciliation.** When reconciliation
+    finds a subtask change on a to-do in automatic mode, it writes the union
+    with the service token (the documented exception, logged «قاعدة تلقائية»,
+    `notify: false`), although §9.4 calls reconciliation read-only. A to-do
+    with a person's change still pending is left to that person's message.
+
+S20. **A linked list that answers 404** to the service account during
+    reconciliation is treated as deleted: every row of its sheet is marked,
+    none removed; a later successful read restores them.
+
+S21. **Retry numbers.** 5 attempts per message are the spec's (§9.2.8). The
+    backoff (10 s doubling, capped at 300 s), the 5 s delay when another step
+    holds the task, the 2-minute task lease and the 10-minute "stale pending"
+    re-queue are this module's. The consumer gives a message up itself (DLQ
+    producer `BC_OUTBOUND_DLQ` + `sync_dead_letters` + row error); the queue's
+    own `max_retries`/`dead_letter_queue` remain as the backstop.
+
+S22. **bc-inbound give-up.** After 5 attempts a webhook or «مزامنة الآن»
+    message is recorded in `sync_dead_letters` (queue `bc-inbound`) and
+    acknowledged, not sent to `bc-inbound-dlq`: reconciliation reads the same
+    records within 15 minutes.
+
+S23. **Contract proposals for `api-sync.ts`** (not changed, the web app is
+    built against it):
+    - `TaskSyncInfo` could carry the machine code of `message`
+      (`row_missing`, `actor_not_linked`, …) so the editor can act (e.g.
+      show the link button) without parsing text.
+    - `SyncHealthResponse` has no account-level state: an inactive account
+      (S6) and a missing service account show only as workbook notices.
+    - Restoring a conflict whose value the sheet cannot take answers 409
+      `sheet_write_refused` (a code added under `// Sync`).
+    - `ConflictRecord` for `assignees`: `localValue` is the row's
+      `Assignee[]`, `remoteValue` Basecamp's ids (as sync-engine reports it).
+
+S24. **§8.2 case 1 refused by Basecamp (403).** The route answers the spec's
+    Arabic sentence. The «أرسل طلباً» path (an `access_requests` row, an admin
+    notice, the row «بانتظار إضافة عضو») has no route in the contract and is
+    not built.
+
+S25. **A new row from Basecamp that cannot be placed** (sheet-model
+    `no_free_row`: the row under the table holds something) is logged and
+    tried again by every reconciliation until there is room.
+
+S26. **Order changes are one call per row.** Inserting a row in the middle
+    of a sheet moves every later row's 1-based position; each sends its own
+    `PUT …/position.json`.
+
+S27. **Deleting only a to-do's row while its subtask rows stay** trashes the
+    to-do in Basecamp (its subtasks go with it), and the subtask rows are left
+    in the sheet as they are (sheet-model then reports them as misplaced).
