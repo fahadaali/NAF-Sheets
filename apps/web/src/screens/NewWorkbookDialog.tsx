@@ -1,6 +1,8 @@
 // «ملف جديد» (spec §7.1): three options.
 //   1. ملف فارغ — POST /api/workbooks (phase 1).
-//   2. من قالب ناف — shown disabled: templates arrive in phase 7.
+//   2. من قالب ناف (phase 7) — GET /api/templates, then POST /api/workbooks
+//      with `source: 'template'`: a copy of the template's snapshot (admins
+//      manage templates from «الإعدادات» → «القوالب»).
 //   3. استيراد من Google Sheets (§7.2) — paste a link; when the caller's
 //      Google account is not linked, the browser goes to Google's consent and
 //      comes back here (`/?import=<id>`), then POST /api/import/gsheets and
@@ -9,17 +11,18 @@
 // here, once (apps/web/OPEN_QUESTIONS.md #2).
 
 import { useEffect, useId, useRef, useState } from 'react'
-import type { FormEvent } from 'react'
+import type { FormEvent, RefObject } from 'react'
 import { FileSpreadsheet, LayoutTemplate, LoaderCircle, Sheet } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import type { ImportGsheetsRequest } from '@naf-sheets/shared'
-import { api, errorMessage, googleStartUrl } from '../lib/api'
+import type { ImportGsheetsRequest, TemplateSummary } from '@naf-sheets/shared'
+import { api, errorMessage, googleStartUrl, isAbortError } from '../lib/api'
 import { parseSpreadsheetSource } from '../lib/gsheets-source'
 import { pathFor } from '../lib/routes'
 import { t } from '../strings'
 
 type Choice = 'blank' | 'template' | 'gsheets'
 type Busy = null | 'creating' | 'checkingGoogle' | 'redirecting' | 'importing'
+type Templates = { kind: 'idle' } | { kind: 'loading' } | { kind: 'error'; message: string } | { kind: 'ready'; list: TemplateSummary[] }
 
 export function NewWorkbookDialog({
   open,
@@ -45,6 +48,9 @@ export function NewWorkbookDialog({
   const [busy, setBusy] = useState<Busy>(null)
   const [error, setError] = useState<string | null>(null)
   const [returned, setReturned] = useState(false)
+  const [templates, setTemplates] = useState<Templates>({ kind: 'idle' })
+  const [templateId, setTemplateId] = useState('')
+  const templateRef = useRef<HTMLSelectElement>(null)
   // Which field takes the focus once the dialog has rendered its option's fields.
   const focusOnOpen = useRef<'title' | 'source' | null>(null)
   const ids = useId()
@@ -62,6 +68,8 @@ export function NewWorkbookDialog({
       setChoice(initialImport ? 'gsheets' : 'blank')
       setSource(initialImport ?? '')
       setReturned(Boolean(initialImport))
+      setTemplates({ kind: 'idle' })
+      setTemplateId('')
       focusOnOpen.current = initialImport ? 'source' : 'title'
       dialog.showModal()
     } else if (!open && dialog.open) {
@@ -81,10 +89,52 @@ export function NewWorkbookDialog({
     }
   })
 
+  // The list is read once per opening of the dialog, when the template option is first chosen.
+  const templatesRequested = useRef(false)
+  useEffect(() => {
+    if (!open) {
+      templatesRequested.current = false
+      return
+    }
+    if (choice !== 'template' || templatesRequested.current) return
+    templatesRequested.current = true
+    setTemplates({ kind: 'loading' })
+    api.listTemplates().then(
+      (res) => setTemplates({ kind: 'ready', list: res.templates }),
+      (err: unknown) => {
+        if (!isAbortError(err)) setTemplates({ kind: 'error', message: errorMessage(err) })
+      },
+    )
+  }, [open, choice])
+
   const choose = (next: Choice) => {
-    if (next === 'template' || busy) return
+    if (busy) return
     setChoice(next)
     setError(null)
+  }
+
+  const createFromTemplate = async () => {
+    if (!templateId) {
+      setError(t.newFile.templateRequired)
+      templateRef.current?.focus()
+      return
+    }
+    const value = title.trim()
+    if (!value) {
+      setError(t.newFile.titleRequired)
+      titleRef.current?.focus()
+      return
+    }
+    setBusy('creating')
+    setError(null)
+    try {
+      const { id } = await api.createWorkbookFromTemplate(value, templateId)
+      onCreated(id)
+    } catch (err) {
+      setError(errorMessage(err))
+    } finally {
+      setBusy(null)
+    }
   }
 
   const createBlank = async () => {
@@ -143,6 +193,7 @@ export function NewWorkbookDialog({
     e.preventDefault()
     if (busy) return
     if (choice === 'blank') void createBlank()
+    else if (choice === 'template') void createFromTemplate()
     else if (choice === 'gsheets') void importSheet()
   }
 
@@ -167,8 +218,7 @@ export function NewWorkbookDialog({
           <ChoiceCard
             name={`${ids}-choice`}
             value="template"
-            checked={false}
-            disabled
+            checked={choice === 'template'}
             onChoose={choose}
             Icon={LayoutTemplate}
             label={t.newFile.templateOption}
@@ -177,7 +227,25 @@ export function NewWorkbookDialog({
           <ChoiceCard name={`${ids}-choice`} value="gsheets" checked={choice === 'gsheets'} onChoose={choose} Icon={Sheet} label={t.newFile.importOption} hint={t.newFile.importHint} />
         </fieldset>
 
-        {choice === 'blank' ? (
+        {choice === 'template' ? (
+          <TemplateField
+            id={`${ids}-template`}
+            selectRef={templateRef}
+            templates={templates}
+            value={templateId}
+            invalid={Boolean(error) && !templateId}
+            errorId={errorId}
+            onChange={(id) => {
+              setTemplateId(id)
+              setError(null)
+              const picked = templates.kind === 'ready' ? templates.list.find((x) => x.id === id) : undefined
+              // Suggest the template's name while the title is still the default.
+              if (picked && (title.trim() === '' || title === t.newFile.defaultTitle)) setTitle(picked.title)
+            }}
+          />
+        ) : null}
+
+        {choice === 'blank' || choice === 'template' ? (
           <div className="field">
             <label htmlFor={`${ids}-title`}>{t.newFile.titleLabel}</label>
             <input
@@ -293,6 +361,74 @@ function ChoiceCard({
           </span>
         </span>
       </label>
+    </div>
+  )
+}
+
+function TemplateField({
+  id,
+  selectRef,
+  templates,
+  value,
+  invalid,
+  errorId,
+  onChange,
+}: {
+  id: string
+  selectRef: RefObject<HTMLSelectElement>
+  templates: Templates
+  value: string
+  invalid: boolean
+  errorId: string
+  onChange: (id: string) => void
+}) {
+  if (templates.kind === 'idle' || templates.kind === 'loading') {
+    return (
+      <p className="muted" role="status" data-testid="templates-loading">
+        <LoaderCircle className="icon spin inline-icon" aria-hidden="true" />
+        {t.newFile.templatesLoading}
+      </p>
+    )
+  }
+  if (templates.kind === 'error') {
+    return (
+      <p className="field-error" role="alert" data-testid="templates-error">
+        {templates.message}
+      </p>
+    )
+  }
+  if (templates.list.length === 0) {
+    return (
+      <p className="muted" data-testid="templates-empty">
+        {t.newFile.templatesEmpty}
+      </p>
+    )
+  }
+  const picked = templates.list.find((x) => x.id === value)
+  return (
+    <div className="field">
+      <label htmlFor={id}>{t.newFile.templateLabel}</label>
+      <select
+        ref={selectRef}
+        id={id}
+        className="select"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        aria-invalid={invalid ? true : undefined}
+        aria-describedby={invalid ? errorId : picked ? `${id}-hint` : undefined}
+      >
+        <option value="">{t.newFile.templatePlaceholder}</option>
+        {templates.list.map((tpl) => (
+          <option key={tpl.id} value={tpl.id}>
+            {tpl.title} — {t.newFile.templateSheets(tpl.sheetCount)}
+          </option>
+        ))}
+      </select>
+      {picked?.description ? (
+        <p id={`${id}-hint`} className="field-hint">
+          {picked.description}
+        </p>
+      ) : null}
     </div>
   )
 }

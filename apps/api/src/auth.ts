@@ -39,7 +39,8 @@ export type AuthMiddleware = MiddlewareHandler<AppEnv>
  * apps/api/OPEN_QUESTIONS.md #3.
  */
 export const PUBLIC_PATHS = ['/auth/callback', '/auth/logout', '/auth/backchannel-logout', '/health']
-export const PUBLIC_PREFIXES = ['/webhooks/basecamp/']
+// `/api/v1/` is the internal API (§13): guarded by its own service tokens.
+export const PUBLIC_PREFIXES = ['/webhooks/basecamp/', '/api/v1/']
 
 export function authConfig(env: Env): AuthConfig {
   return createConfig(env, {

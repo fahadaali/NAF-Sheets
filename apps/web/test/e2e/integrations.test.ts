@@ -241,10 +241,9 @@ describe('import from Google Sheets → report → editor (§7.1–7.2)', () => 
     await page.locator('.toolbar').getByRole('button', { name: 'ملف جديد', exact: true }).click()
     const dialog = page.getByRole('dialog', { name: 'ملف جديد' })
     await dialog.waitFor()
-    // Three options; templates are not available yet.
+    // Three options; templates are available since phase 7 (test/e2e/phase7.test.ts).
     expect(await dialog.getByRole('radio').count()).toBe(3)
-    expect(await dialog.getByLabel('من قالب ناف').isDisabled()).toBe(true)
-    expect(await dialog.innerText()).toContain('تصل قوالب ناف في المرحلة 7')
+    expect(await dialog.getByLabel('من قالب ناف').isDisabled()).toBe(false)
 
     await dialog.getByLabel('استيراد من Google Sheets').check()
     const source = dialog.getByLabel('رابط ملف Google Sheets أو معرّفه')

@@ -81,6 +81,10 @@ export type ApiErrorCode =
   | 'attachment_not_retryable'
   | 'comment_invalid'
   | 'basecamp_access_denied'
+  // Phase 7: templates, internal API (apps/api/src/phase7/errors.ts, contract ./api-phase7.ts)
+  | 'template_not_found'
+  | 'template_source_unreadable'
+  | 'api_token_not_found'
 
 /** Every non-2xx JSON response. `message` is Arabic: what happened and what to do (spec §12.2). */
 export interface ApiError {
@@ -124,11 +128,14 @@ export interface WorkbookListResponse {
   workbooks: WorkbookSummary[]
 }
 
-/** POST /api/workbooks → 201 `CreateWorkbookResponse` — phase 1 creates blank workbooks only. */
-export interface CreateWorkbookRequest {
-  title: string
-  source: Extract<WorkbookSource, 'blank'>
-}
+/**
+ * POST /api/workbooks → 201 `CreateWorkbookResponse`: a blank workbook (§7.1
+ * option 1), or a copy of a template's snapshot (option 2, phase 7). Imports
+ * go through POST /api/import/gsheets.
+ */
+export type CreateWorkbookRequest =
+  | { title: string; source: Extract<WorkbookSource, 'blank'> }
+  | { title: string; source: Extract<WorkbookSource, 'template'>; templateId: string }
 export interface CreateWorkbookResponse {
   id: string
 }

@@ -57,6 +57,12 @@ export interface Env {
   /** Univer snapshots: workbooks/{id}/snapshots/{version}.json */
   SNAPSHOTS: R2Bucket
   ATTACHMENTS: R2Bucket
+  /**
+   * Daily backups (spec §14, src/phase7/backup.ts): D1 export and copies of
+   * the latest snapshots. Optional: without it the daily run is recorded as
+   * skipped and nothing is written.
+   */
+  BACKUPS?: R2Bucket
   BC_OUTBOUND: Queue<BcOutboundMessage>
   BC_INBOUND: Queue<BcInboundQueueMessage>
   /**

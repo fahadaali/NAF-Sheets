@@ -74,6 +74,14 @@ bucket_name = "naf-sheets-snapshots"
 binding = "ATTACHMENTS"
 bucket_name = "naf-sheets-attachments"
 
+# Daily backups (spec §14; src/phase7/backup.ts, docs/backups.md).
+#   wrangler r2 bucket create naf-sheets-backups
+# OPEN: a bucket in another account / with a lifecycle rule is a product
+# decision (apps/api/OPEN_QUESTIONS.md B3). The job never deletes anything.
+[[r2_buckets]]
+binding = "BACKUPS"
+bucket_name = "naf-sheets-backups"
+
 # ─────────────────────────────────────────────────────────────
 # Queues
 #   wrangler queues create bc-outbound
@@ -127,7 +135,8 @@ tag = "v1"
 new_sqlite_classes = ["WorkbookRoom"]
 
 # ─────────────────────────────────────────────────────────────
-# Cron — reconciliation every 15 minutes (§9.4)
+# Cron — reconciliation every 15 minutes (§9.4), and the daily backup
+# (§14) at 00:23 UTC = 03:23 Riyadh (src/background.ts BACKUP_CRON).
 # ─────────────────────────────────────────────────────────────
 [triggers]
-crons = ["*/15 * * * *"]
+crons = ["*/15 * * * *", "23 0 * * *"]

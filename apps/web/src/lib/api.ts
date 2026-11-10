@@ -7,6 +7,16 @@
 // `onUnauthorized` with the login URL; the app sends the browser there.
 
 import type {
+  ApiTokenListResponse,
+  ApiTokenSummary,
+  ArchiveTemplateResponse,
+  BackupRunsResponse,
+  CreateApiTokenResponse,
+  CreateTemplateRequest,
+  SyncHealthResponse,
+  TemplateListResponse,
+  TemplateSummary,
+  UpdateTemplateRequest,
   AssigneeOptionsResponse,
   AttachmentSettingsResponse,
   CreateCommentResponse,
@@ -179,9 +189,14 @@ export function createApiClient(options: ApiClientOptions = {}) {
       const path = query ? `/api/workbooks?q=${encodeURIComponent(query)}` : '/api/workbooks'
       return request<WorkbookListResponse>('GET', path, undefined, signal)
     },
-    /** POST /api/workbooks — phase 1: blank workbooks only. */
+    /** POST /api/workbooks — a blank workbook (§7.1 option 1). */
     createWorkbook: (title: string) => {
       const body: CreateWorkbookRequest = { title, source: 'blank' }
+      return request<CreateWorkbookResponse>('POST', '/api/workbooks', body)
+    },
+    /** POST /api/workbooks — a copy of a template (§7.1 option 2). */
+    createWorkbookFromTemplate: (title: string, templateId: string) => {
+      const body: CreateWorkbookRequest = { title, source: 'template', templateId }
       return request<CreateWorkbookResponse>('POST', '/api/workbooks', body)
     },
     /** GET /api/workbooks/:id */
@@ -270,6 +285,27 @@ export function createApiClient(options: ApiClientOptions = {}) {
     /** POST /api/workbooks/:id/tasks/:uid/comments → 201 (a subtask's row comments on its to-do). */
     createComment: (id: string, uid: string, content: string) =>
       request<CreateCommentResponse>('POST', `${workbookPath(id)}/tasks/${encodeURIComponent(uid)}/comments`, { content }),
+
+    // --- Phase 7: packages/shared/src/api-phase7.ts (and sync health, api-sync.ts) ---
+
+    /** GET /api/templates — live templates. */
+    listTemplates: (signal?: AbortSignal) => request<TemplateListResponse>('GET', '/api/templates', undefined, signal),
+    /** POST /api/admin/templates → 201 (admins). */
+    createTemplate: (body: CreateTemplateRequest) => request<TemplateSummary>('POST', '/api/admin/templates', body),
+    /** PUT /api/admin/templates/:id (admins). */
+    updateTemplate: (id: string, body: UpdateTemplateRequest) => request<TemplateSummary>('PUT', `/api/admin/templates/${encodeURIComponent(id)}`, body),
+    /** POST /api/admin/templates/:id/archive (admins); nothing is deleted. */
+    archiveTemplate: (id: string) => request<ArchiveTemplateResponse>('POST', `/api/admin/templates/${encodeURIComponent(id)}/archive`),
+    /** GET /api/admin/sync-health (admins, §9.4). */
+    getSyncHealth: (signal?: AbortSignal) => request<SyncHealthResponse>('GET', '/api/admin/sync-health', undefined, signal),
+    /** GET /api/admin/backups (admins, §14). */
+    getBackups: (signal?: AbortSignal) => request<BackupRunsResponse>('GET', '/api/admin/backups', undefined, signal),
+    /** GET /api/admin/api-tokens (admins, §13). */
+    listApiTokens: (signal?: AbortSignal) => request<ApiTokenListResponse>('GET', '/api/admin/api-tokens', undefined, signal),
+    /** POST /api/admin/api-tokens → 201; the secret is in this answer only. */
+    createApiToken: (name: string) => request<CreateApiTokenResponse>('POST', '/api/admin/api-tokens', { name }),
+    /** POST /api/admin/api-tokens/:id/revoke */
+    revokeApiToken: (id: string) => request<ApiTokenSummary>('POST', `/api/admin/api-tokens/${encodeURIComponent(id)}/revoke`),
   }
 }
 

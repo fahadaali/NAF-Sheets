@@ -34,6 +34,13 @@ describe('parseRoute — wave 2 screens', () => {
     expect(parseRoute('/admin/people-matches')).toEqual({ name: 'peopleMatches' })
   })
 
+  it('maps the admin screens of phase 7', () => {
+    expect(parseRoute('/admin/sync-health')).toEqual({ name: 'syncHealth' })
+    expect(parseRoute('/admin/templates/')).toEqual({ name: 'templates' })
+    expect(parseRoute('/admin/api-tokens')).toEqual({ name: 'apiTokens' })
+    expect(parseRoute('/admin/other')).toEqual({ name: 'notFound' })
+  })
+
   it('reads the editor target: a sheet, and a range when it is valid A1', () => {
     expect(parseRoute('/workbooks/wb-1', '?sheet=s-2&range=B4%3AC10')).toEqual({
       name: 'editor',
@@ -68,6 +75,9 @@ describe('pathFor', () => {
       { name: 'linkWizard', id: 'wb-1' },
       { name: 'settings' },
       { name: 'peopleMatches' },
+      { name: 'syncHealth' },
+      { name: 'templates' },
+      { name: 'apiTokens' },
       { name: 'denied', reason: 'not_member' },
     ]
     for (const route of routes) {

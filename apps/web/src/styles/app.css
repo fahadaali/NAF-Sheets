@@ -1962,3 +1962,40 @@ fieldset legend {
 .row-tooltip__counts {
   gap: var(--space-3);
 }
+
+/* Phase 7: admin screens (templates, service tokens, sync health) */
+
+.field textarea {
+  min-block-size: calc(var(--control-height) * 2);
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-surface);
+  border: var(--border-width) solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  font: inherit;
+  resize: vertical;
+}
+
+code {
+  padding-inline: var(--space-1);
+  background: var(--color-surface-muted);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-sm);
+  overflow-wrap: anywhere;
+}
+
+/* The one-time token: selectable, left-to-right, never wrapped mid-character. */
+.secret-field {
+  inline-size: 100%;
+  block-size: var(--control-height);
+  margin-block-start: var(--space-2);
+  padding-inline: var(--space-3);
+  background: var(--color-surface);
+  border: var(--border-width) solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+}
+
+/* A badge in a column stack keeps its own width. */
+.stack-tight > .badge {
+  align-self: flex-start;
+}

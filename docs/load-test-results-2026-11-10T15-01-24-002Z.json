@@ -1,0 +1,293 @@
+{
+  "startedAt": "2026-11-10T15:01:24.002Z",
+  "node": "v22.23.4",
+  "env": {},
+  "parts": [
+    {
+      "part": "api",
+      "exitCode": 0,
+      "wallMs": 4241201,
+      "testWallMs": {
+        "1. save and read": 1426,
+        "2. room: join and apply": 18524,
+        "3. link and initial outbound sync": 4046347,
+        "4. outbound detection after an edit of 1% of the rows": 45074,
+        "5. reconciliation against the fake Basecamp": 122812,
+        "6. internal API: /api/v1/stats over every workbook": 1279
+      },
+      "results": [
+        {
+          "phase": "save_and_read",
+          "config": {
+            "workbooks": 10,
+            "sheets": 7,
+            "rows": 500,
+            "syncWorkbooks": 10,
+            "roomOps": 100
+          },
+          "snapshotBytes": {
+            "n": 10,
+            "min": 756187,
+            "median": 756187,
+            "p95": 756188,
+            "max": 756188,
+            "total": 7561871
+          },
+          "createMs": {
+            "n": 10,
+            "min": 5,
+            "median": 7,
+            "p95": 26,
+            "max": 26,
+            "total": 92
+          },
+          "saveMs": {
+            "n": 10,
+            "min": 33,
+            "median": 43,
+            "p95": 56,
+            "max": 56,
+            "total": 447
+          },
+          "readMs": {
+            "n": 30,
+            "min": 14,
+            "median": 19,
+            "p95": 25,
+            "max": 25,
+            "total": 571
+          },
+          "listMs": 5
+        },
+        {
+          "phase": "room",
+          "config": {
+            "workbooks": 10,
+            "sheets": 7,
+            "rows": 500,
+            "syncWorkbooks": 10,
+            "roomOps": 100
+          },
+          "opsPerWorkbook": 100,
+          "joinColdMs": {
+            "n": 10,
+            "min": 93,
+            "median": 101,
+            "p95": 11570,
+            "max": 11570,
+            "total": 12533
+          },
+          "joinWarmMs": {
+            "n": 10,
+            "min": 31,
+            "median": 36,
+            "p95": 48,
+            "max": 48,
+            "total": 369
+          },
+          "ackMs": {
+            "n": 1000,
+            "min": 3,
+            "median": 4,
+            "p95": 7,
+            "max": 37,
+            "total": 4804
+          },
+          "broadcastMs": {
+            "n": 1000,
+            "min": 0,
+            "median": 0,
+            "p95": 1,
+            "max": 1,
+            "total": 85
+          },
+          "persistMs": {
+            "n": 10,
+            "min": 61,
+            "median": 64,
+            "p95": 77,
+            "max": 77,
+            "total": 663
+          },
+          "rejected": 0
+        },
+        {
+          "phase": "link_and_outbound",
+          "config": {
+            "workbooks": 10,
+            "sheets": 7,
+            "rows": 500,
+            "syncWorkbooks": 10,
+            "roomOps": 100
+          },
+          "workbooks": 10,
+          "linkMs": {
+            "n": 10,
+            "min": 1412,
+            "median": 1584,
+            "p95": 1897,
+            "max": 1897,
+            "total": 15734
+          },
+          "drainMs": {
+            "n": 10,
+            "min": 382203,
+            "median": 403330,
+            "p95": 417156,
+            "max": 417156,
+            "total": 4030582
+          },
+          "perTaskMs": {
+            "n": 10,
+            "min": 109.20085714285715,
+            "median": 115.23714285714286,
+            "p95": 119.18742857142857,
+            "max": 119.18742857142857,
+            "total": 1151.594857142857
+          },
+          "totals": {
+            "tasks": 35000,
+            "messages": 35000,
+            "basecampCalls": 42000,
+            "ms": 4030582
+          },
+          "tasksPerSecond": 8.7,
+          "syncStates": {
+            "synced": 35000
+          }
+        },
+        {
+          "phase": "detection",
+          "config": {
+            "workbooks": 10,
+            "sheets": 7,
+            "rows": 500,
+            "syncWorkbooks": 10,
+            "roomOps": 100
+          },
+          "editedPerWorkbook": 35,
+          "saveWithDetectionMs": {
+            "n": 10,
+            "min": 404,
+            "median": 436,
+            "p95": 715,
+            "max": 715,
+            "total": 4810
+          },
+          "enqueued": {
+            "n": 10,
+            "min": 35,
+            "median": 35,
+            "p95": 35,
+            "max": 35,
+            "total": 350
+          },
+          "drainMs": {
+            "n": 10,
+            "min": 3692,
+            "median": 3987,
+            "p95": 4398,
+            "max": 4398,
+            "total": 39897
+          }
+        },
+        {
+          "phase": "reconciliation",
+          "config": {
+            "workbooks": 10,
+            "sheets": 7,
+            "rows": 500,
+            "syncWorkbooks": 10,
+            "roomOps": 100
+          },
+          "changedInBasecamp": 50,
+          "firstRun": {
+            "ms": 119108,
+            "basecampReads": 7701,
+            "workbooks": 10,
+            "lists": 70,
+            "notModified": 0,
+            "requeued": 0,
+            "stopped": null
+          },
+          "unchangedRun": {
+            "ms": 3701,
+            "basecampReads": 721,
+            "workbooks": 10,
+            "lists": 70,
+            "notModified": 70,
+            "requeued": 0,
+            "stopped": null
+          }
+        },
+        {
+          "phase": "internal_api_stats",
+          "config": {
+            "workbooks": 10,
+            "sheets": 7,
+            "rows": 500,
+            "syncWorkbooks": 10,
+            "roomOps": 100
+          },
+          "ms": 1276,
+          "tasks": 35000
+        }
+      ]
+    },
+    {
+      "part": "web",
+      "exitCode": 0,
+      "wallMs": 137143,
+      "testWallMs": {
+        "opens each workbook, switches to its last sheet, and stays error-free": 111562
+      },
+      "results": [
+        {
+          "phase": "editor_open",
+          "config": {
+            "workbooks": 10,
+            "sheets": 7,
+            "rows": 500
+          },
+          "snapshotBytes": {
+            "n": 10,
+            "min": 757296,
+            "median": 757296,
+            "p95": 757298,
+            "max": 757298
+          },
+          "openMs": {
+            "n": 10,
+            "min": 2128,
+            "median": 2227,
+            "p95": 2401,
+            "max": 2401
+          },
+          "readyMs": {
+            "n": 10,
+            "min": 10630,
+            "median": 10775,
+            "p95": 11077,
+            "max": 11077
+          },
+          "tabMs": {
+            "n": 10,
+            "min": 128,
+            "median": 196,
+            "p95": 290,
+            "max": 290
+          },
+          "heapMB": {
+            "n": 10,
+            "min": 40.1,
+            "median": 45.2,
+            "p95": 57.5,
+            "max": 57.5
+          },
+          "pageErrors": 0
+        }
+      ]
+    }
+  ],
+  "finishedAt": "2026-11-10T16:14:22.347Z"
+}

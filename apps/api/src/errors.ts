@@ -16,7 +16,7 @@ export const MESSAGES = {
   webhook_not_found: 'عنوان الاستقبال غير معروف. تحقّق من إعداد الـ Webhook في Basecamp.',
   invalid_json: 'جسم الطلب ليس JSON صالحاً. أرسل البيانات بصيغة JSON ثم أعد المحاولة.',
   invalid_title: 'عنوان الملف مطلوب، ولا يزيد على 200 حرف. اكتب عنواناً صالحاً ثم أعد المحاولة.',
-  unsupported_source: 'إنشاء الملفات متاح حالياً من «ملف فارغ» فقط. اختر «ملف فارغ» ثم أعد المحاولة.',
+  unsupported_source: 'مصدر الملف غير معروف: أنشئ الملف من «ملف فارغ» أو «من قالب ناف»، أو استورده من Google Sheets. اختر أحدها ثم أعد المحاولة.',
   invalid_snapshot: 'محتوى الملف المرسل غير صالح، فلم يُحفظ شيء. أعد تحميل الملف ثم أعد المحاولة.',
   invalid_base_version: 'رقم نسخة الملف مفقود أو غير صالح، فلم يُحفظ شيء. أعد تحميل الملف ثم أعد المحاولة.',
   version_conflict: 'حُفظت نسخة أحدث من هذا الملف قبل حفظ تعديلاتك، فلم يُحفظ شيء. أعد تحميل الملف ثم أعد تطبيق تعديلاتك.',
@@ -29,6 +29,17 @@ export const MESSAGES = {
   snapshot_missing: 'تعذّر تحميل محتوى الملف من التخزين. أعد المحاولة بعد لحظات، وإن تكرّر الخطأ فأبلغ مسؤول المنصة.',
   queue_unavailable: 'تعذّر تسجيل الحدث للمعالجة. سيعيد Basecamp الإرسال تلقائياً؛ وإن تكرّر الخطأ فأبلغ مسؤول المنصة.',
   internal: 'حدث خطأ غير متوقّع في الخادم ولم يكتمل الطلب. أعد المحاولة، وإن تكرّر الخطأ فأبلغ مسؤول المنصة.',
+  // Phase 7 (src/phase7): templates, service tokens, internal API, backups.
+  admin_only: 'هذا الإجراء مقصور على مسؤول المنصة. اطلبه من مسؤول المنصة.',
+  template_not_found: 'لم يُعثر على القالب، فربما أُرشف. اختر قالباً آخر من القائمة، أو اطلب من مسؤول المنصة إضافته.',
+  invalid_template_title: 'اسم القالب مطلوب، ولا يزيد على 200 حرف، والوصف لا يزيد على 500 حرف. صحّحهما ثم أعد المحاولة.',
+  invalid_template_source: 'لم يُحدَّد الملف الذي يُحفظ قالباً، أو لم يُعثر عليه. اختر ملفاً من القائمة ثم أعد المحاولة.',
+  template_source_unreadable: 'تعذّر قراءة محتوى الملف من التخزين، فلم يُحفظ القالب. أعد المحاولة بعد لحظات، وإن تكرّر الخطأ فأبلغ مسؤول المنصة.',
+  invalid_token_name: 'اسم الرمز مطلوب، ولا يزيد على 100 حرف. اكتب اسماً يدل على النظام الذي سيستخدمه ثم أعد المحاولة.',
+  api_token_not_found: 'لم يُعثر على رمز الخدمة. حدّث القائمة ثم أعد المحاولة.',
+  api_token_required:
+    'الطلب بلا رمز خدمة صالح، فلم يُنفَّذ. أرسل الرمز في الترويسة Authorization: Bearer، أو اطلب رمزاً جديداً من مسؤول المنصة إن كان رمزك قد أُلغي.',
+  invalid_query: 'معايير البحث غير صالحة: status إحدى done أو open أو overdue، وdue_before تاريخ بصيغة YYYY-MM-DD. صحّحها ثم أعد المحاولة.',
 } as const
 
 export type ErrorKey = keyof typeof MESSAGES
@@ -59,6 +70,15 @@ const CODES: Record<ErrorKey, ApiErrorCode> = {
   snapshot_missing: 'snapshot_missing',
   queue_unavailable: 'queue_unavailable',
   internal: 'internal',
+  admin_only: 'forbidden',
+  template_not_found: 'template_not_found',
+  invalid_template_title: 'invalid_title',
+  invalid_template_source: 'invalid_request',
+  template_source_unreadable: 'template_source_unreadable',
+  invalid_token_name: 'invalid_request',
+  api_token_not_found: 'api_token_not_found',
+  api_token_required: 'unauthorized',
+  invalid_query: 'invalid_request',
 }
 
 export type ErrorStatus = 400 | 401 | 403 | 404 | 409 | 426 | 500 | 503

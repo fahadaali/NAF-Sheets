@@ -22,6 +22,7 @@ import { callerOf, isPlainObject, nowIso, readJson } from '../request'
 import { roomRequest, roomSessionActive } from '../room'
 import { FIRST_SHEET_TITLE, blankWorkbookSnapshot, readSnapshot, writeSnapshotVersion } from '../snapshot'
 import { detectAfterSave, parseConfirmedDeletions } from '../sync/detect'
+import { createWorkbookFromTemplate } from '../phase7/templates'
 
 export interface WorkbookRouteOptions {
   /** See DEFAULT_SNAPSHOT_ORPHAN_AGE_MS. */
@@ -93,7 +94,7 @@ export function workbookRoutes(options: WorkbookRouteOptions): Hono<AppEnv> {
     return c.json<WorkbookListResponse>({ workbooks })
   })
 
-  // POST /api/workbooks — blank workbooks only in phase 1.
+  // POST /api/workbooks — blank (§7.1 option 1) or from a template (option 2).
   routes.post('/', async (c) => {
     const caller = callerOf(c)
     if (!canCreateWorkbooks(caller)) throw new ApiFailure(403, 'forbidden_create')
@@ -101,6 +102,11 @@ export function workbookRoutes(options: WorkbookRouteOptions): Hono<AppEnv> {
     const body = await readJson(c)
     if (!isPlainObject(body)) throw new ApiFailure(400, 'invalid_title')
     const title = parseTitle(body.title)
+    // §7.1 option 2 (phase 7): a copy of a template's snapshot.
+    if (body.source === 'template') {
+      const id = await createWorkbookFromTemplate(c.env, caller, { title, templateId: body.templateId })
+      return c.json<CreateWorkbookResponse>({ id }, 201)
+    }
     if (body.source !== 'blank') throw new ApiFailure(400, 'unsupported_source')
 
     const now = nowIso()

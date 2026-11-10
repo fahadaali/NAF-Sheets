@@ -4,6 +4,7 @@
 import type { BcInboundQueueMessage, BcOutboundMessage, Env } from './env'
 import { handleInboundBatch, runReconciliation } from './sync/inbound'
 import { handleOutboundBatch } from './sync/outbound'
+import { runBackup } from './phase7'
 
 export const OUTBOUND_QUEUE = 'bc-outbound'
 export const INBOUND_QUEUE = 'bc-inbound'
@@ -36,6 +37,16 @@ export async function handleQueue(batch: MessageBatch<QueueMessageBody>, env: En
  * Cron, every 15 minutes (§9.4): reconciliation of every linked list with
  * If-None-Match, webhook check, people caches. Read-only service token.
  */
-export async function handleScheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+export async function handleScheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+  if (controller.cron === BACKUP_CRON) {
+    await runBackup(env, new Date(controller.scheduledTime))
+    return
+  }
   await runReconciliation(env, ctx)
 }
+
+/**
+ * The daily backup's cron (spec §14 «تصدير D1 يومي»), as in wrangler.toml:
+ * 00:23 UTC = 03:23 in Riyadh. Every other cron is the reconciliation.
+ */
+export const BACKUP_CRON = '23 0 * * *'

@@ -10,6 +10,9 @@ import { ImportReportScreen } from './screens/ImportReportScreen'
 import { DeniedScreen, NotFoundScreen } from './screens/MessageScreens'
 import { PeopleMatchesScreen } from './screens/PeopleMatchesScreen'
 import { SettingsScreen } from './screens/SettingsScreen'
+import { ApiTokensScreen } from './screens/ApiTokensScreen'
+import { SyncHealthScreen } from './screens/SyncHealthScreen'
+import { TemplatesScreen } from './screens/TemplatesScreen'
 import { t } from './strings'
 
 // Univer (~2 MB gzip) is reachable only through this chunk.
@@ -97,6 +100,12 @@ export function App() {
       return <SettingsScreen user={user} />
     case 'peopleMatches':
       return <PeopleMatchesScreen user={user} userSettled={settled} />
+    case 'syncHealth':
+      return <SyncHealthScreen user={user} userSettled={settled} />
+    case 'templates':
+      return <TemplatesScreen user={user} userSettled={settled} />
+    case 'apiTokens':
+      return <ApiTokensScreen user={user} userSettled={settled} />
     case 'denied':
       return <DeniedScreen reason={route.reason} />
     case 'notFound':

@@ -799,3 +799,102 @@ P21. **Accepted files.** Any media type is accepted (no allow-list); the type
     is sanitised (`application/octet-stream` when unusable). Names lose control
     characters and bidi overrides, `/` and `\` become `_`, at most 255
     characters. Should some types be refused?
+
+## Phase 7: templates, internal API, backups, load test
+
+Code: `src/phase7/`, `migrations/0005_phase7.sql`, contract `packages/shared/src/api-phase7.ts`.
+Tests: `test/phase7/` (15). Load test: `test/load/api-load.load.ts` (docs/load-test.md).
+
+T1. **A template is a frozen copy** of the source workbook's latest saved
+    snapshot (R2 `templates/{id}/snapshot.json`, create-only), not a live link
+    to the workbook. Spec §7.1 says «أي ملف يُحوَّل إلى قالب»; whether a later
+    edit of the source should update the template (or offer «تحديث القالب»)
+    is not said. Safe default: frozen; the source workbook is only read.
+
+T2. **A workbook open in the room** may hold edits newer than its saved
+    snapshot (the room persists 2 s after the last edit, R3). The template
+    copies the latest *saved* version and records it (`templates.source_version`).
+
+T3. **What a template drops**: the system columns `__uid / __parent_uid /
+    __level` (values and hidden flags), the platform's marks (restored to the
+    person's style), `custom.nafSheets`, and the platform's «لا يُزامَن مع
+    Basecamp» notes. Everything else is kept, including the free and mapped
+    columns' header text. A sheet whose system columns are incomplete is kept as
+    it is (its copy is local, so no uid is read from it); logged, not refused.
+    Column mappings are not copied: a workbook made from a template is linked
+    with the wizard (§7.3), whose suggestions come from the header text.
+
+T4. **Who manages templates**: platform `admin` only (§7.1 «يحفظها admin»);
+    listing them is open to everyone signed in; creating a workbook from one
+    needs the right to create workbooks (admin, editor). Archive only — no
+    delete, no unarchive route (an admin can ask for one).
+
+T5. **No built-in NAF template ships.** The spec mentions «قوالب ناف» but
+    gives none; until an admin saves one, «من قالب ناف» lists nothing and says
+    how to add one. Should a default template (e.g. the §7.1 default columns in
+    a campaign layout) be seeded?
+
+I1. **Service tokens (§13 «محمية برموز خدمة»)**: how they are issued, scoped
+    and rotated is not specified. Safe default: an admin issues a named token
+    (`POST /api/admin/api-tokens`, shown once, only its SHA-256 stored),
+    read-only over every workbook, revocable, never deleted, `last_used_at`
+    kept. No per-system scopes, no expiry. Decide with §17-3.
+
+I2. **The optional outbound webhook** («Webhook صادر اختياري لأحداث: مهمة
+    أُنجزت، مهمة تأخرت») is **not built**: no receiving system, URL, signing or
+    "became overdue" trigger is specified (§17-3 open). Nothing is sent anywhere.
+
+I3. **Which other NAF systems connect (§17-3)** is open; the API serves
+    whoever holds a token.
+
+I4. **"Today" for `overdue`** is the date in Asia/Riyadh; a task due today is
+    `open`, due yesterday and not completed `overdue`. Status words are
+    `done | open | overdue` (the spec names «منجزة/متأخرة» only).
+
+I5. **What counts as a task in /api/v1**: rows of synced sheets (local sheets
+    have no task identity, §2), to-dos and subtasks alike (`level`), read from
+    the latest saved snapshot exactly as the sync engine reads them. Rows
+    deleted/archived/trashed in Basecamp are left out. `assignee=` matches a
+    Basecamp person id or an external contact id; a follower counts as that
+    person in `/stats`.
+
+I6. **/api/v1/stats reads every snapshot on each call** (measured in
+    docs/load-test.md). A cache (KV, invalidated on commit) if it grows.
+
+B1. **Official D1 backup mechanism**: Cloudflare offers D1 Time Travel and
+    `wrangler d1 export` (REST, needs a Cloudflare API token). Built here: a
+    daily in-Worker export of every table to the BACKUPS bucket (NDJSON,
+    create-only, never deletes) and a copy of each live workbook's latest
+    snapshot. Restore is a documented manual procedure (docs/backups.md), no
+    script. Which mechanism is authoritative is a product decision.
+
+B2. **Retention**: nothing is ever deleted, so the bucket grows daily. A
+    lifecycle rule on R2 (or a pruning job) needs the owner's approval.
+
+B3. **Where backups live**: same Cloudflare account, bucket
+    `naf-sheets-backups`. Another account/region is a product decision.
+
+B4. **Not backed up**: the ATTACHMENTS bucket and KV (sessions, settings).
+    §14 names R2 snapshots and D1 only.
+
+B5. **Snapshots copied**: the latest version of each live workbook and each
+    live template, daily; older versions stay in SNAPSHOTS (never deleted) and
+    are listed in the run's inventory.
+
+L1. **Load test scope** (docs/load-test.md): local Miniflare and an
+    in-process fake Basecamp; not Cloudflare, not Basecamp. Timings inside
+    workerd come from `Date.now()`, which advances at I/O only. The spec gives
+    no target numbers for phase 7, so nothing is judged pass/fail on speed;
+    the assertions are correctness (every task created once, all `synced`).
+
+L2. **Each outbound message loads the whole workbook** (snapshot from R2 +
+    every row read) to build one task: measured 115 ms per task locally for a
+    3,500-row workbook against 34 ms for a 100-row one (docs/load-test.md
+    §2.3). Not changed here (no tuning toward the numbers). Batch a
+    workbook's messages in one step? The real ceiling stays Basecamp's
+    4 requests/second: about 17.5 min for a first link of 3,500 tasks.
+
+L3. **The first reconciliation after linking ten large workbooks** read 7,701
+    times (no stored ETag yet): about 32 min at 4 requests/second, longer than
+    the 15-minute cron. Is an overlap guard (or spreading lists over runs)
+    wanted? A quiet run read 721 times (70/70 lists answered 304).

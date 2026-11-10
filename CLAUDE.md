@@ -54,12 +54,12 @@ prerequisites, not dropped:
 | Phase | State |
 |---|---|
 | 0 — Spike | **Approved 2026-11-10.** Report: `docs/phase-0-report.md` |
-| 1 — Foundation | In progress |
-| 2 — Import | In progress (converter); live acceptance blocked on the real file |
-| 3 / 4 — Outbound / inbound sync | In progress (client, engine); live acceptance blocked on Basecamp inputs |
-| 5 — Subtasks, assignment, attachments, comments | Engine rules in progress; email provider undecided (spec §17-7) |
-| 6 — Realtime collaboration | Default (a) self-built per spec §5.3 until §17-2 is decided |
-| 7 — Hardening | Not started |
+| 1 — Foundation | Built and tested locally; live acceptance needs naf-id (`PLATFORM_ID`) and Cloudflare |
+| 2 — Import | Built (converter, OAuth, report); live acceptance blocked on the real file |
+| 3 / 4 — Outbound / inbound sync | Built against a fake Basecamp; live acceptance blocked on Basecamp inputs and `PUBLIC_API_ORIGIN` |
+| 5 — Subtasks, assignment, attachments, comments | Built against a fake Basecamp, except external-contact email (provider undecided, spec §17-7) |
+| 6 — Realtime collaboration | Built: default (a) self-built per spec §5.3 (headless Univer in the `WorkbookRoom`) until §17-2 is decided; tested locally only |
+| 7 — Hardening | Built: templates, internal API (§13, read-only), sync-health screen, load test (`docs/load-test.md`), backups (`docs/backups.md`), user guide (`docs/user-guide.md`); open decisions in `apps/api/OPEN_QUESTIONS.md` |
 
 Code is "done" only with tests passing. A phase is "accepted" only when its
 spec §15 criteria pass against real services — say which, never imply it.

@@ -6,6 +6,7 @@ import { handleBackchannelLogout, handleCallback, handleLogout } from 'naf-auth'
 import type { AppEnv, AuthMiddleware } from './auth'
 import { authConfig, nafAuthMiddleware } from './auth'
 import { ApiFailure, errorBody } from './errors'
+import { adminTemplateRoutes, apiTokenRoutes, backupRoutes, internalApiRoutes, templateRoutes } from './phase7'
 import { meRoutes } from './routes/me'
 import { webhookRoutes } from './routes/webhooks'
 import { workbookRoutes } from './routes/workbooks'
@@ -37,6 +38,9 @@ export function createApp(options: AppOptions = {}): Hono<AppEnv> {
   // All methods: naf-auth answers anything but POST with its own 405.
   app.all('/auth/backchannel-logout', (c) => handleBackchannelLogout(c.req.raw, c.env, authConfig(c.env)))
   app.route('/webhooks', webhookRoutes())
+  // Internal API of the NAF ecosystem (§13): service tokens, never a naf-id
+  // session. Before the guard so naf-auth never sees these requests.
+  app.route('/api/v1', internalApiRoutes())
 
   // ── Everything else is protected.
   app.use('*', options.auth ?? nafAuthMiddleware)
@@ -50,6 +54,11 @@ export function createApp(options: AppOptions = {}): Hono<AppEnv> {
 
   app.route('/api/me', meRoutes())
   app.route('/api/workbooks', workbookRoutes({ snapshotOrphanAgeMs: options.snapshotOrphanAgeMs ?? DEFAULT_SNAPSHOT_ORPHAN_AGE_MS }))
+  // Phase 7: templates (§7.1), service tokens (§13), backups (§14).
+  app.route('/api/templates', templateRoutes())
+  app.route('/api/admin/templates', adminTemplateRoutes())
+  app.route('/api/admin/api-tokens', apiTokenRoutes())
+  app.route('/api/admin/backups', backupRoutes())
 
   return app
 }

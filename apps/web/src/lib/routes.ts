@@ -9,6 +9,9 @@
 //   /workbooks/:id/link                 linking wizard (§7.3), full screen
 //   /settings                           the user's settings: Basecamp account (§3), admin entries
 //   /admin/people-matches               naf-id members ↔ Basecamp people, admins only (§3)
+//   /admin/sync-health                  sync health report, admins only (§9.4, phase 7)
+//   /admin/templates                    templates, admins only (§7.1, phase 7)
+//   /admin/api-tokens                   service tokens of the internal API, admins only (§13)
 //   /denied?r=<reason>                  naf-auth's refusal page for document navigations
 
 import { parseA1Range, rangeToA1 } from './cell-target'
@@ -21,6 +24,9 @@ export type Route =
   | { name: 'linkWizard'; id: string }
   | { name: 'settings' }
   | { name: 'peopleMatches' }
+  | { name: 'syncHealth' }
+  | { name: 'templates' }
+  | { name: 'apiTokens' }
   | { name: 'denied'; reason: string }
   | { name: 'notFound' }
 
@@ -56,6 +62,9 @@ export function parseRoute(pathname: string, search = ''): Route {
   if (pathname === '/denied' || pathname === '/denied/') return { name: 'denied', reason: params.get('r') ?? '' }
   if (pathname === '/settings' || pathname === '/settings/') return { name: 'settings' }
   if (pathname === '/admin/people-matches' || pathname === '/admin/people-matches/') return { name: 'peopleMatches' }
+  if (pathname === '/admin/sync-health' || pathname === '/admin/sync-health/') return { name: 'syncHealth' }
+  if (pathname === '/admin/templates' || pathname === '/admin/templates/') return { name: 'templates' }
+  if (pathname === '/admin/api-tokens' || pathname === '/admin/api-tokens/') return { name: 'apiTokens' }
   const match = WORKBOOK.exec(pathname)
   if (match?.[1]) {
     const id = decodeId(match[1])
@@ -93,6 +102,12 @@ export function pathFor(route: Route): string {
       return '/settings'
     case 'peopleMatches':
       return '/admin/people-matches'
+    case 'syncHealth':
+      return '/admin/sync-health'
+    case 'templates':
+      return '/admin/templates'
+    case 'apiTokens':
+      return '/admin/api-tokens'
     case 'denied':
       return route.reason ? `/denied?${new URLSearchParams({ r: route.reason }).toString()}` : '/denied'
     case 'notFound':

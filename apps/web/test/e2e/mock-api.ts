@@ -4,6 +4,10 @@
 import type { Page, Route, WebSocketRoute } from 'playwright'
 import { DEFAULT_COLUMNS } from '@naf-sheets/shared'
 import type {
+  ApiTokenSummary,
+  BackupRunsResponse,
+  SyncHealthResponse,
+  TemplateSummary,
   ApiError,
   ApiErrorCode,
   AssigneeOptionsResponse,
@@ -141,6 +145,16 @@ export class MockApi {
   comments: Record<string, { comments: CommentInfo[]; onParent?: boolean; targetUid?: string }> = {}
   private fileCount = 0
   private commentCount = 0
+
+  // --- Phase 7 (packages/shared/src/api-phase7.ts) ---------------------------
+  templates: TemplateSummary[] = []
+  /** The snapshot a workbook made from each template starts with. */
+  templateSnapshots: Record<string, unknown> = {}
+  syncHealth: SyncHealthResponse = { workbooks: [], deadLetters: 0 }
+  backups: BackupRunsResponse = { configured: true, runs: [] }
+  apiTokens: ApiTokenSummary[] = []
+  private tokenCount = 0
+  private templateCount = 0
 
   bodies(method: string, path: string): unknown[] {
     return this.requests.filter((r) => r.method === method && r.path === path).map((r) => r.body)
@@ -407,9 +421,76 @@ export class MockApi {
     return undefined
   }
 
+  /** The endpoints of packages/shared/src/api-phase7.ts (and sync health); undefined when the path is not one of them. */
+  private phase7(method: string, path: string, body: unknown): Reply | undefined {
+    const adminOnly = () => error(403, 'forbidden', 'هذا الإجراء مقصور على مسؤول المنصة. اطلبه من مسؤول المنصة.')
+    const isAdmin = this.me.user.role === 'admin'
+    if (path === '/api/templates' && method === 'GET') return { status: 200, body: { templates: this.templates } }
+    if (path === '/api/admin/sync-health' && method === 'GET') return isAdmin ? { status: 200, body: this.syncHealth } : adminOnly()
+    if (path === '/api/admin/backups' && method === 'GET') return isAdmin ? { status: 200, body: this.backups } : adminOnly()
+    if (path === '/api/admin/templates' && method === 'POST') {
+      if (!isAdmin) return adminOnly()
+      const req = body as { workbookId?: string; title?: string; description?: string | null }
+      const source = this.workbooks.get(req.workbookId ?? '')
+      if (!source) return error(400, 'invalid_request', 'لم يُحدَّد الملف الذي يُحفظ قالباً.')
+      const tpl: TemplateSummary = {
+        id: `tpl-new-${++this.templateCount}`,
+        title: String(req.title ?? '').trim(),
+        description: req.description ?? null,
+        sheetCount: source.sheets.length,
+        sourceWorkbookId: source.workbook.id,
+        sourceTitle: source.workbook.title,
+        createdAt: now,
+        updatedAt: now,
+      }
+      this.templates = [...this.templates, tpl]
+      this.templateSnapshots[tpl.id] = source.snapshot
+      return { status: 201, body: tpl }
+    }
+    const tm = /^\/api\/admin\/templates\/([^/]+)(\/archive)?$/.exec(path)
+    if (tm?.[1]) {
+      if (!isAdmin) return adminOnly()
+      const id = decodeURIComponent(tm[1])
+      const tpl = this.templates.find((x) => x.id === id)
+      if (!tpl) return error(404, 'template_not_found', 'لم يُعثر على القالب.')
+      if (tm[2] && method === 'POST') {
+        this.templates = this.templates.filter((x) => x.id !== id)
+        return { status: 200, body: { archived: true } }
+      }
+      if (!tm[2] && method === 'PUT') {
+        const req = body as { title: string; description?: string | null }
+        Object.assign(tpl, { title: req.title, description: req.description ?? null })
+        return { status: 200, body: tpl }
+      }
+    }
+    if (path === '/api/admin/api-tokens') {
+      if (!isAdmin) return adminOnly()
+      if (method === 'GET') return { status: 200, body: { tokens: this.apiTokens } }
+      if (method === 'POST') {
+        const name = String((body as { name?: string })?.name ?? '').trim()
+        if (!name) return error(400, 'invalid_request', 'اسم الرمز مطلوب.')
+        const secret = `nafs_mock${++this.tokenCount}${'x'.repeat(30)}`
+        const token: ApiTokenSummary = { id: `tok-${this.tokenCount}`, name, prefix: secret.slice(0, 10), createdAt: now, lastUsedAt: null, revokedAt: null }
+        this.apiTokens = [token, ...this.apiTokens]
+        return { status: 201, body: { token, secret } }
+      }
+    }
+    const rv = /^\/api\/admin\/api-tokens\/([^/]+)\/revoke$/.exec(path)
+    if (rv?.[1] && method === 'POST') {
+      if (!isAdmin) return adminOnly()
+      const token = this.apiTokens.find((x) => x.id === decodeURIComponent(rv[1]!))
+      if (!token) return error(404, 'api_token_not_found', 'لم يُعثر على رمز الخدمة.')
+      token.revokedAt = now
+      return { status: 200, body: token }
+    }
+    return undefined
+  }
+
   private reply(method: string, url: URL, body: unknown): Reply {
     const path = url.pathname
     if (method === 'GET' && path === '/api/me') return { status: 200, body: this.me }
+    const phase7 = this.phase7(method, path, body)
+    if (phase7) return phase7
     const phase5 = this.phase5(method, url, body)
     if (phase5) return phase5
     const wave2 = this.wave2(method, path, body)
@@ -424,8 +505,15 @@ export class MockApi {
         return { status: 200, body: { workbooks } }
       }
       if (method === 'POST') {
-        const req = body as { title?: unknown; source?: unknown }
+        const req = body as { title?: unknown; source?: unknown; templateId?: unknown }
         if (typeof req?.title !== 'string') return error(400, 'invalid_title', 'طلب غير صالح.')
+        if (req.source === 'template') {
+          const tpl = this.templates.find((x) => x.id === req.templateId)
+          if (!tpl) return error(404, 'template_not_found', 'لم يُعثر على القالب، فربما أُرشف. اختر قالباً آخر.')
+          const id = `wb-tpl-${++this.created}`
+          this.add(summary({ id, title: req.title, sheetCount: tpl.sheetCount }), this.templateSnapshots[tpl.id] ?? null, 1)
+          return { status: 201, body: { id } }
+        }
         if (req.source !== 'blank') return error(400, 'unsupported_source', 'طلب غير صالح.')
         const id = `wb-new-${++this.created}`
         // A new workbook: no snapshot yet, one sheet (see OPEN_QUESTIONS.md).

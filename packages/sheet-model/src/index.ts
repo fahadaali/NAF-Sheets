@@ -59,3 +59,4 @@ export {
 } from './inbound'
 export { indentTaskRow, outdentTaskRow, decorateTaskRows, type SheetEditResult } from './hierarchy'
 export type { CellRef } from './changes'
+export { toTemplateWorkbook, instantiateTemplate, type TemplateOptions, type TemplateResult } from './template'

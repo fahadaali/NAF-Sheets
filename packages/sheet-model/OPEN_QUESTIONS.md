@@ -156,3 +156,11 @@ a deliberate test change. Nothing here has been tried in a browser with
     list clears the cell. The API writes it from D1 after every change; the
     column is never read back (the files live in D1 `attachments`). A new row
     writes the column only when it has files.
+
+22. **Templates** (`toTemplateWorkbook`, phase 7): the system columns are
+    found on the header row the caller gives (D1 `sheets.header_row`); a sheet
+    whose system columns are incomplete or duplicated is left as it is and
+    reported (`unreadableSheets`). Marks are removed with `removeMark`, so the
+    person's own style comes back; `custom.nafSheets` is dropped whole
+    (including `notesHtml`). The platform's notes are recognised by their id
+    prefix `naf-unsynced-`.
