@@ -9,7 +9,13 @@
   },
   "scripts": {
     "test": "vitest run",
-    "typecheck": "tsc --noEmit -p ."
+    "typecheck": "tsc --noEmit -p .",
+    "harness:typecheck": "tsc --noEmit -p harness",
+    "harness:build": "vite build --config harness/vite.config.ts",
+    "harness:preview": "vite preview --config harness/vite.config.ts",
+    "test:rtl": "node test/rtl-interactions.mjs",
+    "perf:rtl": "node scripts/rtl-perf.mjs",
+    "check:pins": "node scripts/check-pins.mjs"
   },
   "dependencies": {
     "@univerjs/core": "1.4.0",
