@@ -24,7 +24,9 @@
 //   4. Caret and selection: computed from the visual positions; a selection
 //      that is visually split is drawn as several rectangles.
 //   5. Hit testing: a pointer x is mapped back to the logical x Univer expects.
-//   6. Arrow keys move the caret visually; Home and End stay logical.
+//   6. Arrow keys move the caret visually; Home and End stay logical. With
+//      Univer's Mac key map, Cmd+Left/Right go to the visual left/right end
+//      of the line (owner decision 2026-11-10), like the plain arrows.
 //
 // Every hook is listed in `checkTextContract()`. A heartbeat withdraws the
 // layer if right-to-left text is painted without passing through it.
@@ -32,6 +34,7 @@
 import { Direction, UniverInstanceType } from '@univerjs/core'
 import { Documents, DocumentSkeleton } from '@univerjs/engine-render'
 import { NodePositionConvertToCursor } from '@univerjs/docs-ui'
+import { IPlatformService } from '@univerjs/ui'
 import { lineLevels, paragraphDirection, resolveParagraph } from './bidi'
 import type { ParagraphLevels } from './bidi'
 
@@ -97,6 +100,27 @@ export function caretEdge(box: VisualBox, isBack: boolean): number {
   const start = box.odd ? box.left + box.width : box.left
   const end = box.odd ? box.left : box.left + box.width
   return isBack ? start : end
+}
+
+/**
+ * The caret stop at the visual left (or right) end of a line, among candidate
+ * stops (offset and x). Stops at the same x (a bidi boundary) prefer the
+ * line's own logical start or end, then the one nearest `from`.
+ */
+export function visualLineEnd<T extends { offset: number; x: number }>(stops: readonly T[], left: boolean, boundaries: readonly number[], from: number): T | null {
+  let best: T | null = null
+  const rank = (s: T) => [boundaries.includes(s.offset) ? 0 : 1, Math.abs(s.offset - from)] as const
+  for (const s of stops) {
+    if (!best) { best = s; continue }
+    const d = left ? best.x - s.x : s.x - best.x
+    if (d > 0.5) best = s
+    else if (Math.abs(d) <= 0.5) {
+      const [a1, a2] = rank(s)
+      const [b1, b2] = rank(best)
+      if (a1 < b1 || (a1 === b1 && a2 < b2)) best = s
+    }
+  }
+  return best
 }
 
 /** Visual spans [x0, x1] covered by the boxes `from..to` (inclusive), merged and sorted left to right. */
@@ -274,6 +298,8 @@ const state = {
   /** Consecutive document draws with right-to-left content that bypassed the paint hook. */
   bypassedDraws: 0,
   onWithdraw: new Set<(reason: string) => void>(),
+  /** Univer's key map is the Mac one (line start/end are Cmd+Left/Right, Home/End unbound). */
+  macKeys: false,
 }
 const active = () => state.enabled > 0 && state.withdrawn === null
 
@@ -758,23 +784,30 @@ function spotOf(skeleton: Skeleton, position: NodePosition | null | undefined) {
   return { divide, geometry, index, x: geometry.needed ? caretX(skeleton, divide, geometry, index, position.isBack, Boolean(position[FROM_OFFSET])) : NaN }
 }
 
-/** The visually next caret position on the same line, or null at the visual end of the line. */
-function visualNeighbour(skeleton: Skeleton, divide: Divide, geometry: Geometry, fromX: number, fromOffset: number, left: boolean, maxOffset: number) {
-  let best: { offset: number; glyph: Glyph; isBack: boolean; x: number } | null = null
+interface Stop { offset: number; glyph: Glyph; isBack: boolean; x: number }
+/** Every caret stop of a line segment: before and after each glyph, at its visual edge. */
+function caretStops(divide: Divide, geometry: Geometry, maxOffset: number): Stop[] {
+  const stops: Stop[] = []
   divide.glyphGroup.forEach((g, i) => {
     if (g.glyphType === GLYPH_PLACEHOLDER) return
     const box = geometry.boxes[i]!
     const candidates: Array<[number, boolean]> = [[geometry.starts[i]!, true]]
     if (g.streamType !== '\r') candidates.push([geometry.starts[i]! + g.count, false])
-    for (const [offset, isBack] of candidates) {
-      if (offset > maxOffset) continue
-      const x = caretEdge(box, isBack)
-      if (left ? x >= fromX - 0.5 : x <= fromX + 0.5) continue
-      const better = !best || (left ? x > best.x + 0.5 : x < best.x - 0.5) || (Math.abs(x - best.x) <= 0.5 && Math.abs(offset - fromOffset) < Math.abs(best.offset - fromOffset))
-      if (better) best = { offset, glyph: g, isBack, x }
-    }
+    for (const [offset, isBack] of candidates) if (offset <= maxOffset) stops.push({ offset, glyph: g, isBack, x: caretEdge(box, isBack) })
   })
-  return best as { offset: number; glyph: Glyph; isBack: boolean; x: number } | null
+  return stops
+}
+
+/** The visually next caret position on the same line, or null at the visual end of the line. */
+function visualNeighbour(divide: Divide, geometry: Geometry, fromX: number, fromOffset: number, left: boolean, maxOffset: number) {
+  let best: Stop | null = null
+  for (const stop of caretStops(divide, geometry, maxOffset)) {
+    const { x, offset } = stop
+    if (left ? x >= fromX - 0.5 : x <= fromX + 0.5) continue
+    const better = !best || (left ? x > best.x + 0.5 : x < best.x - 0.5) || (Math.abs(x - best.x) <= 0.5 && Math.abs(offset - fromOffset) < Math.abs(best.offset - fromOffset))
+    if (better) best = stop
+  }
+  return best
 }
 
 const PASS = Symbol('pass')
@@ -798,9 +831,13 @@ function visualMove(ctl: MoveController, direction: Direction, granularity: stri
   const logicalDirection = left === spot.geometry.paragraphRtl ? Direction.RIGHT : Direction.LEFT
   // Word steps stay logical, in the reading direction of the paragraph.
   // OPEN: Ctrl+Arrow (word) and Up/Down stay Univer's logical moves (Up/Down
-  // match lines by logical x); only character steps are visual.
+  // match lines by logical x); only character steps and Mac line ends are visual.
   if (granularity === 'word') return { swap: logicalDirection }
-  if (granularity !== 'character') return PASS
+  // Line ends: Home/End (non-Mac key map) stay logical. With the Mac key map
+  // the same move comes from Cmd+Left/Right, which go to the visual end of the
+  // line in the arrow's direction (owner decision 2026-11-10).
+  const macLineEnd = granularity === 'line' && state.macKeys
+  if (granularity !== 'character' && !macLineEnd) return PASS
   const stream = skeleton.getViewModel().getDataModel().getBody()?.dataStream ?? ''
   const maxOffset = Math.max(0, stream.length - 2)
   const apply = (offset: number, glyph: Glyph | null, isBack: boolean) => {
@@ -808,6 +845,13 @@ function visualMove(ctl: MoveController, direction: Direction, granularity: stri
     selection.replaceDocRanges([{ startOffset: extend ? anchor : offset, endOffset: offset, style: range.style }], undefined, false)
     ctl._scrollToFocusNodePosition?.(doc.getUnitId(), offset)
     return undefined
+  }
+  if (macLineEnd) {
+    const line = spot.divide.parent
+    if (!line || line.divides.length !== 1) return PASS
+    const lineEnd = Math.min(maxOffset, line.paragraphIndex !== undefined && line.paragraphIndex <= line.ed ? line.paragraphIndex : line.ed + 1)
+    const end = visualLineEnd(caretStops(spot.divide, spot.geometry, maxOffset), left, [line.st, lineEnd], focus)
+    return end ? apply(end.offset, end.glyph, end.isBack) : undefined
   }
   // A selection collapses to its visual end in the direction of the key.
   if (!extend && !range.collapsed) {
@@ -818,7 +862,7 @@ function visualMove(ctl: MoveController, direction: Direction, granularity: stri
     }
     return apply((left ? a.x <= b.x : a.x >= b.x) ? range.startOffset : range.endOffset, null, true)
   }
-  const next = visualNeighbour(skeleton, spot.divide, spot.geometry, spot.x, focus, left, maxOffset)
+  const next = visualNeighbour(spot.divide, spot.geometry, spot.x, focus, left, maxOffset)
   if (next) return apply(next.offset, next.glyph, next.isBack)
   // At the visual end of the line: continue on the adjacent line in reading order, if any.
   const line = spot.divide.parent
@@ -1017,6 +1061,11 @@ export function enableRtlText(injector: unknown, onWithdraw: (reason: string) =>
   if (problems.length) return { applied: false, reason: `text contract broken: ${problems.join('; ')}`, problems, dispose: () => {} }
   if (state.withdrawn !== null) return { applied: false, reason: state.withdrawn, problems, dispose: () => {} }
   install()
+  try {
+    state.macKeys = Boolean((injector as { get: (t: unknown) => { isMac?: boolean } }).get(IPlatformService)?.isMac)
+  } catch {
+    state.macKeys = false // OPEN: no platform service: Univer's own (logical) line moves are kept
+  }
   state.enabled++
   state.onWithdraw.add(onWithdraw)
   let disposed = false

@@ -4,7 +4,7 @@
 // stream mapping. The browser suite (test/rtl-interactions.mjs) checks the
 // same behaviour on screen against the browser's own layout.
 import { describe, expect, it } from 'vitest'
-import { bidiTextOfStream, caretEdge, documentParagraphDirection, graphemeAdvances, graphemes, selectionSpans, surfaceShift, visualBoxes } from '../src/index'
+import { bidiTextOfStream, caretEdge, documentParagraphDirection, graphemeAdvances, graphemes, selectionSpans, surfaceShift, visualBoxes, visualLineEnd } from '../src/index'
 
 // Contiguous logical layout: widths laid left to right from 0.
 const layout = (widths: number[]) => {
@@ -170,5 +170,30 @@ describe('graphemes', () => {
   })
   it('splits plain Arabic into letters', () => {
     expect(graphemes('خطة')).toEqual(['خ', 'ط', 'ة'])
+  })
+})
+
+describe('visualLineEnd (Cmd+Left/Right with the Mac key map)', () => {
+  // «على LinkedIn» in an RTL line: offsets 0-3 Arabic on the right, 4-12 Latin on the left.
+  const stops = [
+    { offset: 0, x: 100 }, { offset: 1, x: 94 }, { offset: 3, x: 80 }, { offset: 4, x: 76 },
+    { offset: 4, x: 0 }, { offset: 8, x: 30 }, { offset: 12, x: 76 },
+  ]
+  it('goes to the visual left end, whatever the line direction', () => {
+    expect(visualLineEnd(stops, true, [0, 12], 0)?.x).toBe(0)
+  })
+  it('goes to the visual right end', () => {
+    expect(visualLineEnd(stops, false, [0, 12], 8)).toEqual({ offset: 0, x: 100 })
+  })
+  it('at one spot shared by two offsets, prefers the line\'s logical start or end', () => {
+    const tie = [{ offset: 5, x: 10 }, { offset: 9, x: 10 }, { offset: 2, x: 50 }]
+    expect(visualLineEnd(tie, true, [0, 9], 5)?.offset).toBe(9)
+  })
+  it('otherwise prefers the offset nearest the caret', () => {
+    const tie = [{ offset: 5, x: 10 }, { offset: 7, x: 10.2 }]
+    expect(visualLineEnd(tie, true, [0, 20], 8)?.offset).toBe(7)
+  })
+  it('returns null without stops', () => {
+    expect(visualLineEnd([], true, [0], 0)).toBeNull()
   })
 })

@@ -1,8 +1,8 @@
 {
   "browser": "chromium",
-  "passed": 49,
+  "passed": 50,
   "knownUpstream": 0,
-  "total": 49,
+  "total": 50,
   "pageErrors": [],
   "checks": [
     {
@@ -633,6 +633,53 @@
       }
     },
     {
+      "name": "line ends: Home/End are logical; with the Mac key map Cmd+Left/Right go to the visual left/right end",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "macKeys": true,
+        "got": {
+          "rtlLeft": {
+            "offset": 17,
+            "caret": 1122.0922546386719,
+            "left": 1122.0922546386719,
+            "right": 1232
+          },
+          "rtlRight": {
+            "offset": 0,
+            "caret": 1232,
+            "left": 1122.0922546386719,
+            "right": 1232
+          },
+          "ltrLeft": {
+            "offset": 0,
+            "caret": 1111.437255859375,
+            "left": 1111.437255859375,
+            "right": 1228.3505859375
+          },
+          "ltrRight": {
+            "offset": 15,
+            "caret": 1228.3505859375,
+            "left": 1111.437255859375,
+            "right": 1228.3505859375
+          },
+          "mixedLeft": {
+            "offset": 27,
+            "caret": 1057.5460205078125,
+            "left": 1057.5460205078125,
+            "right": 1232
+          },
+          "mixedRight": {
+            "offset": 0,
+            "caret": 1232,
+            "left": 1057.5460205078125,
+            "right": 1232
+          },
+          "selectWholeLine": "Y"
+        }
+      }
+    },
+    {
       "name": "Shift+Arrow and drag select the right glyphs (a split selection is two rectangles)",
       "ok": true,
       "detail": {
@@ -851,7 +898,7 @@
             "applied": true
           }
         },
-        "lineStart": "Home",
+        "lineStart": "Meta+ArrowRight",
         "offsetAfterLineStartAndThreeArrowLeft": 3
       }
     },
@@ -861,27 +908,27 @@
       "detail": {
         "ok": true,
         "keys": {
-          "mac": false,
-          "appVersion": "5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.12 Safari/537.36",
+          "mac": true,
+          "appVersion": "5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
           "platform": "Linux x86_64"
         },
         "lineKeys": [
-          "Home",
-          "End"
+          "Meta+ArrowLeft",
+          "Meta+ArrowRight"
         ],
         "got": {
           "lineStart": 0,
           "lineEnd": 15,
-          "homeAfterLineEnd": 0,
-          "endAfterLineStart": 15,
+          "homeAfterLineEnd": 15,
+          "endAfterLineStart": 0,
           "lineStartRight3": 3,
           "lineEndLeft2": 13
         },
         "expected": {
           "lineStart": 0,
           "lineEnd": 15,
-          "homeAfterLineEnd": 0,
-          "endAfterLineStart": 15,
+          "homeAfterLineEnd": 15,
+          "endAfterLineStart": 0,
           "lineStartRight3": 3,
           "lineEndLeft2": 13
         },

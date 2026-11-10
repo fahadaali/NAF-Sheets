@@ -69,8 +69,12 @@ const page = await openPage('?dir=rtl&grid=mirror&selftest=0')
 // Home/End are not bound at all. Line moves are pressed the way this platform's
 // users press them; the control check below records both.
 const KEYS = await page.evaluate(() => window.__univerKeys())
-const LINE_START = KEYS.mac ? 'Meta+ArrowLeft' : 'Home'
+const LINE_START = KEYS.mac ? 'Meta+ArrowLeft' : 'Home' // stock Univer: logical
 const LINE_END = KEYS.mac ? 'Meta+ArrowRight' : 'End'
+// With the layer, Cmd+Left/Right are visual (owner decision 2026-11-10): in a
+// right-to-left line the logical start is the visual right end.
+const RTL_START = KEYS.mac ? 'Meta+ArrowRight' : 'Home'
+const RTL_END = KEYS.mac ? 'Meta+ArrowLeft' : 'End'
 // Pixel analysis runs in a blank page, away from the patched canvas prototype.
 const lab = await (await browser.newContext()).newPage()
 
@@ -816,11 +820,11 @@ await check('arrow keys move the caret visually; Home and End go to the logical 
     return at
   }
   // Pure Arabic: ArrowLeft goes forward in reading order, ArrowRight back.
-  const got = { home: await run([LINE_START]), end: await run([LINE_END]), homeLeft3: await run([LINE_START, 'ArrowLeft', 'ArrowLeft', 'ArrowLeft']), endRight2: await run([LINE_END, 'ArrowRight', 'ArrowRight']) }
+  const got = { home: await run([RTL_START]), end: await run([RTL_END]), homeLeft3: await run([RTL_START, 'ArrowLeft', 'ArrowLeft', 'ArrowLeft']), endRight2: await run([RTL_END, 'ArrowRight', 'ArrowRight']) }
   // Mixed line: the caret must move strictly left on every ArrowLeft until the
   // visual left end of the text, and strictly right back to the right end.
   await openEditor(tp, 'A1')
-  await tp.keyboard.press(LINE_START)
+  await tp.keyboard.press(RTL_START)
   const units = await paintedUnits(tp, EDITOR_ID)
   const xs = [await caretX(tp)]
   for (let i = 0; i < 34; i++) {
@@ -852,10 +856,53 @@ await check('arrow keys move the caret visually; Home and End go to the logical 
   return { ok, got, leftSteps, rightSteps, ends: { start: xs[0], textRight, leftmost: xs[xs.length - 1], textLeft } }
 })
 
+await check('line ends: Home/End are logical; with the Mac key map Cmd+Left/Right go to the visual left/right end', async () => {
+  const at = async (row, keys) => {
+    await openEditor(tp, `A${row}`)
+    for (const k of keys) await tp.keyboard.press(k)
+    const caret = await caretX(tp)
+    const units = await paintedUnits(tp, EDITOR_ID)
+    const offset = await markerOffset(tp)
+    await cancelEdit(tp)
+    return { offset, caret, left: Math.min(...units.map((u) => u.x0)), right: Math.max(...units.map((u) => u.x1)) }
+  }
+  const rtl = BIDI_ROWS[8].length
+  const ltr = BIDI_ROWS[6].length
+  const got = {}
+  let ok
+  if (KEYS.mac) {
+    // Visual, whatever the line's direction: Arabic (A8), Latin (A6), mixed (A1).
+    got.rtlLeft = await at(8, ['Meta+ArrowLeft'])
+    got.rtlRight = await at(8, ['Meta+ArrowRight'])
+    got.ltrLeft = await at(6, ['Meta+ArrowLeft'])
+    got.ltrRight = await at(6, ['Meta+ArrowRight'])
+    got.mixedLeft = await at(1, ['Meta+ArrowLeft'])
+    got.mixedRight = await at(1, ['Meta+ArrowRight'])
+    await openEditor(tp, 'A8')
+    await tp.keyboard.press('Meta+ArrowRight')
+    await tp.keyboard.press('Shift+Meta+ArrowLeft')
+    await tp.keyboard.type('Y')
+    got.selectWholeLine = await docText(tp)
+    await cancelEdit(tp)
+    ok = got.rtlLeft.offset === rtl && got.rtlRight.offset === 0 && got.ltrLeft.offset === 0 && got.ltrRight.offset === ltr &&
+      near(got.mixedLeft.caret, got.mixedLeft.left, 1.5) && near(got.mixedRight.caret, got.mixedRight.right, 1.5) && got.mixedRight.offset === 0 &&
+      ['rtlLeft', 'rtlRight', 'ltrLeft', 'ltrRight'].every((k) => near(got[k].caret, k.endsWith('Left') ? got[k].left : got[k].right, 1.5)) && got.selectWholeLine === 'Y'
+  } else {
+    // Logical: Home to the start, End to the end, whatever the line's direction.
+    got.rtlHome = await at(8, ['Home'])
+    got.rtlEnd = await at(8, ['End'])
+    got.ltrHome = await at(6, ['Home'])
+    got.ltrEnd = await at(6, ['End'])
+    ok = got.rtlHome.offset === 0 && got.rtlEnd.offset === rtl && got.ltrHome.offset === 0 && got.ltrEnd.offset === ltr &&
+      near(got.rtlHome.caret, got.rtlHome.right, 1.5) && near(got.rtlEnd.caret, got.rtlEnd.left, 1.5) && near(got.ltrHome.caret, got.ltrHome.left, 1.5)
+  }
+  return { ok, macKeys: KEYS.mac, got }
+})
+
 await check('Shift+Arrow and drag select the right glyphs (a split selection is two rectangles)', async () => {
   // Shift+ArrowLeft x3 from Home in «إعداد خطة الاتصال»: the first three letters, on the right.
   await openEditor(tp, 'A8')
-  await tp.keyboard.press(LINE_START)
+  await tp.keyboard.press(RTL_START)
   const right = Math.max(...(await paintedUnits(tp, EDITOR_ID)).map((u) => u.x1))
   for (let i = 0; i < 3; i++) await tp.keyboard.press('Shift+ArrowLeft')
   const shiftRects = await selectionRects(tp)
@@ -912,7 +959,7 @@ await check('typing Arabic renders in bidi order live; the stored value is what 
 
 await check('IME: the input sits at the caret, and composed text is ordered as it is composed', async () => {
   await openEditor(tp, 'A8')
-  await tp.keyboard.press(LINE_END)
+  await tp.keyboard.press(RTL_END)
   const caret = await caretX(tp)
   const ime = await imeBox(tp)
   let composition = 'not available in this browser (CDP is Chromium only)'
@@ -993,11 +1040,11 @@ await check('enabled right after createWorkbook (as apps/web does): document tex
   const status = await p.evaluate(() => window.__rtlStatus)
   await sheet(p, 'bidi')
   await openEditor(p, 'A8')
-  await p.keyboard.press(LINE_START)
+  await p.keyboard.press(RTL_START)
   for (let i = 0; i < 3; i++) await p.keyboard.press('ArrowLeft')
   const at = await markerOffset(p)
   await p.close()
-  return { ok: status?.mirrored === true && status.text?.applied === true && at === 3, status, lineStart: LINE_START, offsetAfterLineStartAndThreeArrowLeft: at }
+  return { ok: status?.mirrored === true && status.text?.applied === true && at === 3, status, lineStart: RTL_START, offsetAfterLineStartAndThreeArrowLeft: at }
 })
 
 await check('control (not the layer): line start/end and arrow keys in the editor of the unmirrored grid', async () => {
@@ -1092,7 +1139,7 @@ await check('safety net: document text painted around the hook withdraws the tex
   const p = await openPage('?dir=rtl&grid=mirror&selftest=0&simulateBreak=text-heartbeat', {}, { record: true })
   await sheet(p, 'bidi')
   await openEditor(p, 'A8')
-  await p.keyboard.press(LINE_END)
+  await p.keyboard.press(RTL_END)
   await p.keyboard.type('ب')
   await p.waitForTimeout(600)
   const status = await p.evaluate(() => window.__rtlStatus)
