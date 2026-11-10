@@ -41,16 +41,30 @@ never scatter raw colour values through components.
 
 ## 1. Phase gate — where the project stands
 
-The spec (§0.5, §15) forbids starting a phase before the previous phase's
-acceptance criteria pass. **Phase 0 (feasibility spike) is mandatory before any
-build and ends by waiting for approval.**
+The spec (§0.5, §15) orders the phases. **Decision by the owner, 2026-11-10:
+phase 0 is approved and phases 1–7 proceed in parallel.** Two phase 0 items
+could not run for lack of inputs; they are carried forward as acceptance
+prerequisites, not dropped:
+
+| Carried forward | Blocks acceptance of | Needs |
+|---|---|---|
+| Live Basecamp test (`spike/basecamp/`) | phases 3–5 | test project, OAuth app, token, Cloudflare to deploy the recorder |
+| Real multi-sheet Google Sheets file | phase 2 | the file, or its `spreadsheets.get` JSON |
 
 | Phase | State |
 |---|---|
-| 0 — Spike | Univer checks done; RTL grid achieved with a mirroring layer (report §9); Basecamp live test and real Google Sheets file **blocked on inputs**. Report: `docs/phase-0-report.md`. **Waiting for approval.** |
-| 1 — Foundation | Not started. Do not start until phase 0 is approved. |
+| 0 — Spike | **Approved 2026-11-10.** Report: `docs/phase-0-report.md` |
+| 1 — Foundation | In progress |
+| 2 — Import | In progress (converter); live acceptance blocked on the real file |
+| 3 / 4 — Outbound / inbound sync | In progress (client, engine); live acceptance blocked on Basecamp inputs |
+| 5 — Subtasks, assignment, attachments, comments | Engine rules in progress; email provider undecided (spec §17-7) |
+| 6 — Realtime collaboration | Default (a) self-built per spec §5.3 until §17-2 is decided |
+| 7 — Hardening | Not started |
 
-`spike/` is throwaway evidence for phase 0, not a base for production code.
+Code is "done" only with tests passing. A phase is "accepted" only when its
+spec §15 criteria pass against real services — say which, never imply it.
+
+`spike/` stays as phase 0 evidence. Production code lives in `apps/` and `packages/`.
 
 ---
 
