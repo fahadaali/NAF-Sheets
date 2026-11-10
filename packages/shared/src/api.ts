@@ -41,6 +41,21 @@ export type ApiErrorCode =
   | 'google_rate_limited'
   | 'google_unavailable'
   | 'google_bad_response'
+  // Basecamp account link (apps/api/src/basecamp-link/errors.ts)
+  | 'basecamp_not_configured'
+  | 'basecamp_not_linked'
+  | 'basecamp_link_expired'
+  | 'basecamp_link_revoked'
+  | 'basecamp_state_invalid'
+  | 'basecamp_authorization_denied'
+  | 'basecamp_account_missing'
+  | 'basecamp_person_taken'
+  | 'basecamp_service_not_linked'
+  | 'basecamp_unavailable'
+  | 'basecamp_project_not_found'
+  | 'basecamp_todoset_disabled'
+  | 'invalid_request'
+  | 'person_already_matched'
 
 /** Every non-2xx JSON response. `message` is Arabic: what happened and what to do (spec §12.2). */
 export interface ApiError {

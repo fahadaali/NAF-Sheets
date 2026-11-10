@@ -155,7 +155,7 @@ describe('GET /api/admin/people-matches', () => {
     const { app, fake, clock, admin } = await serviceSetup()
     fake.refreshAnswer = { status: 400, body: { error: 'invalid_grant' } }
     clock.advance(fake.expiresIn * 1000)
-    await expectLinkError(await getMatches(app, admin), 409, 'forbidden', 'حساب الخدمة')
+    await expectLinkError(await getMatches(app, admin), 409, 'basecamp_service_not_linked', 'حساب الخدمة')
     const row = await env.DB.prepare(`SELECT id, status, encrypted_tokens FROM integrations WHERE provider = 'basecamp' AND account_id = ?1`)
       .bind(String(ACCOUNT))
       .first<{ id: string; status: string; encrypted_tokens: string }>()
@@ -163,7 +163,7 @@ describe('GET /api/admin/people-matches', () => {
     expect(await auditFor(row?.id as string, 'basecamp.service.expire')).toHaveLength(1)
 
     clock.advance(11 * MINUTE)
-    await expectLinkError(await getMatches(app, admin), 409, 'forbidden', 'حساب الخدمة')
+    await expectLinkError(await getMatches(app, admin), 409, 'basecamp_service_not_linked', 'حساب الخدمة')
   })
 })
 
@@ -222,12 +222,12 @@ describe('PUT /api/admin/people-matches/:userId', () => {
     await getMatches(app, admin)
     expect((await putMatch(app, admin, first.id, { bcPersonId: target.id })).status).toBe(200)
 
-    await expectLinkError(await putMatch(app, admin, second.id, { bcPersonId: target.id }), 409, 'forbidden', 'عضو آخر')
+    await expectLinkError(await putMatch(app, admin, second.id, { bcPersonId: target.id }), 409, 'person_already_matched', 'عضو آخر')
     await expectLinkError(await putMatch(app, admin, second.id, { bcPersonId: 987654321987 }), 404, 'not_found', 'Basecamp')
     await expectLinkError(await putMatch(app, admin, second.id, { bcPersonId: agent.id }), 404, 'not_found')
     await expectLinkError(await putMatch(app, admin, 'sub-does-not-exist', { bcPersonId: null }), 404, 'not_found', 'العضو')
     for (const body of [{}, { bcPersonId: '12' }, { bcPersonId: -1 }, { bcPersonId: 1.5 }, [1]]) {
-      await expectLinkError(await putMatch(app, admin, second.id, body), 400, 'invalid_json', 'bcPersonId')
+      await expectLinkError(await putMatch(app, admin, second.id, body), 400, 'invalid_request', 'bcPersonId')
     }
     const notJson = await call(app, 'PUT', `/api/admin/people-matches/${second.id}`, { user: admin, rawBody: '{', env: linkEnv(ACCOUNT) })
     await expectLinkError(notJson, 400, 'invalid_json')

@@ -173,7 +173,7 @@ G7. **Comments are not read.** `commentsViewMode` is left at its default
     comments, although the converter can report them. Alternative:
     `COMMENTS_VIEW_MODE_DEFAULT_FOR_CURRENT_ACCESS`. Decide.
 
-G8. **(contract)** **New error codes** not yet in `ApiErrorCode`
+G8. **Decided 2026-11-10: added to `ApiErrorCode`, with `ApiError.link`.** Original question: **(contract)** **New error codes** not yet in `ApiErrorCode`
     (`packages/shared/src/api.ts`), which this module may not edit:
     `google_not_configured` (503), `google_not_linked` (409),
     `google_link_expired` (409), `google_state_invalid` (400),
@@ -282,7 +282,7 @@ B7. **No Launchpad revocation endpoint is documented.** `POST
     `revoked`, audited); the token itself stays valid at Basecamp until it
     expires (≤ 2 weeks). Revoking with no link answers 403 `not_linked`.
 
-B8. **(contract)** **Error codes.** `ApiErrorCode` is closed and this module
+B8. **Decided 2026-11-10:** the proposed codes below are in `ApiErrorCode` and sent by the module; refusals outside the list (`admin_only`, `service_admin_only`, `launchpad_refused`, `not_a_user`, `service_not_admin`, `member_not_found`, `person_not_found`) keep their general code. Not linked / expired / revoked carry `link: "/auth/basecamp/start"` and the service account's not-linked `link: "/auth/basecamp/start?service=1"`. Original question: **(contract)** **Error codes.** `ApiErrorCode` is closed and this module
     may not edit `packages/shared`, so each failure uses the nearest existing
     code and the precise reason is in the Arabic `message` (`LINK_MESSAGES` in
     `src/basecamp-link/errors.ts`). Proposed codes:

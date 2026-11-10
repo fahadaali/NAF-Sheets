@@ -105,7 +105,7 @@ describe('refresh before expiry', () => {
       return res
     }
     const app2 = linkApp(fake, new Clock())
-    await expectLinkError(await projects(app2, user), 403, 'forbidden', 'أعد ربط')
+    await expectLinkError(await projects(app2, user), 403, 'basecamp_link_expired', 'أعد ربط')
     expect((await linkRow(user.id))?.status).toBe('expired')
     void app
   })
@@ -121,7 +121,7 @@ describe('refresh failure', () => {
 
     fake.refreshAnswer = { status: 400, body: { error: 'invalid_grant' } }
     clock.advance(fake.expiresIn * 1000)
-    await expectLinkError(await projects(app, user), 403, 'forbidden', 'أعد ربط حسابك')
+    await expectLinkError(await projects(app, user), 403, 'basecamp_link_expired', 'أعد ربط حسابك')
 
     expect(fake.apiCalls()).toHaveLength(apiCallsBefore)
     const row = await linkRow(user.id)
@@ -139,7 +139,7 @@ describe('refresh failure', () => {
 
     // Later calls fail at once, without asking Launchpad again.
     const refreshes = fake.tokenCalls('refresh').length
-    await expectLinkError(await projects(app, user), 403, 'forbidden')
+    await expectLinkError(await projects(app, user), 403, 'basecamp_link_expired')
     expect(fake.tokenCalls('refresh')).toHaveLength(refreshes)
   })
 
@@ -147,7 +147,7 @@ describe('refresh failure', () => {
     const { app, fake, clock, user } = await linkedSetup()
     fake.refreshAnswer = { status: 401, body: 'nope' }
     clock.advance(fake.expiresIn * 1000)
-    await expectLinkError(await projects(app, user), 403, 'forbidden')
+    await expectLinkError(await projects(app, user), 403, 'basecamp_link_expired')
     expect((await linkRow(user.id))?.status).toBe('expired')
   })
 
@@ -157,9 +157,9 @@ describe('refresh failure', () => {
     clock.advance(fake.expiresIn * 1000)
 
     fake.refreshAnswer = { status: 503, body: { error: 'unavailable' } }
-    await expectLinkError(await projects(app, user), 503, 'internal')
+    await expectLinkError(await projects(app, user), 503, 'basecamp_unavailable')
     fake.refreshAnswer = { status: 400, body: { message: 'something else' } }
-    await expectLinkError(await projects(app, user), 503, 'internal')
+    await expectLinkError(await projects(app, user), 503, 'basecamp_unavailable')
 
     expect(await linkRow(user.id)).toEqual(before)
     expect(await auditFor(user.id, 'basecamp.link.expire')).toHaveLength(0)
@@ -169,7 +169,7 @@ describe('refresh failure', () => {
     const { app, fake, clock, user } = await linkedSetup()
     clock.advance(fake.expiresIn * 1000)
     fake.refreshAnswer = { status: 401, body: { error: 'invalid_client' } }
-    await expectLinkError(await projects(app, user), 503, 'internal', 'مسؤول المنصة')
+    await expectLinkError(await projects(app, user), 503, 'basecamp_not_configured', 'مسؤول المنصة')
     expect((await linkRow(user.id))?.status).toBe('active')
   })
 })
@@ -198,7 +198,7 @@ describe('POST /api/basecamp/link/revoke', () => {
     expect(await json(link)).toMatchObject({ state: 'revoked', bcPersonId: who.id })
 
     const apiCalls = fake.apiCalls().length
-    await expectLinkError(await projects(app, user), 403, 'forbidden', 'ألغيت')
+    await expectLinkError(await projects(app, user), 403, 'basecamp_link_revoked', 'ألغيت')
     expect(fake.apiCalls()).toHaveLength(apiCalls)
 
     // Again: same answer, nothing new in the log.
@@ -210,7 +210,7 @@ describe('POST /api/basecamp/link/revoke', () => {
     const fake = new FakeBasecamp(ACCOUNT)
     const app = linkApp(fake, new Clock())
     const user = await seedMember('editor')
-    await expectLinkError(await call(app, 'POST', '/api/basecamp/link/revoke', { user, env: linkEnv(ACCOUNT) }), 403, 'forbidden', 'لم تربط')
+    await expectLinkError(await call(app, 'POST', '/api/basecamp/link/revoke', { user, env: linkEnv(ACCOUNT) }), 403, 'basecamp_not_linked', 'لم تربط')
     expect(await linkRow(user.id)).toBeNull()
   })
 

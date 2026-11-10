@@ -2,10 +2,11 @@
 // (`ApiError`, built with src/errors.ts `jsonResponse`); messages are Arabic
 // and say what happened and what to do (spec §12.2).
 //
-// OPEN: the contract's `ApiErrorCode` (packages/shared/src/api.ts) is closed
-// and has no Basecamp-specific code. Each failure below uses the nearest
-// existing code; the precise reason is in `message` only. Proposed new codes
-// are listed in apps/api/OPEN_QUESTIONS.md ("Basecamp link" B8).
+// Codes follow apps/api/OPEN_QUESTIONS.md "Basecamp link" B8 (decided
+// 2026-11-10): a Basecamp-specific code wherever the web app must act
+// differently; the remaining refusals keep the general code and the precise
+// reason is in `message`. Not linked / expired / revoked (and the service
+// account's not linked) also carry `link`, like naf-auth's `login`.
 
 import type { Context } from 'hono'
 import type { ApiError, ApiErrorCode } from '@naf-sheets/shared'
@@ -38,28 +39,32 @@ export const LINK_MESSAGES = {
 
 export type LinkErrorKey = keyof typeof LINK_MESSAGES
 
-const SHAPE: Record<LinkErrorKey, { status: number; code: ApiErrorCode }> = {
-  not_configured: { status: 503, code: 'internal' },
+/** Navigation that (re)links: the web app appends `?next=` (`&next=` for the service account). */
+const START_PATH = '/auth/basecamp/start'
+const SERVICE_START_PATH = '/auth/basecamp/start?service=1'
+
+const SHAPE: Record<LinkErrorKey, { status: number; code: ApiErrorCode; link?: string }> = {
+  not_configured: { status: 503, code: 'basecamp_not_configured' },
   service_admin_only: { status: 403, code: 'forbidden' },
   admin_only: { status: 403, code: 'forbidden' },
-  state_invalid: { status: 403, code: 'forbidden' },
-  authorization_denied: { status: 403, code: 'forbidden' },
+  state_invalid: { status: 403, code: 'basecamp_state_invalid' },
+  authorization_denied: { status: 403, code: 'basecamp_authorization_denied' },
   launchpad_refused: { status: 403, code: 'forbidden' },
-  basecamp_unavailable: { status: 503, code: 'internal' },
-  account_missing: { status: 403, code: 'forbidden' },
+  basecamp_unavailable: { status: 503, code: 'basecamp_unavailable' },
+  account_missing: { status: 403, code: 'basecamp_account_missing' },
   not_a_user: { status: 403, code: 'forbidden' },
   service_not_admin: { status: 403, code: 'forbidden' },
-  person_taken: { status: 409, code: 'forbidden' },
-  not_linked: { status: 403, code: 'forbidden' },
-  link_expired: { status: 403, code: 'forbidden' },
-  link_revoked: { status: 403, code: 'forbidden' },
-  service_not_linked: { status: 409, code: 'forbidden' },
-  project_not_found: { status: 404, code: 'not_found' },
-  todoset_disabled: { status: 404, code: 'not_found' },
-  invalid_match: { status: 400, code: 'invalid_json' },
+  person_taken: { status: 409, code: 'basecamp_person_taken' },
+  not_linked: { status: 403, code: 'basecamp_not_linked', link: START_PATH },
+  link_expired: { status: 403, code: 'basecamp_link_expired', link: START_PATH },
+  link_revoked: { status: 403, code: 'basecamp_link_revoked', link: START_PATH },
+  service_not_linked: { status: 409, code: 'basecamp_service_not_linked', link: SERVICE_START_PATH },
+  project_not_found: { status: 404, code: 'basecamp_project_not_found' },
+  todoset_disabled: { status: 404, code: 'basecamp_todoset_disabled' },
+  invalid_match: { status: 400, code: 'invalid_request' },
   member_not_found: { status: 404, code: 'not_found' },
   person_not_found: { status: 404, code: 'not_found' },
-  person_already_matched: { status: 409, code: 'forbidden' },
+  person_already_matched: { status: 409, code: 'person_already_matched' },
 }
 
 /** Thrown anywhere in the link code; the link routes' `onError` turns it into an `ApiError`. */
@@ -78,7 +83,8 @@ export class LinkFailure extends Error {
 }
 
 export function linkErrorBody(key: LinkErrorKey): ApiError {
-  return { ok: false, error: SHAPE[key].code, message: LINK_MESSAGES[key] }
+  const { code, link } = SHAPE[key]
+  return link ? { ok: false, error: code, message: LINK_MESSAGES[key], link } : { ok: false, error: code, message: LINK_MESSAGES[key] }
 }
 
 export function linkErrorResponse(key: LinkErrorKey): Response {

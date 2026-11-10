@@ -90,7 +90,7 @@ describe('GET /auth/basecamp/start', () => {
     const res = await call(app, 'GET', '/auth/basecamp/start', { user, env: linkEnv(ACCOUNT, { BASECAMP_CLIENT_SECRET: undefined }) })
     expect(res.status).toBe(503)
     const body = await json<{ error: string; message: string }>(res)
-    expect(body.error).toBe('internal')
+    expect(body.error).toBe('basecamp_not_configured')
     expect(body.message).toMatch(/[؀-ۿ]/)
     expect(body.message).not.toContain('BASECAMP')
 
@@ -161,32 +161,32 @@ describe('GET /auth/basecamp/callback', () => {
     const { state } = await startLink(app, ACCOUNT, owner)
     const code = fake.grantCode(person())
 
-    await expectLinkError(await callback(app, ACCOUNT, intruder, { code, state: state as string }), 403, 'forbidden', 'ابدأ')
+    await expectLinkError(await callback(app, ACCOUNT, intruder, { code, state: state as string }), 403, 'basecamp_state_invalid', 'ابدأ')
     expect(fake.tokenCalls()).toHaveLength(0)
     expect(await linkRow(intruder.id)).toBeNull()
 
     // Single use: consumed by the failed attempt, so the owner cannot finish with it either.
-    await expectLinkError(await callback(app, ACCOUNT, owner, { code, state: state as string }), 403, 'forbidden')
+    await expectLinkError(await callback(app, ACCOUNT, owner, { code, state: state as string }), 403, 'basecamp_state_invalid')
     expect(await linkRow(owner.id)).toBeNull()
   })
 
   it('refuses an unknown, malformed or reused state', async () => {
     const { app, fake } = setup()
     const user = await seedMember('editor')
-    await expectLinkError(await callback(app, ACCOUNT, user, { code: 'c', state: 'a'.repeat(64) }), 403, 'forbidden')
-    await expectLinkError(await callback(app, ACCOUNT, user, { code: 'c', state: 'not-a-state' }), 403, 'forbidden')
-    await expectLinkError(await callback(app, ACCOUNT, user, { code: 'c' }), 403, 'forbidden')
+    await expectLinkError(await callback(app, ACCOUNT, user, { code: 'c', state: 'a'.repeat(64) }), 403, 'basecamp_state_invalid')
+    await expectLinkError(await callback(app, ACCOUNT, user, { code: 'c', state: 'not-a-state' }), 403, 'basecamp_state_invalid')
+    await expectLinkError(await callback(app, ACCOUNT, user, { code: 'c' }), 403, 'basecamp_state_invalid')
 
     const { state } = await startLink(app, ACCOUNT, user)
     expect((await callback(app, ACCOUNT, user, { code: fake.grantCode(person()), state: state as string })).status).toBe(302)
-    await expectLinkError(await callback(app, ACCOUNT, user, { code: fake.grantCode(person()), state: state as string }), 403, 'forbidden')
+    await expectLinkError(await callback(app, ACCOUNT, user, { code: fake.grantCode(person()), state: state as string }), 403, 'basecamp_state_invalid')
   })
 
   it('stops when the user declines at Launchpad, without calling the token endpoint', async () => {
     const { app, fake } = setup()
     const user = await seedMember('editor')
     const { state } = await startLink(app, ACCOUNT, user)
-    await expectLinkError(await callback(app, ACCOUNT, user, { error: 'user_denied', state: state as string }), 403, 'forbidden', 'الإذن')
+    await expectLinkError(await callback(app, ACCOUNT, user, { error: 'user_denied', state: state as string }), 403, 'basecamp_authorization_denied', 'الإذن')
     expect(fake.tokenCalls()).toHaveLength(0)
     expect(await linkRow(user.id)).toBeNull()
   })
@@ -199,7 +199,7 @@ describe('GET /auth/basecamp/callback', () => {
       { product: 'bc3', id: ACCOUNT + 1 },
       { product: 'bcx', id: ACCOUNT },
     ])
-    await expectLinkError(await callback(app, ACCOUNT, user, { code, state: state as string }), 403, 'forbidden', 'حساب ناف')
+    await expectLinkError(await callback(app, ACCOUNT, user, { code, state: state as string }), 403, 'basecamp_account_missing', 'حساب ناف')
     expect(await linkRow(user.id)).toBeNull()
     expect(fake.apiCalls()).toHaveLength(0)
   })
@@ -218,7 +218,7 @@ describe('GET /auth/basecamp/callback', () => {
     const second = await seedMember('viewer')
     const who = person()
     expect((await linkAccount(app, fake, first, who)).status).toBe(302)
-    await expectLinkError(await linkAccount(app, fake, second, who), 409, 'forbidden', 'عضو آخر')
+    await expectLinkError(await linkAccount(app, fake, second, who), 409, 'basecamp_person_taken', 'عضو آخر')
     expect(await linkRow(second.id)).toBeNull()
     expect((await linkRow(first.id))?.status).toBe('active')
     expect(await auditFor(second.id)).toHaveLength(0)
@@ -231,10 +231,10 @@ describe('GET /auth/basecamp/callback', () => {
     fake.exchangeAnswer = { status: 400, body: { error: 'invalid_grant' } }
     await expectLinkError(await linkAccount(app, fake, user, person()), 403, 'forbidden')
     fake.exchangeAnswer = { status: 502, body: { error: 'bad_gateway' } }
-    await expectLinkError(await linkAccount(app, fake, user, person()), 503, 'internal', 'أعد المحاولة')
+    await expectLinkError(await linkAccount(app, fake, user, person()), 503, 'basecamp_unavailable', 'أعد المحاولة')
     // Wrong client credentials are the platform's configuration, not the user's fault.
     fake.exchangeAnswer = { status: 401, body: { error: 'invalid_client' } }
-    await expectLinkError(await linkAccount(app, fake, user, person()), 503, 'internal', 'مسؤول المنصة')
+    await expectLinkError(await linkAccount(app, fake, user, person()), 503, 'basecamp_not_configured', 'مسؤول المنصة')
     expect(await linkRow(user.id)).toBeNull()
   })
 

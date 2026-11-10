@@ -53,9 +53,22 @@ describe('before linking', () => {
     const app = linkApp(fake, new Clock())
     const user = await seedMember('editor')
     for (const path of ['/api/basecamp/projects', '/api/basecamp/projects/123/todolists', '/api/basecamp/projects/123/people']) {
-      await expectLinkError(await get(app, user, path), 403, 'forbidden', 'اربط حسابك')
+      await expectLinkError(await get(app, user, path), 403, 'basecamp_not_linked', 'اربط حسابك')
     }
     expect(fake.calls).toHaveLength(0)
+  })
+
+  it('points the browser at the link start (B8 `link`), and only on the re-link codes', async () => {
+    const fake = new FakeBasecamp(ACCOUNT)
+    const app = linkApp(fake, new Clock())
+    const user = await seedMember('editor')
+    const body = await json<{ error: string; link?: string }>(await get(app, user, '/api/basecamp/projects'))
+    expect(body).toMatchObject({ error: 'basecamp_not_linked', link: '/auth/basecamp/start' })
+    const refused = await json<{ error: string; link?: string }>(
+      await call(app, 'PUT', '/api/admin/people-matches/x', { user, env: linkEnv(ACCOUNT), body: {} }),
+    )
+    expect(refused).toMatchObject({ error: 'forbidden' })
+    expect(refused.link).toBeUndefined()
   })
 })
 
@@ -80,7 +93,7 @@ describe('GET /api/basecamp/projects', () => {
   it('answers 503 in Arabic when Basecamp is down (after its retries)', async () => {
     const { app, fake, user } = await setup()
     fake.apiFailure = 503
-    await expectLinkError(await get(app, user, '/api/basecamp/projects'), 503, 'internal', 'Basecamp')
+    await expectLinkError(await get(app, user, '/api/basecamp/projects'), 503, 'basecamp_unavailable', 'Basecamp')
   })
 })
 
@@ -102,11 +115,11 @@ describe('GET /api/basecamp/projects/:id/todolists', () => {
     const { app, fake, user, who } = await setup()
     const off: FakeProject = { id: uniqueId(), name: 'بدون مهام', description: null, todosetId: null, peopleIds: [who.id], todolists: [] }
     fake.projects.push(off)
-    await expectLinkError(await get(app, user, `/api/basecamp/projects/${off.id}/todolists`), 404, 'not_found', 'أداة المهام')
-    await expectLinkError(await get(app, user, `/api/basecamp/projects/${uniqueId()}/todolists`), 404, 'not_found', 'المشروع')
+    await expectLinkError(await get(app, user, `/api/basecamp/projects/${off.id}/todolists`), 404, 'basecamp_todoset_disabled', 'أداة المهام')
+    await expectLinkError(await get(app, user, `/api/basecamp/projects/${uniqueId()}/todolists`), 404, 'basecamp_project_not_found', 'المشروع')
     const calls = fake.apiCalls().length
-    await expectLinkError(await get(app, user, '/api/basecamp/projects/abc/todolists'), 404, 'not_found')
-    await expectLinkError(await get(app, user, '/api/basecamp/projects/0/todolists'), 404, 'not_found')
+    await expectLinkError(await get(app, user, '/api/basecamp/projects/abc/todolists'), 404, 'basecamp_project_not_found')
+    await expectLinkError(await get(app, user, '/api/basecamp/projects/0/todolists'), 404, 'basecamp_project_not_found')
     expect(fake.apiCalls()).toHaveLength(calls)
   })
 })
@@ -198,7 +211,7 @@ describe('GET /api/basecamp/projects/:id/people (bc_people_cache, §9.5)', () =>
     const outsider = await seedMember('editor')
     const outsiderPerson: FakePerson = person()
     expect((await linkAccount(app, fake, outsider, outsiderPerson)).status).toBe(302)
-    await expectLinkError(await people(app, outsider, project.id), 404, 'not_found', 'المشروع')
+    await expectLinkError(await people(app, outsider, project.id), 404, 'basecamp_project_not_found', 'المشروع')
     expect(peopleCalls(fake, project.id)).toHaveLength(callsAfterFirst + 1)
     expect(bearer(peopleCalls(fake, project.id).at(-1))).toBe(await accessTokenOf(outsider.id))
 
