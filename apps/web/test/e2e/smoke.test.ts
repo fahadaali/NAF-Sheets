@@ -150,7 +150,7 @@ describe('files screen', () => {
     const api = new MockApi()
     api.add(summary({ id: 'wb-1', title: 'خطة' }), taskSnapshot('wb-1', 'sheet-1', 'خطة'), 1)
     const message = 'تعذّر تحميل قائمة الملفات بسبب عطل في الخادم. أعد المحاولة بعد قليل.'
-    api.override = (r) => (r.method === 'GET' && r.path.startsWith('/api/workbooks') ? error(500, 'internal_error', message) : undefined)
+    api.override = (r) => (r.method === 'GET' && r.path.startsWith('/api/workbooks') ? error(500, 'internal', message) : undefined)
     const { context, page } = await openPage(api, '/')
     const notice = page.getByTestId('files-error')
     await notice.waitFor()

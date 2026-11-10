@@ -34,7 +34,7 @@ export {
   type RetryPolicy,
 } from './http'
 export { createTokenBucketLimiter, DEFAULT_RATE_PER_SECOND, type RateLimiter, type TokenBucketOptions } from './limiter'
-export { NormaliseError, normaliseSubtask, normaliseTodo, POSITION_UNKNOWN } from './normalise'
+export { NormaliseError, normaliseSubtask, normaliseTodo } from './normalise'
 export { type Page, type Paged, parseNextLink, parseTotalCount } from './pagination'
 export * from './errors'
 export type * from './raw'

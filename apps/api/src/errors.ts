@@ -1,7 +1,7 @@
 // Every non-2xx JSON body is `ApiError` (packages/shared/src/api.ts).
 // Messages are Arabic and say what happened and what to do (spec §12.2).
 
-import type { ApiError } from '@naf-sheets/shared'
+import type { ApiError, ApiErrorCode } from '@naf-sheets/shared'
 
 /** Stable machine codes → Arabic message. */
 export const MESSAGES = {
@@ -32,8 +32,8 @@ export const MESSAGES = {
 
 export type ErrorKey = keyof typeof MESSAGES
 
-/** The machine code sent in `ApiError.error` for each message key. */
-const CODES: Record<ErrorKey, string> = {
+/** The machine code sent in `ApiError.error` for each message key (the contract's `ApiErrorCode`). */
+const CODES: Record<ErrorKey, ApiErrorCode> = {
   unauthorized: 'unauthorized',
   access_denied: 'access_denied',
   auth_unavailable: 'auth_unavailable',

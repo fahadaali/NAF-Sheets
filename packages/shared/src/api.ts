@@ -3,11 +3,37 @@
 
 import type { PlatformRole, SheetSyncMode, SyncState, WorkbookMemberRole, WorkbookSource } from './domain'
 
+/**
+ * Stable machine codes of `ApiError.error`: exactly the codes apps/api sends
+ * (apps/api/src/errors.ts), including the three naf-auth refusals the API
+ * completes with an Arabic message (`unauthorized`, `access_denied`,
+ * `auth_unavailable`). A new code is added here first.
+ */
+export type ApiErrorCode =
+  | 'unauthorized'
+  | 'access_denied'
+  | 'auth_unavailable'
+  | 'forbidden'
+  | 'not_found'
+  | 'invalid_json'
+  | 'invalid_title'
+  | 'unsupported_source'
+  | 'invalid_snapshot'
+  | 'invalid_base_version'
+  | 'version_conflict'
+  | 'invalid_members'
+  | 'owner_in_members'
+  | 'unknown_user'
+  | 'websocket_required'
+  | 'snapshot_missing'
+  | 'queue_unavailable'
+  | 'internal'
+
 /** Every non-2xx JSON response. `message` is Arabic: what happened and what to do (spec §12.2). */
 export interface ApiError {
   ok: false
-  /** Stable machine code, e.g. `forbidden`, `not_found`, `version_conflict`, `unauthorized`. */
-  error: string
+  /** Stable machine code. */
+  error: ApiErrorCode
   message: string
   /** naf-auth: where to send the browser to sign in again (401 only). */
   login?: string
@@ -43,7 +69,7 @@ export interface WorkbookListResponse {
   workbooks: WorkbookSummary[]
 }
 
-/** POST /api/workbooks — phase 1 creates blank workbooks only. */
+/** POST /api/workbooks → 201 `CreateWorkbookResponse` — phase 1 creates blank workbooks only. */
 export interface CreateWorkbookRequest {
   title: string
   source: Extract<WorkbookSource, 'blank'>
@@ -100,6 +126,18 @@ export interface WorkbookMembersResponse {
 export interface PutWorkbookMembersRequest {
   members: Array<{ userId: string; role: WorkbookMemberRole }>
 }
+/** PUT /api/workbooks/:id/members → the list after the change, as GET returns it. */
+export type PutWorkbookMembersResponse = WorkbookMembersResponse
+
+/*
+ * GET /api/workbooks/:id/room — WebSocket upgrade to the workbook's room
+ * (Durable Object `WorkbookRoom`, spec §11). Phase 6: the message protocol is
+ * not defined yet; today the room only accepts the connection.
+ * - 101: upgraded, after the same access check as GET /api/workbooks/:id
+ *   (every role that may open the workbook, viewers included).
+ * - 404 `not_found`: the workbook does not exist or the caller has no access.
+ * - 426 `websocket_required`: the request has no `Upgrade: websocket`.
+ */
 
 /** Default columns of a blank workbook (spec §7.1), in order. */
 export const DEFAULT_COLUMNS = ['المهمة', 'المسؤول', 'تاريخ البدء', 'تاريخ الاستحقاق', 'الحالة', 'المرفقات', 'ملاحظات'] as const

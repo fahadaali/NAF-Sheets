@@ -25,7 +25,6 @@ export type EngineWarningCode =
   | 'invalid_local_assignees'
   | 'follower_removed_remotely'
   | 'directory_incomplete'
-  | 'order_conflict'
 
 export const ERROR_MESSAGES: Readonly<Record<EngineErrorCode, string>> = {
   external_requires_follower:
@@ -49,7 +48,7 @@ export const ERROR_MESSAGES: Readonly<Record<EngineErrorCode, string>> = {
 
 export const WARNING_MESSAGES: Readonly<Record<EngineWarningCode, string>> = {
   remote_required:
-    'لم يُرسل التحديث إلى Basecamp بعد: يلزم جلب المهمة من Basecamp أولاً، لأن التحديث الناقص يمسح حقولها هناك. اجلب المهمة ثم أعد المزامنة.',
+    'لم يُرسل التحديث إلى Basecamp بعد: المهمة أُنشئت هناك من قبل، ولا تتوفر آخر حالة متزامنة لها يُبنى منها التحديث. اجلب المهمة من Basecamp ثم أعد المزامنة.',
   parent_not_synced:
     'لم تُنشأ المهمة الفرعية في Basecamp بعد: مهمتها الرئيسية لم تُنشأ هناك. ستُنشأ بعد إنشاء المهمة الرئيسية.',
   hierarchy_change_unsupported:
@@ -60,8 +59,6 @@ export const WARNING_MESSAGES: Readonly<Record<EngineWarningCode, string>> = {
     'أُزيل المتابع الداخلي من المهمة في Basecamp، فبقيت مسؤولياتها لجهات خارجية فقط. حدّد متابعاً داخلياً للمهمة.',
   directory_incomplete:
     'لم تُحدَّث كتلة بيانات المنصة في وصف المهمة: أسماء بعض المسؤولين غير متاحة في المنصة. حدّث قائمة الأعضاء والجهات الخارجية ثم أعد المزامنة.',
-  order_conflict:
-    'تغيّر موضع المهمة في المنصة وفي Basecamp معاً، فاعتُمد الموضع الأحدث. راجع موضع الصف في الورقة.',
 }
 
 export interface EngineError {

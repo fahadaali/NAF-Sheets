@@ -13,7 +13,7 @@ import {
   utf8Encode,
   type SyncedFields,
 } from '../src'
-import { AHMED, BADR, DANA, remoteSubtask, remoteTodo, T2 } from './fixtures'
+import { AHMED, BADR, DANA, JUMANA, LIST, OTHER_LIST, remoteSubtask, remoteTodo, T2 } from './fixtures'
 
 const nodeSha = (s: string): string => createHash('sha256').update(s, 'utf8').digest('hex')
 
@@ -139,5 +139,54 @@ describe('bases and echo suppression', () => {
     expect(done.completed).toBe(true)
     expect(done.hash).not.toBe(base.hash)
     expect(done.hash).toBe(hashSyncedFields(syncedFieldsOfBase(done)))
+  })
+
+  it('a to-do base keeps its list and completion subscribers (not hashed); a subtask base has none', () => {
+    const remote = remoteTodo({ completionSubscriberIds: [DANA, JUMANA] })
+    const base = baseFromRemote('u', remote)
+    expect(base).toMatchObject({ listId: LIST, completionSubscriberIds: [DANA, JUMANA] })
+    remote.completionSubscriberIds.push(AHMED)
+    expect(base.completionSubscriberIds).toEqual([DANA, JUMANA])
+    expect(isEcho({ ...remote, completionSubscriberIds: [], listId: OTHER_LIST }, base)).toBe(true)
+    expect(baseFromRemote('s', remoteSubtask())).toMatchObject({ listId: null, completionSubscriberIds: [] })
+  })
+
+  it('a base after a to-do write takes list and subscribers from Basecamp’s response', () => {
+    const write = { content: 'x', descriptionHtml: '', assigneeIds: [], completionSubscriberIds: [DANA], dueOn: null, startsOn: null, notify: false }
+    const base = baseAfterTodoWrite('u', remoteTodo({ listId: OTHER_LIST, completionSubscriberIds: [DANA, JUMANA] }), write)
+    expect(base).toMatchObject({ listId: OTHER_LIST, completionSubscriberIds: [DANA, JUMANA] })
+  })
+
+  it('baseWith records a move to another list without touching the hash', () => {
+    const base = baseFromRemote('u', remoteTodo())
+    const moved = baseWith(base, { position: 3, listId: OTHER_LIST })
+    expect(moved).toMatchObject({ position: 3, listId: OTHER_LIST, completionSubscriberIds: base.completionSubscriberIds })
+    expect(baseWith(moved, { position: 1 }).hash).toBe(base.hash)
+    expect(baseWith(base, { completed: true }).listId).toBe(LIST)
+  })
+})
+
+describe('positions Basecamp did not send (single-record GET)', () => {
+  it('a record without a position is an echo of a base with any position', () => {
+    const base = baseFromRemote('u', remoteTodo({ position: 4 }))
+    expect(syncedFieldsOfRemote(remoteTodo({ position: null })).position).toBeNull()
+    expect(isEcho(remoteTodo({ position: null, updatedAt: T2 }), base)).toBe(true)
+    expect(isEcho(remoteTodo({ position: null, dueOn: '2027-01-01' }), base)).toBe(false)
+    expect(isEcho(remoteTodo({ position: 5 }), base)).toBe(false)
+  })
+
+  it('a base built from such a record keeps the last known position, and never invents one', () => {
+    expect(baseFromRemote('u', remoteTodo({ position: null }), 4).position).toBe(4)
+    expect(baseFromRemote('u', remoteTodo({ position: 2 }), 4).position).toBe(2)
+    expect(() => baseFromRemote('u', remoteTodo({ position: null }))).toThrow(/position/)
+    expect(() => baseFromRemote('u', remoteSubtask({ position: null }))).toThrow(/position/)
+  })
+
+  it('bases after writes whose response has no position use the last known one', () => {
+    const write = { content: 'x', descriptionHtml: '', assigneeIds: [], completionSubscriberIds: [], dueOn: null, startsOn: null, notify: false }
+    expect(baseAfterTodoWrite('u', remoteTodo({ position: null }), write, 3).position).toBe(3)
+    expect(() => baseAfterTodoWrite('u', remoteTodo({ position: null }), write)).toThrow(/position/)
+    expect(baseAfterSubtaskWrite('u', remoteSubtask({ position: null }), { title: 't' }, 2).position).toBe(2)
+    expect(() => baseAfterSubtaskWrite('u', remoteSubtask({ position: null }), { title: 't' })).toThrow(/position/)
   })
 })

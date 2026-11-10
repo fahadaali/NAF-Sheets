@@ -7,17 +7,6 @@
 
 import type { IsoDate, RecordingStatus, RemoteSubtask, RemoteTodo } from '@naf-sheets/shared'
 
-/**
- * Value of `position` when Basecamp did not send one.
- *
- * OPEN: the documented `GET /todos/{id}.json` example has no `position` key
- * (todos.md "Get a to-do"), and the official SDK schema marks it optional,
- * while the shared `RemoteTodo.position` is a plain `number`. Positions are
- * 1-based, so 0 is never a real position: callers must treat 0 as "unknown"
- * and must not diff it against a stored position. See OPEN_QUESTIONS.md.
- */
-export const POSITION_UNKNOWN = 0
-
 export class NormaliseError extends Error {
   override readonly name = 'NormaliseError'
   readonly field: string
@@ -79,9 +68,15 @@ class Reader {
     return v
   }
 
-  position(): number {
+  /**
+   * 1-based position, or `null` when Basecamp did not send one: the documented
+   * `GET /todos/{id}.json` example has no `position` key (todos.md "Get a
+   * to-do"), and the official SDK schema marks it optional on to-dos and
+   * subtasks. The sync engine treats `null` as unknown.
+   */
+  position(): number | null {
     const v = this.obj['position']
-    if (v === undefined || v === null) return POSITION_UNKNOWN
+    if (v === undefined || v === null) return null
     if (typeof v !== 'number' || !Number.isSafeInteger(v) || v < 1) this.fail('position', 'must be an integer >= 1')
     return v
   }

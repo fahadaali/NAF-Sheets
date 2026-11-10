@@ -1,6 +1,7 @@
 // Mandatory sync scenarios of spec §16 that are pure logic. Each test name
 // starts with its scenario number. Scenarios that need IO, a browser or real
-// Basecamp (1, 3–7, 11, 12, 17–19, 23) are not here.
+// Basecamp (1, 4–7, 11, 12, 17–19, 23) are not here; scenario 3 is covered for
+// the actions the engine plans (the undo itself is the editor's).
 
 import { describe, expect, it } from 'vitest'
 import type { LocalTask, OutboundAction, RemoteTodo, SyncedBase } from '@naf-sheets/shared'
@@ -19,6 +20,8 @@ import {
   recreateSubtaskFromSnapshot,
   sortRows,
   splitDescription,
+  undoDeletion,
+  type DeletionAction,
   type DiffContext,
 } from '../src'
 import {
@@ -110,6 +113,56 @@ describe('§16 scenario 2 — sorting the sheet by date never changes identity',
 })
 
 // ---------------------------------------------------------------------------
+describe('§16 scenario 3 — deleting a row then undoing restores the to-do from the trash', () => {
+  const remote = remoteTodo()
+  const base = baseFromRemote('uid-todo', remote)
+  const row = localTodo({ bcId: TODO_ID })
+  const subRow = localSubtask({ bcId: SUBTASK_ID })
+
+  function deleted(): DeletionAction[] {
+    const plan = planDeletion([
+      { task: row, bcId: row.bcId },
+      { task: subRow, bcId: subRow.bcId, remoteSubtask: remoteSubtask() },
+    ])
+    expect(plan.ok).toBe(true)
+    return plan.ok ? (plan.value as DeletionAction[]) : []
+  }
+
+  it('scenario 3: deleting trashes only the to-do; its subtask goes to the trash with it', () => {
+    expect(deleted()).toEqual([{ type: 'trash_todo', uid: 'uid-todo', todoId: TODO_ID }])
+  })
+
+  it('scenario 3: undo untrashes the same record — no create, no new id', () => {
+    const undo = deleted().map((action) => undoDeletion(action, row))
+    expect(undo).toEqual([{ type: 'untrash_todo', uid: 'uid-todo', todoId: TODO_ID }])
+    expect(undo.some((a) => a.type === 'create_todo' || a.type === 'create_subtask')).toBe(false)
+  })
+
+  it('scenario 3: the restored row keeps its id, so the diff never creates it again', () => {
+    // Before the record is fetched again, with or without its base.
+    expect(diffTask(row, base, null, todoCtx())).toEqual({ outbound: [], inbound: [], conflicts: [], warnings: [] })
+    const noBase = diffTask(row, null, null, todoCtx())
+    expect(noBase.outbound).toEqual([])
+    expect(noBase.warnings.map((w) => w.code)).toEqual(['remote_required'])
+    // After the untrash Basecamp has the record active again: in sync, nothing to do.
+    expect(diffTask(row, base, { ...remote, updatedAt: T2 }, todoCtx())).toEqual({ outbound: [], inbound: [], conflicts: [], warnings: [] })
+    // A row the executor had marked as trashed only loses the mark.
+    expect(diffTask({ ...row, deletedRemotely: true }, base, { ...remote, updatedAt: T2 }, todoCtx())).toEqual({
+      outbound: [],
+      inbound: [{ type: 'restore_row', uid: 'uid-todo' }],
+      conflicts: [],
+      warnings: [],
+    })
+    expect(diffTask(subRow, baseFromRemote('uid-sub', remoteSubtask()), remoteSubtask({ updatedAt: T2 }), subtaskCtx()).outbound).toEqual([])
+  })
+
+  it('scenario 3: a row that never reached Basecamp has nothing to trash, so nothing to untrash', () => {
+    const plan = planDeletion([{ task: localTodo(), bcId: null }])
+    expect(plan).toEqual({ ok: true, value: [] })
+  })
+})
+
+// ---------------------------------------------------------------------------
 describe('§16 scenario 8 — editing a free column appended to the description', () => {
   const remote = remoteTodo({ descriptionHtml: HUMAN_NOTES + block('القناة: تويتر') })
   const base = baseFromRemote('uid-todo', remote)
@@ -193,7 +246,8 @@ describe('§16 scenario 10 — deleting a subtask', () => {
   })
 
   it('scenario 10: undo re-creates it as a new subtask, then restores completion', () => {
-    const create = recreateSubtaskFromSnapshot(snapshot, 'uid-sub')
+    const create = recreateSubtaskFromSnapshot(snapshot, { uid: 'uid-sub', position: 2 })
+    expect(undoDeletion({ type: 'delete_subtask', uid: 'uid-sub', subtaskId: SUBTASK_ID, snapshot }, { uid: 'uid-sub', position: 2 })).toEqual(create)
     expect(create).toEqual({
       type: 'create_subtask',
       uid: 'uid-sub',
@@ -244,7 +298,6 @@ describe('§16 scenario 13 — unassigned to-do with subtasks assigned to A, B, 
     const write = only(r.outbound, 'update_todo').write
     expect(write.assigneeIds).toEqual([AHMED, BADR])
     expect(write.notify).toBe(false)
-    expect(r.assignMode).toBeNull()
   })
 
   it('scenario 13: a new to-do is created already assigned, also without notification', () => {
@@ -310,7 +363,7 @@ describe('§16 scenario 15 — manual assignment stops the union; emptying resto
     const remoteD = parentRemote({ assigneeIds: [DANA], updatedAt: T3 })
     const parent = autoParent({ assignMode: 'manual', assignees: [person(DANA)] })
     const r = diffTask(parent, baseFromRemote('uid-todo', remoteD), remoteD, autoCtx(subs([AHMED], [BADR], [JUMANA])))
-    expect(r).toMatchObject({ outbound: [], inbound: [], assignMode: null })
+    expect(r).toMatchObject({ outbound: [], inbound: [] })
   })
 
   it('scenario 15: emptying the cell returns to the union at once', () => {
@@ -345,20 +398,23 @@ describe('§16 scenario 16 — the automatic update comes back as a webhook', ()
     const response = parentRemote({ assigneeIds: [BADR, AHMED], updatedAt: T2 })
     const base: SyncedBase = baseAfterTodoWrite('uid-todo', response, write)
     const r = diffTask(parent, base, { ...response, updatedAt: T3 }, autoCtx(subtasks))
-    expect(r).toEqual({ outbound: [], inbound: [], conflicts: [], assignMode: null, warnings: [] })
+    expect(r).toEqual({ outbound: [], inbound: [], conflicts: [], warnings: [] })
   })
 
   it('scenario 16: an echo that arrives before the base is saved is recognised too', () => {
     const r = diffTask(parent, beforeBase, parentRemote({ assigneeIds: [AHMED, BADR], updatedAt: T2 }), autoCtx(subtasks))
-    expect(r).toEqual({ outbound: [], inbound: [], conflicts: [], assignMode: null, warnings: [] })
+    expect(r).toEqual({ outbound: [], inbound: [], conflicts: [], warnings: [] })
   })
 
   it('scenario 16: a different change made by a person in Basecamp switches to manual, once', () => {
     const base = baseAfterTodoWrite('uid-todo', parentRemote({ assigneeIds: [AHMED, BADR], updatedAt: T2 }), sentWrite())
     const r = diffTask(parent, base, parentRemote({ assigneeIds: [AHMED], updatedAt: T3 }), autoCtx(subtasks))
-    expect(r.assignMode).toBe('manual')
-    expect(r.inbound).toEqual([{ type: 'update_row', uid: 'uid-todo', fields: { assignees: [person(AHMED)] } }])
+    expect(r.inbound).toEqual([{ type: 'update_row', uid: 'uid-todo', fields: { assignees: [person(AHMED)], assignMode: 'manual' } }])
     expect(r.outbound).toEqual([])
+    // Once the row is manual, the same record changes nothing more.
+    const manual = { ...parent, assignees: [person(AHMED)], assignMode: 'manual' as const }
+    const now = parentRemote({ assigneeIds: [AHMED], updatedAt: T3 })
+    expect(diffTask(manual, baseFromRemote('uid-todo', now), now, autoCtx(subtasks))).toEqual({ outbound: [], inbound: [], conflicts: [], warnings: [] })
   })
 })
 
@@ -444,14 +500,14 @@ describe('§16 scenario 24 — the managed block edited by hand in Basecamp', ()
   it('scenario 24: an edited block is rewritten from the platform and logged; the human text is kept', () => {
     const edited = remoteTodo({ descriptionHtml: HUMAN_NOTES + block('مسؤولون خارجيون: شخص آخر'), updatedAt: T2 })
     const r = diffTask(local, base, edited, todoCtx())
-    expect(r.inbound).toEqual([{ type: 'rewrite_managed_block', uid: 'uid-todo' }])
+    expect(r.inbound).toEqual([{ type: 'rewrite_managed_block', uid: 'uid-todo', editedBlockHtml: block('مسؤولون خارجيون: شخص آخر') }])
     expect(only(r.outbound, 'update_todo').write.descriptionHtml).toBe(HUMAN_NOTES + platformBlock)
   })
 
   it('scenario 24: a block deleted in Basecamp is written back', () => {
     const deleted = remoteTodo({ descriptionHtml: HUMAN_NOTES, updatedAt: T2 })
     const r = diffTask(local, base, deleted, todoCtx())
-    expect(r.inbound).toEqual([{ type: 'rewrite_managed_block', uid: 'uid-todo' }])
+    expect(r.inbound).toEqual([{ type: 'rewrite_managed_block', uid: 'uid-todo', editedBlockHtml: '' }])
     expect(only(r.outbound, 'update_todo').write.descriptionHtml).toBe(HUMAN_NOTES + platformBlock)
   })
 
@@ -467,7 +523,7 @@ describe('§16 scenario 24 — the managed block edited by hand in Basecamp', ()
     const r = diffTask(local, base, both, todoCtx())
     expect(r.inbound).toEqual([
       { type: 'update_row', uid: 'uid-todo', fields: { notesHtml: notes } },
-      { type: 'rewrite_managed_block', uid: 'uid-todo' },
+      { type: 'rewrite_managed_block', uid: 'uid-todo', editedBlockHtml: block('عبث') },
     ])
     expect(only(r.outbound, 'update_todo').write.descriptionHtml).toBe(notes + platformBlock)
   })
@@ -477,6 +533,6 @@ describe('§16 scenario 24 — the managed block edited by hand in Basecamp', ()
     const write = only(diffTask(local, base, edited, todoCtx()).outbound, 'update_todo').write
     const response = remoteTodo({ descriptionHtml: write.descriptionHtml.replace('<hr>', '<hr/>'), updatedAt: T3 })
     const r = diffTask(local, baseAfterTodoWrite('uid-todo', response, write), response, todoCtx())
-    expect(r).toEqual({ outbound: [], inbound: [], conflicts: [], assignMode: null, warnings: [] })
+    expect(r).toEqual({ outbound: [], inbound: [], conflicts: [], warnings: [] })
   })
 })

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ERROR_MESSAGES, planDeletion, recreateSubtaskFromSnapshot } from '../src'
+import { ERROR_MESSAGES, planDeletion, recreateSubtaskFromSnapshot, undoDeletion } from '../src'
 import { BADR, remoteSubtask, SUBTASK_ID, TODO_ID } from './fixtures'
 
 const todo = { uid: 'p', level: 0 as const, parentUid: null }
@@ -34,14 +34,40 @@ describe('planDeletion (§9.2.7)', () => {
 })
 
 describe('recreateSubtaskFromSnapshot', () => {
-  it('re-creates a deleted subtask as a new one under the same to-do', () => {
+  it('re-creates a deleted subtask as a new one under the same to-do, at the restored row’s position', () => {
     const snapshot = remoteSubtask({ position: 3, completed: true })
-    expect(recreateSubtaskFromSnapshot(snapshot, 's')).toEqual({
+    expect(recreateSubtaskFromSnapshot(snapshot, { uid: 's', position: 3 })).toEqual({
       type: 'create_subtask',
       uid: 's',
       parentTodoId: TODO_ID,
       create: { title: snapshot.title, dueOn: snapshot.dueOn, assigneeIds: snapshot.assigneeIds },
       position: 3,
     })
+  })
+
+  it('works for a snapshot without a position (single-record GET)', () => {
+    const create = recreateSubtaskFromSnapshot(remoteSubtask({ position: null }), { uid: 's', position: 2 }, TODO_ID + 1)
+    expect(create).toMatchObject({ type: 'create_subtask', parentTodoId: TODO_ID + 1, position: 2 })
+  })
+})
+
+describe('undoDeletion', () => {
+  it('a trashed to-do comes back from the trash, with the same id', () => {
+    expect(undoDeletion({ type: 'trash_todo', uid: 'p', todoId: TODO_ID }, { uid: 'p', position: 1 })).toEqual({
+      type: 'untrash_todo',
+      uid: 'p',
+      todoId: TODO_ID,
+    })
+  })
+
+  it('a permanently deleted subtask is re-created from its snapshot', () => {
+    const snapshot = remoteSubtask({ assigneeIds: [BADR] })
+    expect(undoDeletion({ type: 'delete_subtask', uid: 's', subtaskId: SUBTASK_ID, snapshot }, { uid: 's', position: 2 })).toEqual(
+      recreateSubtaskFromSnapshot(snapshot, { uid: 's', position: 2 }),
+    )
+  })
+
+  it('refuses a row that is not the deleted one', () => {
+    expect(() => undoDeletion({ type: 'trash_todo', uid: 'p', todoId: TODO_ID }, { uid: 'other', position: 1 })).toThrow()
   })
 })

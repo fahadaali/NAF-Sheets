@@ -8,6 +8,13 @@
 // - the human description whitespace-insensitive (normalizeHtml);
 // - the managed block by its visible text (htmlToComparableText);
 // - subtasks carry no start date, notes or block (§8 table).
+// A base also keeps the to-do's list and completion subscribers; they are not
+// part of the hash (a list move is diffed on its own, and subscribers are not
+// synced to the sheet, only preserved by a full PUT).
+//
+// Basecamp's single-record GET carries no position (`position: null`). A
+// position is never compared with an unknown one: an echo check takes the
+// base's, and a base built from such a record keeps the last known position.
 
 import type {
   BcType,
@@ -39,7 +46,8 @@ export interface SyncedFields {
   notesHtml: string | null
   /** Managed block; to-dos only. */
   managedBlockHtml: string | null
-  position: number
+  /** 1-based; `null` when Basecamp did not send it (a record from the single-record GET). */
+  position: number | null
 }
 
 export function sortedUniqueIds(ids: readonly number[]): number[] {
@@ -95,7 +103,7 @@ export function syncedFieldsOfRemote(remote: RemoteTask): SyncedFields {
   }
 }
 
-export function syncedFieldsOfBase(base: SyncedBase): SyncedFields {
+export function syncedFieldsOfBase(base: SyncedBase): SyncedFields & { position: number } {
   return {
     bcType: base.bcType,
     title: base.title,
@@ -109,12 +117,47 @@ export function syncedFieldsOfBase(base: SyncedBase): SyncedFields {
   }
 }
 
-/** The remote state is what the base already holds: our own write coming back, or nothing new. */
+/**
+ * The remote state is what the base already holds: our own write coming back,
+ * or nothing new. A record without a position (single-record GET) is compared
+ * with the base's position, never read as a move.
+ */
 export function isEcho(remote: RemoteTask, base: SyncedBase): boolean {
-  return remote.type === base.bcType && remote.id === base.bcId && hashSyncedFields(syncedFieldsOfRemote(remote)) === base.hash
+  if (remote.type !== base.bcType || remote.id !== base.bcId) return false
+  const fields = syncedFieldsOfRemote(remote)
+  return hashSyncedFields({ ...fields, position: fields.position ?? base.position }) === base.hash
 }
 
-function baseOf(uid: TaskUid, bcId: number, fields: SyncedFields, remoteUpdatedAt: string): SyncedBase {
+/** What a base keeps besides the hashed fields. */
+interface BaseExtras {
+  listId: number | null
+  completionSubscriberIds: readonly number[]
+}
+
+const SUBTASK_EXTRAS: BaseExtras = { listId: null, completionSubscriberIds: [] }
+
+function todoExtras(remote: RemoteTodo): BaseExtras {
+  return { listId: remote.listId, completionSubscriberIds: remote.completionSubscriberIds }
+}
+
+/**
+ * Basecamp's position, or the last one known for the record. Throws when
+ * neither exists: a base must never invent a position (0 is not one).
+ */
+function knownPosition(position: number | null, lastKnown: number | undefined, caller: string): number {
+  if (position !== null) return position
+  if (lastKnown !== undefined) return lastKnown
+  throw new TypeError(`${caller}: the record has no position (single-record GET); pass the last known position`)
+}
+
+function baseOf(
+  uid: TaskUid,
+  bcId: number,
+  fields: SyncedFields & { position: number },
+  extras: BaseExtras,
+  remoteUpdatedAt: string,
+): SyncedBase {
+  const isTodo = fields.bcType === 'todo'
   return {
     uid,
     bcType: fields.bcType,
@@ -122,28 +165,39 @@ function baseOf(uid: TaskUid, bcId: number, fields: SyncedFields, remoteUpdatedA
     title: fields.title,
     bcAssigneeIds: sortedUniqueIds(fields.bcAssigneeIds),
     dueOn: fields.dueOn,
-    startsOn: fields.bcType === 'todo' ? fields.startsOn : null,
+    startsOn: isTodo ? fields.startsOn : null,
     completed: fields.completed,
-    notesHtml: fields.bcType === 'todo' ? fields.notesHtml : null,
-    managedBlockHtml: fields.bcType === 'todo' ? fields.managedBlockHtml : null,
+    notesHtml: isTodo ? fields.notesHtml : null,
+    managedBlockHtml: isTodo ? fields.managedBlockHtml : null,
     position: fields.position,
+    listId: isTodo ? extras.listId : null,
+    completionSubscriberIds: isTodo ? [...extras.completionSubscriberIds] : [],
     remoteUpdatedAt,
     hash: hashSyncedFields(fields),
   }
 }
 
-/** Base after reading a record: the inbound actions for it were applied, or a row was first linked. */
-export function baseFromRemote(uid: TaskUid, remote: RemoteTask): SyncedBase {
-  return baseOf(uid, remote.id, syncedFieldsOfRemote(remote), remote.updatedAt)
+/**
+ * Base after reading a record: the inbound actions for it were applied, or a
+ * row was first linked. `lastKnownPosition` is used only when the record has
+ * no position (single-record GET): pass the previous base's position, or the
+ * row's own when there is no base yet or the record changed list.
+ */
+export function baseFromRemote(uid: TaskUid, remote: RemoteTask, lastKnownPosition?: number): SyncedBase {
+  const fields = syncedFieldsOfRemote(remote)
+  const position = knownPosition(fields.position, lastKnownPosition, 'baseFromRemote')
+  return baseOf(uid, remote.id, { ...fields, position }, remote.type === 'todo' ? todoExtras(remote) : SUBTASK_EXTRAS, remote.updatedAt)
 }
 
 /**
  * Base after `create_todo` / `update_todo` succeeded: the values we sent, with
- * the id, completion, position and `updated_at` of Basecamp's response.
- * Keeping what we sent (not what came back) means a sanitiser that rewrites
- * our markup produces at most one inbound refresh, never a write loop.
+ * the id, completion, list, completion subscribers, position and `updated_at`
+ * of Basecamp's response. Keeping what we sent (not what came back) means a
+ * sanitiser that rewrites our markup produces at most one inbound refresh,
+ * never a write loop. `lastKnownPosition` as in `baseFromRemote`: the previous
+ * base's after an update, the action's position after a create.
  */
-export function baseAfterTodoWrite(uid: TaskUid, response: RemoteTodo, write: TodoWrite): SyncedBase {
+export function baseAfterTodoWrite(uid: TaskUid, response: RemoteTodo, write: TodoWrite, lastKnownPosition?: number): SyncedBase {
   const { human, block } = splitDescription(write.descriptionHtml)
   return baseOf(
     uid,
@@ -157,14 +211,23 @@ export function baseAfterTodoWrite(uid: TaskUid, response: RemoteTodo, write: To
       completed: response.completed,
       notesHtml: emptyToNull(human),
       managedBlockHtml: block,
-      position: response.position,
+      position: knownPosition(response.position, lastKnownPosition, 'baseAfterTodoWrite'),
     },
+    todoExtras(response),
     response.updatedAt,
   )
 }
 
-/** Base after `create_subtask` / `update_subtask` succeeded: sent fields win over the response's. */
-export function baseAfterSubtaskWrite(uid: TaskUid, response: RemoteSubtask, sent: SubtaskCreate | SubtaskPatch): SyncedBase {
+/**
+ * Base after `create_subtask` / `update_subtask` succeeded: sent fields win
+ * over the response's. `lastKnownPosition` as in `baseAfterTodoWrite`.
+ */
+export function baseAfterSubtaskWrite(
+  uid: TaskUid,
+  response: RemoteSubtask,
+  sent: SubtaskCreate | SubtaskPatch,
+  lastKnownPosition?: number,
+): SyncedBase {
   const fields = syncedFieldsOfRemote(response)
   return baseOf(
     uid,
@@ -174,12 +237,24 @@ export function baseAfterSubtaskWrite(uid: TaskUid, response: RemoteSubtask, sen
       title: sent.title ?? fields.title,
       dueOn: sent.dueOn !== undefined ? sent.dueOn : fields.dueOn,
       bcAssigneeIds: sent.assigneeIds ?? fields.bcAssigneeIds,
+      position: knownPosition(fields.position, lastKnownPosition, 'baseAfterSubtaskWrite'),
     },
+    SUBTASK_EXTRAS,
     response.updatedAt,
   )
 }
 
-/** Base after `set_completion` or `reposition` (Basecamp answers 204 with no record). */
-export function baseWith(base: SyncedBase, changes: Partial<Pick<SyncedBase, 'completed' | 'position'>>): SyncedBase {
-  return baseOf(base.uid, base.bcId, { ...syncedFieldsOfBase(base), ...changes }, base.remoteUpdatedAt)
+/**
+ * Base after `set_completion` or `reposition` (Basecamp answers 204 with no
+ * record). A `reposition` that moved the to-do to another list also sets `listId`.
+ */
+export function baseWith(base: SyncedBase, changes: Partial<Pick<SyncedBase, 'completed' | 'position' | 'listId'>>): SyncedBase {
+  const { listId, ...fields } = changes
+  return baseOf(
+    base.uid,
+    base.bcId,
+    { ...syncedFieldsOfBase(base), ...fields },
+    { listId: listId !== undefined ? listId : base.listId, completionSubscriberIds: base.completionSubscriberIds },
+    base.remoteUpdatedAt,
+  )
 }

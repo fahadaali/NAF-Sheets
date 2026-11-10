@@ -86,6 +86,14 @@ export interface LocalTask {
   assignMode: AssignMode
   /** When the platform last changed any synced field of this row. */
   localChangedAt: IsoDateTime | null
+  /**
+   * `tasks.bc_recording_id`: the Basecamp id, saved right after a create
+   * succeeded (§9.1). `null` while the row has never reached Basecamp.
+   * A row with an id is never created again.
+   */
+  bcId: number | null
+  /** The record is archived, trashed or deleted in Basecamp; the row is shown struck through (§9.3.10). */
+  deletedRemotely: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -100,7 +108,8 @@ export interface RemoteTodo {
   /** The to-do list (sheet) it belongs to: `parent.id`. */
   listId: number
   bucketId: number
-  position: number
+  /** 1-based order in its list. `null` when Basecamp did not send it: the single-record GET has none. */
+  position: number | null
   content: string
   /** Full description HTML as Basecamp returns it, managed block included. */
   descriptionHtml: string
@@ -121,7 +130,8 @@ export interface RemoteSubtask {
   id: number
   /** The to-do it belongs to: `parent.id`. */
   todoId: number
-  position: number
+  /** 1-based order within its to-do. `null` when Basecamp did not send it (optional in the official schema). */
+  position: number | null
   title: string
   assigneeIds: number[]
   dueOn: IsoDate | null
@@ -143,7 +153,19 @@ export interface SyncedBase {
   completed: boolean
   notesHtml: string | null
   managedBlockHtml: string | null
+  /**
+   * 1-based position last known in Basecamp. A read without a position
+   * (single-record GET) keeps the one known before; never compared with an
+   * unknown remote position.
+   */
   position: number
+  /** To-do: its list (`parent.id`) at that sync, to tell a sheet move from a Basecamp move (§9.2.6, §9.3.11). `null` for a subtask. */
+  listId: number | null
+  /**
+   * To-do: `completion_subscriber_ids` at that sync, so a full PUT can be
+   * built from this base when the record is not fetched (§9.2.4). `[]` for a subtask.
+   */
+  completionSubscriberIds: number[]
   /** Remote `updated_at` seen at that sync. */
   remoteUpdatedAt: IsoDateTime
   /** Hash of the synced fields as last written/read; echo suppression (§9.1). */
@@ -188,23 +210,45 @@ export type OutboundAction =
   | { type: 'reposition'; uid: TaskUid; bcType: BcType; bcId: number; position: number; listId?: number }
   /** To-dos go to the trash (recoverable). */
   | { type: 'trash_todo'; uid: TaskUid; todoId: number }
+  /**
+   * Undo of `trash_todo`: the same to-do comes back from the trash with its
+   * subtasks; it is never created again (§16 scenario 3).
+   */
+  | { type: 'untrash_todo'; uid: TaskUid; todoId: number }
   /** Subtask deletion is permanent in Basecamp: the full record travels with the action (§9.2.7). */
   | { type: 'delete_subtask'; uid: TaskUid; subtaskId: number; snapshot: RemoteSubtask }
 
 export type InboundAction =
   | { type: 'create_row'; task: LocalTask; remote: RemoteTask }
-  | { type: 'update_row'; uid: TaskUid; fields: Partial<Pick<LocalTask, 'title' | 'assignees' | 'dueOn' | 'startsOn' | 'completed' | 'notesHtml' | 'position'>> }
+  /** `assignMode`: a Basecamp edit switched the to-do to manual assignment (§8.1). */
+  | {
+      type: 'update_row'
+      uid: TaskUid
+      fields: Partial<Pick<LocalTask, 'title' | 'assignees' | 'dueOn' | 'startsOn' | 'completed' | 'notesHtml' | 'position' | 'assignMode'>>
+    }
   /** Shown struck through and grey; removed from the sheet only by a user (§9.3.10). */
   | { type: 'mark_deleted_remotely'; uid: TaskUid; status: Exclude<RecordingStatus, 'active'> | 'deleted' }
   | { type: 'restore_row'; uid: TaskUid }
-  | { type: 'move_row'; uid: TaskUid; toListId: number | null; position: number }
-  /** The managed block was edited in Basecamp: rewrite it from the platform and log it (§8.2). */
-  | { type: 'rewrite_managed_block'; uid: TaskUid }
+  /**
+   * The to-do was moved to another list in Basecamp (§9.3.11). `position: null`:
+   * Basecamp did not say where (single-record GET); place the row at the end
+   * of the target sheet, and reconciliation's list read corrects it.
+   */
+  | { type: 'move_row'; uid: TaskUid; toListId: number | null; position: number | null }
+  /**
+   * The managed block was edited in Basecamp: rewrite it from the platform and
+   * log it (§8.2). `editedBlockHtml` is the block as found in Basecamp, for
+   * `sync_log`; `''` when it was deleted there.
+   */
+  | { type: 'rewrite_managed_block'; uid: TaskUid; editedBlockHtml: string }
 
-/** A field changed on both sides since the last sync (§9.1): last writer wins, and it is logged. */
+/**
+ * A field changed on both sides since the last sync (§9.1): last writer wins, and it is logged.
+ * `position` is the 1-based order; `listId` the to-do list (the sheet's, against Basecamp's).
+ */
 export interface FieldConflict {
   uid: TaskUid
-  field: 'title' | 'assignees' | 'dueOn' | 'startsOn' | 'completed' | 'notesHtml'
+  field: 'title' | 'assignees' | 'dueOn' | 'startsOn' | 'completed' | 'notesHtml' | 'position' | 'listId'
   localValue: unknown
   remoteValue: unknown
   winner: 'local' | 'remote'

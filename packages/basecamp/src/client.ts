@@ -308,6 +308,13 @@ export function createBasecampClient(options: BasecampClientOptions) {
     },
     /** Moves the to-do to the trash, recoverable (todos.md "Trash a to-do" → recordings.md). */
     trash: async (token: string, todoId: number): Promise<void> => recordings.trash(token, todoId),
+    /**
+     * Brings a trashed to-do back, with its subtasks (the `untrash_todo` action,
+     * spec §16 scenario 3): PUT /recordings/{id}/status/active.json → 204.
+     * OPEN: documented as "unarchive"; restoring from the trash with it is
+     * documented only for projects. See OPEN_QUESTIONS.md #10.
+     */
+    untrash: async (token: string, todoId: number): Promise<void> => recordings.restore(token, todoId),
   }
 
   const subtasks = {

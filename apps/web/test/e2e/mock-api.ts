@@ -3,7 +3,7 @@
 
 import type { Page, Route } from 'playwright'
 import { DEFAULT_COLUMNS } from '@naf-sheets/shared'
-import type { ApiError, MeResponse, SaveSnapshotRequest, SheetMeta, WorkbookResponse, WorkbookSummary } from '@naf-sheets/shared'
+import type { ApiError, ApiErrorCode, MeResponse, SaveSnapshotRequest, SheetMeta, WorkbookResponse, WorkbookSummary } from '@naf-sheets/shared'
 
 export interface Recorded {
   method: string
@@ -110,7 +110,8 @@ export class MockApi {
       }
       if (method === 'POST') {
         const req = body as { title?: unknown; source?: unknown }
-        if (typeof req?.title !== 'string' || req.source !== 'blank') return error(400, 'bad_request', 'طلب غير صالح.')
+        if (typeof req?.title !== 'string') return error(400, 'invalid_title', 'طلب غير صالح.')
+        if (req.source !== 'blank') return error(400, 'unsupported_source', 'طلب غير صالح.')
         const id = `wb-new-${++this.created}`
         // A new workbook: no snapshot yet, one sheet (see OPEN_QUESTIONS.md).
         this.add(summary({ id, title: req.title }), null, 1)
@@ -143,7 +144,7 @@ function summaryOf(w: WorkbookResponse): WorkbookSummary {
   return { id, title, bcProjectId, sheetCount, completion, syncState, updatedAt, access }
 }
 
-export function error(status: number, code: string, message: string): Reply {
+export function error(status: number, code: ApiErrorCode, message: string): Reply {
   const body: ApiError = { ok: false, error: code, message }
   return { status, body }
 }

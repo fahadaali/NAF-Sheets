@@ -155,4 +155,12 @@ describe('completion, position, trash', () => {
     ])
     expect(calls.every((c) => c.rawBody === undefined)).toBe(true)
   })
+
+  it('untrashes a to-do (the untrash_todo action) with one call to the active status endpoint', async () => {
+    const { client, calls } = makeClient(reply(204))
+    await expect(client.todos.untrash(TOKEN, 5)).resolves.toBeUndefined()
+    expect(calls.map((c) => [c.method, c.path, c.rawBody])).toEqual([['PUT', '/recordings/5/status/active.json', undefined]])
+    await expect(client.todos.untrash(TOKEN, 0)).rejects.toThrow(TypeError)
+    expect(calls).toHaveLength(1)
+  })
 })

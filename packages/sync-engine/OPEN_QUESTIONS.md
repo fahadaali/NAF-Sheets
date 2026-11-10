@@ -84,9 +84,55 @@ Basecamp account (the phase 0 live test is still blocked on inputs).
 
 ## Shared-type changes this package works around
 
-See the final report of this change; the workarounds are:
-`DiffResult.assignMode` (update_row cannot carry `assignMode`),
-`order_conflict` warnings (`FieldConflict.field` has no `position`),
-`ctx.baseListId` (`SyncedBase` has no list id), `ctx.bcId` and
+**Resolved 2026-11-10** — the owner changed the shared contract
+(`packages/shared/src/domain.ts`) and every workaround below was removed:
+
+- `DiffResult.assignMode` → removed; `update_row.fields` carries `assignMode`.
+- `order_conflict` warnings → removed; `FieldConflict.field` has `position`
+  and `listId`, so order and list conflicts are reported as field conflicts.
+- `ctx.baseListId` → removed; the list at the last sync is `SyncedBase.listId`.
+  Without a base, a list difference is resolved last-writer-wins and reported
+  (before: read as a move made in Basecamp).
+- `ctx.bcId`, `ctx.deletedRemotely` → removed; read from `LocalTask.bcId` and
+  `LocalTask.deletedRemotely`.
+- A fetched record required for every to-do update → no longer; without it the
+  full PUT is built from the base, which now keeps `completionSubscriberIds`
+  (spec §9.2.4). `remote_required` remains only for a row that has a Basecamp
+  id but neither a base nor a fetched record. See #15.
+
+Original text: the workarounds were `DiffResult.assignMode` (update_row cannot
+carry `assignMode`), `order_conflict` warnings (`FieldConflict.field` has no
+`position`), `ctx.baseListId` (`SyncedBase` has no list id), `ctx.bcId` and
 `ctx.deletedRemotely` (`LocalTask` has neither), and a fetched record required
 for every to-do update (`SyncedBase` has no `completionSubscriberIds`).
+
+## Added with the contract change of 2026-11-10
+
+14. **Positions Basecamp does not send.** `RemoteTodo.position` /
+    `RemoteSubtask.position` are `null` when the single-record GET omits them.
+    Implemented: an unknown position is never compared — `isEcho` uses the
+    base's, the diff sends only a local order change and reports no position
+    conflict. A base built from such a record keeps the last known position
+    (`baseFromRemote(…, lastKnownPosition)`, likewise `baseAfter*Write`); the
+    builders throw rather than invent one. A Basecamp list move read without a
+    position is `move_row` with `position: null` (append; reconciliation's list
+    read corrects it), and `move_row.position` became `number | null` for it.
+    A new row from such a record takes `NewRowPlacement.position`.
+    `recreateSubtaskFromSnapshot` now takes the restored row and uses its
+    position, which is also where the row's own diff would create it.
+    (`src/hash.ts`, `src/diff.ts`, `src/deletion.ts`)
+
+15. **A to-do update built from the base** (record not fetched). Spec §9.2.4
+    allows "آخر حالة متزامنة". Every field the platform did not change is sent
+    as it was at the last sync, so a Basecamp change made since then and not
+    yet read (e.g. completion subscribers, or a field changed without a
+    webhook) is overwritten. Webhook and reconciliation paths always fetch;
+    the executor should pass the record whenever it has one. (`src/diff.ts`)
+
+16. **Undo of a deletion** (§16 scenario 3). `undoDeletion` turns an executed
+    `trash_todo` into `untrash_todo` (same record, never re-created) and a
+    `delete_subtask` into a `create_subtask` from its snapshot. Two
+    assumptions: `PUT /recordings/{id}/status/active.json` restores from the
+    trash (basecamp OPEN_QUESTIONS.md #10, live test), and the executor runs
+    the undo before diffing the restored row — a row whose record is still
+    trashed would otherwise be marked deleted in Basecamp. (`src/deletion.ts`)

@@ -74,6 +74,8 @@ export function localTodo(overrides: Partial<LocalTask> = {}): LocalTask {
     attachments: [],
     assignMode: 'manual',
     localChangedAt: T1,
+    bcId: null,
+    deletedRemotely: false,
     ...overrides,
   }
 }
@@ -95,6 +97,8 @@ export function localSubtask(overrides: Partial<LocalTask> = {}): LocalTask {
     attachments: [],
     assignMode: 'auto',
     localChangedAt: T1,
+    bcId: null,
+    deletedRemotely: false,
     ...overrides,
   }
 }
@@ -138,7 +142,7 @@ export function remoteSubtask(overrides: Partial<RemoteSubtask> = {}): RemoteSub
 }
 
 export function todoCtx(overrides: Partial<DiffContext> = {}): DiffContext {
-  return { directory, listId: LIST, baseListId: LIST, ...overrides }
+  return { directory, listId: LIST, ...overrides }
 }
 
 export function subtaskCtx(overrides: Partial<DiffContext> = {}): DiffContext {

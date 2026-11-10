@@ -7,7 +7,6 @@
 
 import type {
   Assignee,
-  AssignMode,
   BcType,
   FieldConflict,
   InboundAction,
@@ -16,6 +15,7 @@ import type {
   LocalTask,
   OutboundAction,
   RemoteTask,
+  RemoteTodo,
   SubtaskPatch,
   SyncedBase,
   TaskUid,
@@ -48,43 +48,30 @@ export interface DiffContext {
   /** Names for the managed block (§8.2). */
   directory: Directory
   /**
-   * `tasks.bc_recording_id`, saved right after a create succeeded (§9.1).
-   * When set, the row is never created again, even without a base.
+   * To-do: the list of the sheet the row is in now (`sheets.bc_todolist_id`).
+   * `null`/absent: local sheet. The list at the last sync is `SyncedBase.listId`.
    */
-  bcId?: number | null
-  /** To-do: the list of the sheet the row is in now (`sheets.bc_todolist_id`). `null`/absent: local sheet. */
   listId?: number | null
-  /**
-   * To-do: the list it was in at the last sync. Tells a sheet move made here
-   * from a list move made in Basecamp. Absent: assumed equal to `listId`, so a
-   * list difference is read as a move made in Basecamp. `null`: unknown, so a
-   * list difference is resolved last-writer-wins.
-   */
-  baseListId?: number | null
   /** Subtask: Basecamp id of the parent to-do, `null` while the parent is not created yet. */
   parentTodoId?: number | null
   /** To-do: its subtasks and the sheet settings, for automatic assignment (§8.1). */
   autoAssign?: { subtasks: readonly LocalTask[]; settings: AutoAssignSettings }
-  /** The row is currently shown as deleted in Basecamp (§9.3.10). */
-  deletedRemotely?: boolean
 }
 
 export interface DiffResult {
   /** In execution order: update, completion, position. */
   outbound: OutboundAction[]
-  /** In application order: restore, move, field updates, block rewrite log. */
+  /**
+   * In application order: restore, move, field updates, block rewrite log.
+   * A switch to manual assignment travels as `update_row.fields.assignMode`.
+   */
   inbound: InboundAction[]
   /**
    * Fields changed on both sides, already resolved (for `sync_log` and the cell alert).
-   * For `assignees`, `localValue` is the row's `Assignee[]` and `remoteValue` Basecamp's ids.
-   * Order conflicts are reported as `order_conflict` warnings (no 'position' field in the type).
+   * For `assignees`, `localValue` is the row's `Assignee[]` and `remoteValue` Basecamp's ids;
+   * for `position`, 1-based positions; for `listId`, the sheet's list and Basecamp's.
    */
   conflicts: FieldConflict[]
-  /**
-   * New assignment mode of the to-do, or `null` when unchanged (§8.1).
-   * Carried here because `update_row` cannot carry `assignMode` (see OPEN_QUESTIONS.md).
-   */
-  assignMode: AssignMode | null
   warnings: EngineWarning[]
 }
 
@@ -113,7 +100,8 @@ interface View {
   startsOn: IsoDate | null
   completed: boolean
   notes: string | null
-  position: number
+  /** `null`: Basecamp did not send it (single-record GET). Never compared. */
+  position: number | null
 }
 
 function viewOf(fields: SyncedFields): View {
@@ -144,18 +132,55 @@ function decide<T>(l: T, b: T | undefined, r: T, hasBase: boolean, eq: (x: T, y:
 }
 
 function emptyResult(): DiffResult {
-  return { outbound: [], inbound: [], conflicts: [], assignMode: null, warnings: [] }
+  return { outbound: [], inbound: [], conflicts: [], warnings: [] }
+}
+
+/** The fields of a to-do a full PUT must carry when they are not changed here (§9.2.4). */
+interface TodoState {
+  content: string
+  /** Human part of the description, as Basecamp holds it. */
+  human: string
+  assigneeIds: readonly number[]
+  completionSubscriberIds: readonly number[]
+  dueOn: IsoDate | null
+  startsOn: IsoDate | null
+}
+
+function todoStateOfRemote(remote: RemoteTodo, human: string): TodoState {
+  return {
+    content: remote.content,
+    human,
+    assigneeIds: remote.assigneeIds,
+    completionSubscriberIds: remote.completionSubscriberIds,
+    dueOn: remote.dueOn,
+    startsOn: remote.startsOn,
+  }
+}
+
+/** The last synced state (§9.2.4: «استخدم آخر حالة متزامنة»), when the record is not fetched. */
+function todoStateOfBase(base: SyncedBase): TodoState {
+  return {
+    content: base.title,
+    human: base.notesHtml ?? '',
+    assigneeIds: base.bcAssigneeIds,
+    completionSubscriberIds: base.completionSubscriberIds,
+    dueOn: base.dueOn,
+    startsOn: base.startsOn,
+  }
 }
 
 /**
  * Diff one task row against its last synced base and the current Basecamp record.
  *
- * - No base, no record, no `ctx.bcId` → create (`create_todo` / `create_subtask`).
+ * - No base, no record, no `local.bcId` → create (`create_todo` / `create_subtask`).
  *   Completion and any later position follow in the next diff, once the id exists.
  * - A record whose hash equals `base.hash` is unchanged since the last sync
  *   (our own write coming back): it produces no inbound action.
- * - To-do updates carry the complete state (`TodoWrite`); subtask updates only
+ * - To-do updates carry the complete state (`TodoWrite`): from the record when
+ *   it was fetched, otherwise from the base (§9.2.4). Subtask updates carry only
  *   the changed fields. Completion goes out as `set_completion`, order as `reposition`.
+ * - A record without a position (single-record GET) says nothing about order:
+ *   only a change made here is sent, and no order conflict can be seen.
  * - Archived, trashed or deleted records only mark the row (it is kept).
  */
 export function diffTask(local: LocalTask, base: SyncedBase | null, remote: RemoteState, ctx: DiffContext): DiffResult {
@@ -168,13 +193,13 @@ export function diffTask(local: LocalTask, base: SyncedBase | null, remote: Remo
 
   // --- Gone or hidden in Basecamp: mark the row, change nothing else (§9.3.10).
   if (remote !== null && remote.type === 'deleted') {
-    if ((base !== null || ctx.bcId != null) && !ctx.deletedRemotely) {
+    if ((base !== null || local.bcId !== null) && !local.deletedRemotely) {
       result.inbound.push({ type: 'mark_deleted_remotely', uid, status: 'deleted' })
     }
     return result
   }
   if (remote !== null && remote.type === 'todo' && remote.status !== 'active') {
-    if (!ctx.deletedRemotely) result.inbound.push({ type: 'mark_deleted_remotely', uid, status: remote.status })
+    if (!local.deletedRemotely) result.inbound.push({ type: 'mark_deleted_remotely', uid, status: remote.status })
     return result
   }
 
@@ -199,8 +224,9 @@ export function diffTask(local: LocalTask, base: SyncedBase | null, remote: Remo
 
   // --- Create.
   if (remote === null && base === null) {
-    if (ctx.bcId != null) {
-      // Created before, but neither the base nor the record is at hand: never create twice.
+    if (local.bcId !== null) {
+      // Created before, but neither the base nor the record is at hand: never create
+      // twice, and nothing is known to build an update from.
       warn('remote_required')
       return result
     }
@@ -241,7 +267,8 @@ export function diffTask(local: LocalTask, base: SyncedBase | null, remote: Remo
 
   // --- Update: at least one of base / remote exists from here on.
   const bcId = base !== null ? base.bcId : (remote as RemoteTask).id
-  const restore: InboundAction[] = remote !== null && ctx.deletedRemotely ? [{ type: 'restore_row', uid }] : []
+  const remoteTodo = remote?.type === 'todo' ? remote : null
+  const restore: InboundAction[] = remote !== null && local.deletedRemotely ? [{ type: 'restore_row', uid }] : []
   const echo = remote !== null && base !== null && isEcho(remote, base)
 
   const L: View = {
@@ -323,13 +350,13 @@ export function diffTask(local: LocalTask, base: SyncedBase | null, remote: Remo
     nextAssignees = mergeRemoteAssignees(switchToManual ? withSource(localAssignees, 'manual') : localAssignees, R.ids, 'manual')
     if (isExternalOnly(nextAssignees)) warn('follower_removed_remotely')
   }
-  if (switchToManual) result.assignMode = 'manual'
   const mergedIds = assigneeW === 'remote' ? R.ids : L.ids
 
   // --- Fields to apply to the sheet.
   const fields: UpdateRowFields = {}
   if (titleW === 'remote') fields.title = R.title
   if (!sameAssigneeList(local.assignees, nextAssignees)) fields.assignees = nextAssignees
+  if (switchToManual) fields.assignMode = 'manual'
   if (dueW === 'remote') fields.dueOn = R.dueOn
   if (startsW === 'remote') fields.startsOn = R.startsOn
   if (completedW === 'remote') fields.completed = R.completed
@@ -349,7 +376,6 @@ export function diffTask(local: LocalTask, base: SyncedBase | null, remote: Remo
     if (assigneeW === 'local') patch.assigneeIds = mergedIds
     if (Object.keys(patch).length > 0) updates.push({ type: 'update_subtask', uid, subtaskId: bcId, patch })
   } else {
-    const remoteTodo = remote?.type === 'todo' ? remote : null
     const remoteSplit = remoteTodo !== null ? splitDescription(remoteTodo.descriptionHtml) : null
     const currentBlock = remoteSplit !== null ? remoteSplit.block : (base?.managedBlockHtml ?? null)
     const expected = managedBlockForTask(
@@ -368,31 +394,36 @@ export function diffTask(local: LocalTask, base: SyncedBase | null, remote: Remo
         !sameManagedBlock(remoteSplit.block, base?.managedBlockHtml ?? null) &&
         !sameManagedBlock(remoteSplit.block, block)
       ) {
-        rewrite.push({ type: 'rewrite_managed_block', uid })
+        rewrite.push({ type: 'rewrite_managed_block', uid, editedBlockHtml: remoteSplit.block ?? '' })
       }
     }
     const blockChanged = !sameManagedBlock(block, currentBlock)
     const contentChanged = [titleW, assigneeW, dueW, startsW, notesW].includes('local') || blockChanged
-    if (contentChanged) {
-      if (remoteTodo === null || remoteSplit === null) {
-        // PUT clears what it does not carry, and the base has no completion subscribers.
-        warn('remote_required')
-      } else {
-        const human = notesW === 'local' ? (local.notesHtml ?? '') : remoteSplit.human
-        const added = mergedIds.filter((id) => !remoteTodo.assigneeIds.includes(id))
-        const write: TodoWrite = {
-          content: titleW === 'local' ? local.title : remoteTodo.content,
-          descriptionHtml: composeDescription(human, block),
-          assigneeIds: [...mergedIds],
-          completionSubscriberIds: [...remoteTodo.completionSubscriberIds],
-          dueOn: dueW === 'local' ? local.dueOn : remoteTodo.dueOn,
-          startsOn: startsW === 'local' ? local.startsOn : remoteTodo.startsOn,
-          // Automatic updates never notify (§8.1); a person's new assignment does.
-          // OPEN: whether notify:true on PUT re-notifies existing assignees.
-          notify: assigneeW === 'local' && !autoMode && added.length > 0,
-        }
-        updates.push({ type: 'update_todo', uid, todoId: bcId, write })
+    // PUT clears what it does not carry (§9.2.4): every field not changed here
+    // comes from the fetched record, or else from the last synced state.
+    // OPEN: from the base, a Basecamp change made since that sync (e.g. to the
+    // completion subscribers) is overwritten (OPEN_QUESTIONS.md #15).
+    const current: TodoState | null =
+      remoteTodo !== null && remoteSplit !== null
+        ? todoStateOfRemote(remoteTodo, remoteSplit.human)
+        : base !== null
+          ? todoStateOfBase(base)
+          : null
+    if (contentChanged && current !== null) {
+      const human = notesW === 'local' ? (local.notesHtml ?? '') : current.human
+      const added = mergedIds.filter((id) => !current.assigneeIds.includes(id))
+      const write: TodoWrite = {
+        content: titleW === 'local' ? local.title : current.content,
+        descriptionHtml: composeDescription(human, block),
+        assigneeIds: [...mergedIds],
+        completionSubscriberIds: [...current.completionSubscriberIds],
+        dueOn: dueW === 'local' ? local.dueOn : current.dueOn,
+        startsOn: startsW === 'local' ? local.startsOn : current.startsOn,
+        // Automatic updates never notify (§8.1); a person's new assignment does.
+        // OPEN: whether notify:true on PUT re-notifies existing assignees.
+        notify: assigneeW === 'local' && !autoMode && added.length > 0,
       }
+      updates.push({ type: 'update_todo', uid, todoId: bcId, write })
     }
   }
 
@@ -404,37 +435,32 @@ export function diffTask(local: LocalTask, base: SyncedBase | null, remote: Remo
   // OPEN: a row moved to a local (unsynced) sheet has no list: list changes are ignored (#10).
   if (bcType === 'todo' && ctx.listId != null) {
     const localList = ctx.listId
-    const baseList = ctx.baseListId !== undefined ? ctx.baseListId : localList
-    const remoteList = remote?.type === 'todo' ? remote.listId : baseList
+    // `null`: not known (no base yet), so a difference is resolved last-writer-wins.
+    const baseList = base !== null ? base.listId : null
+    const remoteList = remoteTodo !== null ? remoteTodo.listId : baseList
     if (remoteList !== null && localList !== remoteList) {
       listMoved = true
-      const localMoved = localList !== baseList
-      const remoteMoved = remoteList !== baseList
-      let w: Winner
-      if (localMoved && !remoteMoved) w = 'local'
-      else if (remoteMoved && !localMoved) w = 'remote'
-      else {
-        w = remote !== null ? lastWriter(local.localChangedAt, remote.updatedAt) : 'local'
-        warn('order_conflict')
-      }
+      const w = field('listId', localList, baseList ?? undefined, remoteList, sameValue, localList, remoteList)
       if (w === 'local') {
         order.push({ type: 'reposition', uid, bcType, bcId, position: local.position, listId: localList })
-      } else {
-        move.push({ type: 'move_row', uid, toListId: remoteList, position: R.position })
+      } else if (w === 'remote' && remoteTodo !== null) {
+        // The record's own position (null from a single-record GET), never the base's.
+        move.push({ type: 'move_row', uid, toListId: remoteList, position: remoteTodo.position })
       }
     }
   }
   if (!listMoved) {
-    const d = decide(L.position, B?.position, R.position, hasBase, sameValue)
+    const remotePosition = R.position
     let w: Winner | null = null
-    if (d === 'local' || d === 'remote') w = d
-    if (d === 'conflict') {
-      // FieldConflict has no 'position' field (see OPEN_QUESTIONS.md): reported as a warning.
-      w = remote !== null ? lastWriter(local.localChangedAt, remote.updatedAt) : 'local'
-      warn('order_conflict')
+    if (remotePosition !== null) {
+      w = field('position', L.position, B?.position, remotePosition, sameValue, local.position, remotePosition)
+    } else if (B !== null && L.position !== B.position) {
+      // Basecamp did not say where the record is (single-record GET): only a
+      // change made here is known, and it is sent (OPEN_QUESTIONS.md #14).
+      w = 'local'
     }
     if (w === 'local') order.push({ type: 'reposition', uid, bcType, bcId, position: local.position })
-    if (w === 'remote') fields.position = R.position
+    if (w === 'remote' && remotePosition !== null) fields.position = remotePosition
   }
 
   if (!holdOutbound) result.outbound.push(...updates, ...completion, ...order)
@@ -449,15 +475,25 @@ export interface NewRowPlacement {
   sheetId: string
   /** Required for a subtask: the uid of the row of its to-do. */
   parentUid: TaskUid | null
+  /**
+   * 1-based position for a record that carries none (single-record GET, e.g.
+   * after a webhook): typically after the last row of its sheet or to-do.
+   * Ignored when the record has a position.
+   */
+  position?: number
 }
 
 /**
- * A record created in Basecamp becomes a new row (§9.3.5, §9.3.8). Any managed
- * block in its description (a copied to-do) is not taken as notes; the next
- * diff rewrites it from the row. A to-do without assignees starts in `auto` mode.
+ * A record created in Basecamp becomes a new row (§9.3.5, §9.3.8), linked to
+ * it (`bcId`). Any managed block in its description (a copied to-do) is not
+ * taken as notes; the next diff rewrites it from the row. A to-do without
+ * assignees starts in `auto` mode. The row goes to the record's position, or
+ * to `placement.position` when Basecamp did not send one.
  */
 export function inboundCreateRow(remote: RemoteTask, placement: NewRowPlacement): InboundAction {
   const assignees: Assignee[] = [...new Set(remote.assigneeIds)].map((id) => ({ kind: 'bc_person', bcPersonId: id, source: 'manual' }))
+  const position = remote.position ?? placement.position
+  if (position === undefined) throw new Error('inboundCreateRow: the record has no position; pass placement.position')
   if (remote.type === 'todo') {
     const { human } = splitDescription(remote.descriptionHtml)
     const task: LocalTask = {
@@ -465,7 +501,7 @@ export function inboundCreateRow(remote: RemoteTask, placement: NewRowPlacement)
       sheetId: placement.sheetId,
       parentUid: null,
       level: 0,
-      position: remote.position,
+      position,
       title: remote.content,
       assignees,
       dueOn: remote.dueOn,
@@ -476,6 +512,8 @@ export function inboundCreateRow(remote: RemoteTask, placement: NewRowPlacement)
       attachments: [],
       assignMode: assignees.length > 0 ? 'manual' : 'auto',
       localChangedAt: null,
+      bcId: remote.id,
+      deletedRemotely: false,
     }
     return { type: 'create_row', task, remote }
   }
@@ -485,7 +523,7 @@ export function inboundCreateRow(remote: RemoteTask, placement: NewRowPlacement)
     sheetId: placement.sheetId,
     parentUid: placement.parentUid,
     level: 1,
-    position: remote.position,
+    position,
     title: remote.title,
     assignees,
     dueOn: remote.dueOn,
@@ -496,6 +534,8 @@ export function inboundCreateRow(remote: RemoteTask, placement: NewRowPlacement)
     attachments: [],
     assignMode: 'auto',
     localChangedAt: null,
+    bcId: remote.id,
+    deletedRemotely: false,
   }
   return { type: 'create_row', task, remote }
 }

@@ -4,6 +4,7 @@ import { Hono } from 'hono'
 import type { Context } from 'hono'
 import type {
   CreateWorkbookResponse,
+  PutWorkbookMembersResponse,
   SaveSnapshotResponse,
   WorkbookListResponse,
   WorkbookMemberRole,
@@ -210,7 +211,7 @@ export function workbookRoutes(options: WorkbookRouteOptions): Hono<AppEnv> {
   })
 
   // PUT /api/workbooks/:id/members — replaces the list; owner or admin only; audited.
-  // OPEN: api.ts gives no response type for PUT; it answers like GET (OPEN_QUESTIONS.md #4).
+  // Answers `PutWorkbookMembersResponse`, the list after the change, like GET.
   // OPEN: an 'editor' seat for a platform viewer is stored but capped to read-only
   // by resolveAccess, and inactive members may be listed (OPEN_QUESTIONS.md #9).
   routes.put('/:id/members', async (c) => {
@@ -265,12 +266,11 @@ export function workbookRoutes(options: WorkbookRouteOptions): Hono<AppEnv> {
     }
 
     const members = await listWorkbookMembers(db, row.id)
-    return c.json<WorkbookMembersResponse>({ ownerId: row.owner_id, members })
+    return c.json<PutWorkbookMembersResponse>({ ownerId: row.owner_id, members })
   })
 
-  // GET /api/workbooks/:id/room — WebSocket to the workbook's room (phase 6 stub).
-  // OPEN: not in packages/shared/src/api.ts yet; the realtime protocol is phase 6
-  // (OPEN_QUESTIONS.md #5).
+  // GET /api/workbooks/:id/room — WebSocket to the workbook's room (phase 6 stub),
+  // documented in packages/shared/src/api.ts; the message protocol is phase 6.
   routes.get('/:id/room', async (c) => {
     const { caller, row, access } = await loadWorkbook(c)
     if ((c.req.header('upgrade') ?? '').toLowerCase() !== 'websocket') throw new ApiFailure(426, 'websocket_required')

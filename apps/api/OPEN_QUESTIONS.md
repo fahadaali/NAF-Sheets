@@ -29,11 +29,17 @@ behaviour chosen in the absence of a rule and need only a confirmation.
 
 4. **`PUT /api/workbooks/:id/members` has no response type.** It answers with
    `WorkbookMembersResponse` (the list after the change), like `GET`.
+   **Resolved 2026-11-10:** the contract has `PutWorkbookMembersResponse`
+   (= `WorkbookMembersResponse`); the route answers with it.
 
 5. **`GET /api/workbooks/:id/room`** (WebSocket upgrade to `WorkbookRoom`) is
    not in the contract. It exists only because the phase 6 stub must accept a
    WebSocket after an authorisation check; the contract should name it when the
    realtime protocol is designed.
+   **Resolved 2026-11-10:** `packages/shared/src/api.ts` documents the route
+   (101 / 404 `not_found` / 426 `websocket_required`); the message protocol is
+   still phase 6. The same change documented `POST /api/workbooks` → 201 and
+   typed `ApiError.error` as `ApiErrorCode`, the codes in `src/errors.ts`.
 
 6. **Completion** counts to-dos (level 0) of synced sheets that are active in
    Basecamp and not trashed — like Basecamp's own list progress. Should

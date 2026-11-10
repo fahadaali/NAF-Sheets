@@ -3,7 +3,7 @@
 
 import type { RemoteSubtask, RemoteTodo } from '@naf-sheets/shared'
 import { describe, expect, it } from 'vitest'
-import { NormaliseError, normaliseSubtask, normaliseTodo, POSITION_UNKNOWN } from '../src/normalise'
+import { NormaliseError, normaliseSubtask, normaliseTodo } from '../src/normalise'
 import { getSubtaskExample, getTodoExample, listSubtasksExample, listTodosExample } from './fixtures/docs-examples'
 import { rawSubtask, rawTodo } from './helpers'
 
@@ -33,13 +33,14 @@ describe('normaliseTodo', () => {
     expect(normaliseTodo(first(listTodosExample))).toEqual(expected)
   })
 
-  it('maps todos.md "Get a to-do" (GET /todos/2.json) example, which has no position', () => {
+  it('maps todos.md "Get a to-do" (GET /todos/2.json) example, which has no position, to position null', () => {
+    expect(getTodoExample).not.toHaveProperty('position')
     expect(normaliseTodo(getTodoExample)).toEqual({
       type: 'todo',
       id: 1069480015,
       listId: 1069480012,
       bucketId: 2085958505,
-      position: POSITION_UNKNOWN,
+      position: null,
       content: 'Clear and simple UI',
       descriptionHtml: '',
       assigneeIds: [1049715930],
@@ -53,7 +54,13 @@ describe('normaliseTodo', () => {
       subtasksCompletedCount: 0,
       creatorId: 1049715938,
     } satisfies RemoteTodo)
-    expect(POSITION_UNKNOWN).toBe(0)
+  })
+
+  it('reads a missing or null position as unknown (null), never as a number', () => {
+    const missing = rawTodo(5)
+    delete missing['position']
+    expect(normaliseTodo(missing).position).toBeNull()
+    expect(normaliseTodo(rawTodo(5, { position: null })).position).toBeNull()
   })
 
   it('maps dates, several people, subtask counters and trashed status', () => {
@@ -155,6 +162,14 @@ describe('normaliseSubtask', () => {
       completed: false,
       updatedAt: '2026-07-02T02:18:00.000Z',
     } satisfies RemoteSubtask)
+  })
+
+  it('reads a missing or null subtask position as unknown (null)', () => {
+    const missing = rawSubtask(3)
+    delete missing['position']
+    expect(normaliseSubtask(missing).position).toBeNull()
+    expect(normaliseSubtask(rawSubtask(3, { position: null })).position).toBeNull()
+    expect(() => normaliseSubtask(rawSubtask(3, { position: 0 }))).toThrow(/position/)
   })
 
   it('maps a due date and completion', () => {

@@ -15,6 +15,12 @@ does the narrowest safe thing and the question stays here until someone decides.
    never real, but the sync engine must treat 0 as "unknown" and never diff it.
    Cleaner: make the shared field `number | null`. (`src/normalise.ts`)
 
+   **Resolved 2026-11-10:** the shared fields are now `number | null`. The
+   normalisers return `null` when `position` is missing or null (0 and other
+   non-positive values are still rejected); `POSITION_UNKNOWN` is no longer
+   exported. The sync engine treats `null` as unknown and never compares it
+   with a stored position (sync-engine OPEN_QUESTIONS.md #14).
+
 2. **Retrying a create after a 5xx can duplicate it.**
    The spec says to retry 5xx with backoff, and the client does, for every
    method. A 500 that arrives after Basecamp committed a `POST` (to-do, subtask,
@@ -74,6 +80,9 @@ does the narrowest safe thing and the question stays here until someone decides.
     `PUT /recordings/{id}/status/active.json` is documented as "Unarchive a
     recording". That it also restores from the trash is documented only for
     projects. `recordings.restore` uses it for both. (`src/client.ts`)
+    Since 2026-11-10 `todos.untrash` (the engine's `untrash_todo`, undo of a
+    deleted row, spec §16 scenario 3) is the same single call, so scenario 3
+    depends on this answer too.
 
 11. **429 on `PUT /projects/{id}/people/client_users.json`.**
     The docs use 429 for "the new addresses would exceed the user limit",

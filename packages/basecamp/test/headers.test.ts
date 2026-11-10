@@ -82,6 +82,7 @@ describe('mandatory headers', () => {
     await client.todos.uncomplete(TOKEN, 1)
     await client.todos.reposition(TOKEN, 1, 1)
     await client.todos.trash(TOKEN, 1)
+    await client.todos.untrash(TOKEN, 1)
     await client.recordings.archive(TOKEN, 1)
     await client.recordings.restore(TOKEN, 1)
     await client.subtasks.list(TOKEN, 1).all()
@@ -107,7 +108,7 @@ describe('mandatory headers', () => {
     await client.comments.create(TOKEN, 1, '<div>hi</div>')
     await client.attachments.upload(TOKEN, { name: 'a.txt', contentType: 'text/plain', data: new Uint8Array([1]) })
     await client.http.get(TOKEN, '/projects/1.json')
-    expect(calls).toHaveLength(40)
+    expect(calls).toHaveLength(41)
     for (const call of calls) {
       expect(call.url.startsWith(`${BASE}/`), call.url).toBe(true)
       expect(call.headers['User-Agent'], call.path).toBe('NAF Comms (info@naflaw.sa)')
