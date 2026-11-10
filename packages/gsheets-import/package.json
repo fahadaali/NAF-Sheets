@@ -3,9 +3,28 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "exports": { ".": "./src/index.ts" },
+  "exports": {
+    ".": "./src/index.ts"
+  },
   "scripts": {
     "test": "vitest run --passWithNoTests",
-    "typecheck": "tsc --noEmit -p ."
+    "typecheck": "tsc --noEmit -p .",
+    "generate:functions": "node scripts/generate-univer-functions.mjs"
+  },
+  "dependencies": {
+    "@naf-sheets/shared": "0.0.0",
+    "@univerjs/core": "1.4.0"
+  },
+  "devDependencies": {
+    "@univerjs/engine-formula": "1.4.0",
+    "@univerjs/sheets": "1.4.0",
+    "@univerjs/sheets-formula": "1.4.0",
+    "@univerjs/sheets-conditional-formatting": "1.4.0",
+    "@univerjs/sheets-data-validation": "1.4.0",
+    "@univerjs/sheets-filter": "1.4.0",
+    "@univerjs/sheets-note": "1.4.0",
+    "@univerjs/sheets-hyper-link": "1.4.0",
+    "@univerjs/sheets-numfmt": "1.4.0",
+    "rxjs": "7.8.2"
   }
 }
