@@ -100,6 +100,13 @@ export interface RoomHello {
   /** Stable for one editor session (survives reconnects); a random id. */
   clientId: string
   seq: number | null
+  /**
+   * First join only: the committed version the editor already shows (from
+   * GET /api/workbooks/:id). When the room holds exactly that version and
+   * nothing more, it answers with an empty catch-up instead of the snapshot,
+   * so the editor does not reload what it already has.
+   */
+  version?: number | null
 }
 
 export interface RoomOpMessage {
@@ -111,6 +118,14 @@ export interface RoomOpMessage {
   /** The epoch of the client's current state (see `RoomResync`). */
   epoch: number
   mutations: RoomMutation[]
+  /**
+   * Synced task rows this person removed AND confirmed in the deletion dialog
+   * (spec §9.2.7), sent on the op that removes them. The room logs them with
+   * the op and its author; after the commit, only these rows may be deleted
+   * in Basecamp, with this person's token. A synced row missing from the
+   * workbook and not confirmed never touches Basecamp.
+   */
+  confirmedDeletions?: string[]
 }
 
 /** The cell this client has selected (null: none / another sheet). */
@@ -437,6 +452,9 @@ export function isStructuralOp(mutations: readonly { id: string }[]): boolean {
 
 /** Room limits a client must respect. */
 export const ROOM_LIMITS = {
+  /** Confirmed deletions on one op, and characters of each uid. */
+  maxConfirmedDeletions: 10_000,
+  maxUidChars: 128,
   /** Mutations in one op. */
   maxMutationsPerOp: 500,
   /** Characters of one client message, after reassembly. */

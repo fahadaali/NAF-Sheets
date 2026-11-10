@@ -53,6 +53,8 @@ const shot = (page: Page, name: string) => page.screenshot({ path: join(SHOTS, `
 
 async function waitForEditor(page: Page): Promise<void> {
   await page.locator('[data-testid="univer-host"][data-engine="ready"]').waitFor({ timeout: 60_000 })
+  // The realtime room has answered (the mock API has none: the editor falls back to PUT).
+  await page.locator('[data-screen="editor"]:not([data-collab="connecting"])').waitFor({ timeout: 30_000 })
 }
 
 const GRID = { rowHeaderWidth: 46, columnHeaderHeight: 20, columnWidth: 88, rowHeight: 24 }

@@ -116,6 +116,21 @@
   /* Start padding of a subtask's title (sheet-model `subtaskIndent`). */
   --subtask-indent: 16;
   --avatar-size: 1.5rem;
+
+  /*
+   * Realtime collaboration (spec §11): one colour per connected person, used
+   * for their avatar and the frame around their cell in the grid (read with
+   * getComputedStyle, like the synced-sheet values above).
+   */
+  --presence-1: #1a73e8;
+  --presence-2: #c5221f;
+  --presence-3: #137333;
+  --presence-4: #b05a00;
+  --presence-5: #8430ce;
+  --presence-6: #007b83;
+  --presence-contrast: #ffffff;
+  --presence-line-width: 2;
+  --presence-lock-alpha: 0.12;
   --chip-height: 1.5rem;
   --picker-list-height: 18rem;
   --tooltip-max-width: 20rem;

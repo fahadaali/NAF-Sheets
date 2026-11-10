@@ -10,6 +10,7 @@ import type { RoomClientState, RoomEditorAdapter, RoomSocketLike } from '../../s
 import { createUniverRoomAdapter } from '../../src/collab/univer-adapter'
 import type { CollabCommandService } from '../../src/collab/univer-adapter'
 import { PRESENCE_COLOURS, cellMarks, initials, presenceColour } from '../../src/collab/presence'
+import { CollabSession } from '../../src/collab/session'
 
 class FakeSocket implements RoomSocketLike {
   sent: RoomClientMessage[] = []
@@ -76,8 +77,10 @@ const welcome = (over: Partial<Record<string, unknown>> = {}): RoomServerMessage
   ({ type: 'welcome', protocol: 1, connectionId: 'me', userId: 'u1', readOnly: false, epoch: 1, seq: 4, version: 2, peers: [], locks: [], mode: 'snapshot', snapshot: { id: 'wb' }, ...over }) as RoomServerMessage
 
 const clients: RoomClient[] = []
+const sessions: CollabSession[] = []
 afterEach(() => {
   for (const c of clients.splice(0)) c.stop()
+  for (const s of sessions.splice(0)) s.stop()
 })
 
 function setup(options: { delays?: number[] } = {}) {
@@ -253,6 +256,117 @@ describe('RoomClient', () => {
     expect(socket().sent.slice(-2).map((m) => m.type)).toEqual(['lock', 'unlock'])
     socket().deliver({ type: 'locks', locks: [] })
     await wait(() => !client.isLockedByOthers(cell))
+  })
+})
+
+describe('RoomClient: first join and confirmed deletions', () => {
+  it('sends the version it shows on the first join only', async () => {
+    const sockets: FakeSocket[] = []
+    const editor = new FakeEditor()
+    const client = new RoomClient({
+      adapter: editor,
+      clientId: 'client-test-2',
+      initialVersion: 7,
+      reconnectDelaysMs: [5],
+      connect: async () => {
+        const s = new FakeSocket()
+        sockets.push(s)
+        return s
+      },
+    })
+    clients.push(client)
+    client.start()
+    await wait(() => sockets[0]?.sent.length === 1)
+    expect(sockets[0]!.sent[0]).toEqual({ type: 'hello', protocol: 1, clientId: 'client-test-2', seq: null, version: 7 })
+    sockets[0]!.deliver(welcome({ mode: 'catchup', snapshot: undefined, ops: [] }))
+    await wait(() => client.state().status === 'live')
+    // An empty catch-up: nothing reloaded.
+    expect(editor.loads).toEqual([])
+    sockets[0]!.drop()
+    await wait(() => sockets.length === 2 && sockets[1]!.sent.length === 1)
+    expect(sockets[1]!.sent[0]).toEqual({ type: 'hello', protocol: 1, clientId: 'client-test-2', seq: 4 })
+  })
+
+  it('confirmed deletions travel on the next op only, and are dropped with a rejected op', async () => {
+    const { client, editor, socket } = setup()
+    await wait(() => socket()?.sent.length > 0)
+    socket().deliver(welcome())
+    await wait(() => client.state().status === 'live')
+    client.confirmDeletions(['u-7', 'u-8'])
+    editor.edit(7)
+    editor.edit(8)
+    const [first, second] = socket().ofType('op')
+    expect(first?.confirmedDeletions).toEqual(['u-7', 'u-8'])
+    expect(second?.confirmedDeletions).toBeUndefined()
+    client.confirmDeletions(['u-9'])
+    socket().deliver({ type: 'reject', opId: second!.opId, reason: 'conflict', message: 'x' })
+    socket().deliver({ type: 'resync', epoch: 2, seq: 9, version: 3, snapshot: { id: 'wb' }, reason: 'rejected' })
+    await wait(() => client.state().status === 'live')
+    editor.edit(9)
+    expect(socket().ofType('op').at(-1)?.confirmedDeletions).toBeUndefined()
+  })
+})
+
+describe('CollabSession', () => {
+  function session(connect: () => Promise<RoomSocketLike>, joinTimeoutMs = 2_000) {
+    const reloads: Array<Record<string, unknown>> = []
+    const s = new CollabSession({ workbookId: 'wb', version: 4, connect, reload: (snapshot) => reloads.push(snapshot), joinTimeoutMs })
+    sessions.push(s)
+    return { s, reloads }
+  }
+
+  it('falls back (unavailable, editable, not shared) when the first connection fails', async () => {
+    const { s } = session(async () => {
+      throw new Error('no room')
+    })
+    s.start()
+    await wait(() => s.view().mode === 'unavailable')
+    expect(s.allowsEdits()).toBe(true)
+    expect(s.shared).toBe(false)
+  })
+
+  it('falls back when no welcome comes in time', async () => {
+    const { s } = session(async () => new FakeSocket(), 30)
+    s.start()
+    await wait(() => s.view().mode === 'unavailable')
+  })
+
+  it('once live, a drop means offline and read-only, never the fallback; a snapshot welcome remounts through attach', async () => {
+    const sockets: FakeSocket[] = []
+    const { s, reloads } = session(async () => {
+      const socket = new FakeSocket()
+      sockets.push(socket)
+      return socket
+    })
+    s.start()
+    await wait(() => sockets[0]?.sent.length === 1)
+    sockets[0]!.deliver(welcome({ snapshot: { id: 'wb', v: 2 } }))
+    await wait(() => reloads.length === 1)
+    expect(s.view().mode).toBe('resyncing')
+    // The new editor instance is ready.
+    const u = { listeners: 0 }
+    s.attach({ collab: { commands: { onMutationExecutedForCollab: () => ((u.listeners += 1), { dispose: () => undefined }), syncExecuteCommand: () => true }, clearUndo: () => undefined } })
+    await wait(() => s.view().mode === 'live')
+    expect(s.allowsEdits()).toBe(true)
+    expect(u.listeners).toBeGreaterThan(0)
+    sockets[0]!.drop()
+    await wait(() => s.view().mode === 'offline')
+    expect(s.allowsEdits()).toBe(false)
+    expect(s.shared).toBe(true)
+  })
+
+  it('a viewer is live but never editable', async () => {
+    const sockets: FakeSocket[] = []
+    const { s } = session(async () => {
+      const socket = new FakeSocket()
+      sockets.push(socket)
+      return socket
+    })
+    s.start()
+    await wait(() => sockets[0]?.sent.length === 1)
+    sockets[0]!.deliver(welcome({ readOnly: true, mode: 'catchup', snapshot: undefined, ops: [] }))
+    await wait(() => s.view().mode === 'live')
+    expect(s.allowsEdits()).toBe(false)
   })
 })
 

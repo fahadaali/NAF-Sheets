@@ -46,6 +46,7 @@ import { STRUCTURAL, classifyOp, footprintTouchesCell, footprintsConflict } from
 import type { Footprint } from './room/footprint'
 import { ERROR_MESSAGES, LOCK_DENIED_MESSAGE, LOCK_FORBIDDEN_MESSAGE, REJECT_MESSAGES } from './room/messages'
 import { outboundDetection } from './room/outbound-seam'
+import type { RoomEdit } from './room/outbound-seam'
 import { commitOnTop, currentVersion, readSnapshotText } from './room/persist'
 import { cellMutations, cellSpans, cellsMatch, planServerChange } from './room/server-change'
 import { directUpdate } from './room/direct-write'
@@ -74,6 +75,7 @@ export function roomRequest(original: Request, identity: { workbookId: string; u
 
 /** True while editors are connected to the workbook's room (for routes that must not write behind its back). */
 export async function roomSessionActive(env: Env, workbookId: string): Promise<boolean> {
+  if (!env.WORKBOOK_ROOM) return false
   return env.WORKBOOK_ROOM.get(env.WORKBOOK_ROOM.idFromName(workbookId)).isLive()
 }
 
@@ -174,7 +176,8 @@ export function parseClientMessage(text: string): RoomClientMessage | null {
     case 'hello':
       if (typeof v.protocol !== 'number' || typeof v.clientId !== 'string' || !CLIENT_ID.test(v.clientId)) return null
       if (v.seq !== null && !isCount(v.seq)) return null
-      return { type: 'hello', protocol: v.protocol, clientId: v.clientId, seq: v.seq as number | null }
+      if (v.version !== undefined && v.version !== null && !isCount(v.version)) return null
+      return { type: 'hello', protocol: v.protocol, clientId: v.clientId, seq: v.seq as number | null, version: (v.version as number | null | undefined) ?? null }
     case 'op': {
       if (typeof v.opId !== 'string' || v.opId === '' || v.opId.length > 100 || !isCount(v.baseSeq) || !isCount(v.epoch)) return null
       if (!Array.isArray(v.mutations) || v.mutations.length === 0 || v.mutations.length > ROOM_LIMITS.maxMutationsPerOp) return null
@@ -183,7 +186,14 @@ export function parseClientMessage(text: string): RoomClientMessage | null {
         if (!isObject(m) || typeof m.id !== 'string' || m.id.length > 200 || !isObject(m.params)) return null
         mutations.push({ id: m.id, params: m.params })
       }
-      return { type: 'op', opId: v.opId, baseSeq: v.baseSeq, epoch: v.epoch, mutations }
+      const op: RoomOpMessage = { type: 'op', opId: v.opId, baseSeq: v.baseSeq, epoch: v.epoch, mutations }
+      if (v.confirmedDeletions !== undefined) {
+        const list = v.confirmedDeletions
+        if (!Array.isArray(list) || list.length > ROOM_LIMITS.maxConfirmedDeletions) return null
+        if (!list.every((u): u is string => typeof u === 'string' && u !== '' && u.length <= ROOM_LIMITS.maxUidChars)) return null
+        op.confirmedDeletions = [...new Set(list)]
+      }
+      return op
     }
     case 'presence': {
       if (v.cell === null) return { type: 'presence', cell: null }
@@ -411,7 +421,9 @@ export class WorkbookRoom extends DurableObject<Env> {
       peers: this.peers(),
       locks: this.locks(),
     }
-    const catchup = this.catchup(live, hello.seq)
+    // A first join that already shows the room's exact state needs nothing.
+    const upToDate = hello.seq === null && hello.version === live.version && live.seq === live.persistedSeq
+    const catchup = upToDate ? [] : this.catchup(live, hello.seq)
     if (catchup) this.send(ws, { ...base, mode: 'catchup', ops: catchup })
     else this.send(ws, { ...base, mode: 'snapshot', snapshot: live.engine.snapshot() })
     // Everyone else learns about the newcomer (its welcome already lists them all).
@@ -479,6 +491,7 @@ export class WorkbookRoom extends DurableObject<Env> {
       mutations: msg.mutations,
       footprint,
       version: null,
+      confirmedDeletions: msg.confirmedDeletions ?? null,
     }
     this.record(live, entry)
     // OPEN: a room commit names the author of its last op (apps/api/OPEN_QUESTIONS.md R13).
@@ -562,7 +575,7 @@ export class WorkbookRoom extends DurableObject<Env> {
       live = { workbookId, engine, seq, version: d1, persistedSeq: seq, recent: [], lastAuthor: 'system', dirtySince: null }
       if (known) {
         // Clients that knew the old state must reload.
-        this.record(live, { seq: seq + 1, kind: 'reset', clientId: null, userId: 'system', opId: null, origin: 'server', mutations: [], footprint: STRUCTURAL, version: d1 })
+        this.record(live, { seq: seq + 1, kind: 'reset', clientId: null, userId: 'system', opId: null, origin: 'server', mutations: [], footprint: STRUCTURAL, version: d1, confirmedDeletions: null })
         live.persistedSeq = live.seq
       }
     } else {
@@ -591,7 +604,7 @@ export class WorkbookRoom extends DurableObject<Env> {
       if (applied.failedAt >= 0) {
         // Kept in the log for investigation; clients resync on the reset.
         this.store.event('replay_failed', { seq: entry.seq, mutation: entry.mutations[applied.failedAt]?.id ?? null })
-        this.record(live, { seq: live.seq + 1, kind: 'reset', clientId: null, userId: 'system', opId: null, origin: 'server', mutations: [], footprint: STRUCTURAL, version: live.version })
+        this.record(live, { seq: live.seq + 1, kind: 'reset', clientId: null, userId: 'system', opId: null, origin: 'server', mutations: [], footprint: STRUCTURAL, version: live.version, confirmedDeletions: null })
         return
       }
     }
@@ -650,7 +663,8 @@ export class WorkbookRoom extends DurableObject<Env> {
     if (!live || live.seq === live.persistedSeq) return 'done'
     await live.engine.settle(1_000)
     const seqAt = live.seq
-    const body = JSON.stringify(live.engine.snapshot())
+    const snapshot = live.engine.snapshot()
+    const body = JSON.stringify(snapshot)
     const commit = await commitOnTop(this.env, live.workbookId, body, live.lastAuthor, DEFAULT_SNAPSHOT_ORPHAN_AGE_MS)
     if (commit.status === 'gone') {
       this.store.event('commit_gone', { seq: seqAt })
@@ -658,7 +672,7 @@ export class WorkbookRoom extends DurableObject<Env> {
     }
     if (commit.status === 'busy') return 'busy'
     const fromSeq = this.committed(live, commit.base, commit.version, seqAt)
-    await this.afterCommit(live, commit.base, commit.version, fromSeq, seqAt)
+    await this.afterCommit(live, commit.base, commit.version, fromSeq, seqAt, snapshot)
     return 'done'
   }
 
@@ -680,15 +694,24 @@ export class WorkbookRoom extends DurableObject<Env> {
     return fromSeq
   }
 
-  private async afterCommit(live: Live, previousVersion: number, version: number, fromSeq: number, toSeq: number): Promise<void> {
-    const edits = this.store
-      .range(fromSeq, toSeq)
-      .filter((e) => e.kind === 'op')
-      .map((e) => ({ seq: e.seq, origin: e.origin, userId: e.userId, footprint: e.footprint }))
+  private async afterCommit(
+    live: Live,
+    previousVersion: number,
+    version: number,
+    fromSeq: number,
+    toSeq: number,
+    snapshot: Record<string, unknown>,
+  ): Promise<void> {
+    // Resets (a server change that replaced the state) are passed as structural server edits.
+    const edits: RoomEdit[] = this.store.range(fromSeq, toSeq).map((e) => {
+      const edit: RoomEdit = { seq: e.seq, origin: e.origin, userId: e.userId, footprint: e.footprint }
+      if (e.confirmedDeletions) edit.confirmedDeletions = e.confirmedDeletions
+      return edit
+    })
     try {
-      // WAVE3-SEAM: outbound detection — installed by sync/outbound through
-      // room/outbound-seam.ts `setOutboundDetection`; a no-op until then.
-      await outboundDetection()(this.env, { workbookId: live.workbookId, version, previousVersion, edits })
+      // WAVE3-SEAM: outbound detection — installed by the Worker entry
+      // (src/index.ts → src/sync/room-commit.ts) through room/outbound-seam.ts.
+      await outboundDetection()(this.env, { workbookId: live.workbookId, version, previousVersion, edits, snapshot })
     } catch (error) {
       console.error('[room] outbound detection failed', error instanceof Error ? error.message : 'unknown')
     }
@@ -743,7 +766,7 @@ export class WorkbookRoom extends DurableObject<Env> {
       live.version = commit.version
       await this.applyServerSnapshot(live, before, after, request.savedBy, commit.version)
       const fromSeq = this.committed(live, commit.base, commit.version, live.seq, roomVersion)
-      await this.afterCommit(live, commit.base, commit.version, fromSeq, live.seq)
+      await this.afterCommit(live, commit.base, commit.version, fromSeq, live.seq, after)
       return { status: 'written', version: commit.version }
     }
     return { status: 'contended' }
@@ -767,6 +790,7 @@ export class WorkbookRoom extends DurableObject<Env> {
           mutations,
           footprint: { structural: false, cells: cellSpans(plan.cells), rows: [], columns: [], keys: [] },
           version: null,
+          confirmedDeletions: null,
         }
         this.record(live, entry)
         this.broadcast({ type: 'op', op: toRoomOp(entry) })
@@ -779,7 +803,7 @@ export class WorkbookRoom extends DurableObject<Env> {
     live.engine.dispose()
     live.engine = await this.load(after, live.workbookId)
     await live.engine.settle(5_000)
-    this.record(live, { seq: live.seq + 1, kind: 'reset', clientId: null, userId: savedBy, opId: null, origin: 'server', mutations: [], footprint: STRUCTURAL, version })
+    this.record(live, { seq: live.seq + 1, kind: 'reset', clientId: null, userId: savedBy, opId: null, origin: 'server', mutations: [], footprint: STRUCTURAL, version, confirmedDeletions: null })
     for (const ws of this.joinedSockets()) this.resync(ws, live, 'server_change')
   }
 

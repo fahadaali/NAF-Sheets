@@ -71,6 +71,12 @@ export interface RoomClientOptions {
   adapter: RoomEditorAdapter
   /** Stable for this editor session; default random. */
   clientId?: string
+  /**
+   * The committed version the editor already shows (GET /api/workbooks/:id).
+   * Sent on the first join: a room holding exactly that version answers with
+   * nothing to load, so the editor is not reloaded.
+   */
+  initialVersion?: number
   onState?(state: RoomClientState): void
   /** Arabic message for the user (an op refused, edits dropped, the room unavailable). */
   onNotice?(message: string, kind: 'rejected' | 'dropped' | 'failed' | 'lock_denied'): void
@@ -99,6 +105,7 @@ interface Pending {
   opId: string
   baseSeq: number
   mutations: RoomMutation[]
+  confirmedDeletions?: string[]
 }
 
 const FATAL_CLOSE: ReadonlySet<number> = new Set([ROOM_CLOSE.protocolMismatch, ROOM_CLOSE.unavailable, ROOM_CLOSE.badMessage, ROOM_CLOSE.refused])
@@ -144,6 +151,8 @@ export class RoomClient {
   /** Messages are handled one at a time: a resync may await the editor. */
   private inbox: Promise<void> = Promise.resolve()
   private opCounter = 0
+  /** Deletions confirmed in the dialog, sent on the next op (the one that removes the rows). */
+  private confirmations: string[] = []
 
   constructor(options: RoomClientOptions) {
     this.options = options
@@ -211,6 +220,16 @@ export class RoomClient {
     if (this.status === 'live') this.send({ type: 'unlock' })
   }
 
+  /**
+   * The person confirmed the deletion of these synced rows (spec §9.2.7). They
+   * travel on the next local op — the removal the dialog lets through — and
+   * nowhere else; a resync drops them with the op.
+   * OPEN: apps/api/OPEN_QUESTIONS.md R19.
+   */
+  confirmDeletions(uids: readonly string[]): void {
+    for (const uid of uids) if (!this.confirmations.includes(uid)) this.confirmations.push(uid)
+  }
+
   // ── Connection ────────────────────────────────────────────────────────────
 
   private async open(): Promise<void> {
@@ -257,7 +276,9 @@ export class RoomClient {
       this.retry()
     })
     this.pingTimer = setInterval(() => this.sendRaw('{"type":"ping"}'), this.options.pingMs ?? ROOM_CLIENT_DEFAULTS.pingMs)
-    this.send({ type: 'hello', protocol: ROOM_PROTOCOL_VERSION, clientId: this.clientId, seq: this.seq })
+    const hello: Record<string, unknown> = { type: 'hello', protocol: ROOM_PROTOCOL_VERSION, clientId: this.clientId, seq: this.seq }
+    if (this.seq === null && this.options.initialVersion !== undefined) hello.version = this.options.initialVersion
+    this.send(hello)
   }
 
   private retry(): void {
@@ -333,6 +354,7 @@ export class RoomClient {
         if (msg.reason === 'stale_epoch') return
         this.options.onNotice?.(msg.message, 'rejected')
         this.pending = []
+        this.confirmations = []
         this.setStatus('resyncing')
         return
       case 'resync':
@@ -386,6 +408,10 @@ export class RoomClient {
     }
     for (let i = 0; i < mutations.length; i += ROOM_LIMITS.maxMutationsPerOp) {
       const op: Pending = { opId: `${this.clientId}-${++this.opCounter}`, baseSeq: this.seq, mutations: mutations.slice(i, i + ROOM_LIMITS.maxMutationsPerOp) }
+      if (this.confirmations.length > 0) {
+        op.confirmedDeletions = this.confirmations
+        this.confirmations = []
+      }
       this.pending.push(op)
       this.sendOp(op)
     }
@@ -393,7 +419,9 @@ export class RoomClient {
   }
 
   private sendOp(op: Pending): void {
-    this.send({ type: 'op', opId: op.opId, baseSeq: op.baseSeq, epoch: this.epoch, mutations: op.mutations })
+    const msg: Record<string, unknown> = { type: 'op', opId: op.opId, baseSeq: op.baseSeq, epoch: this.epoch, mutations: op.mutations }
+    if (op.confirmedDeletions) msg.confirmedDeletions = op.confirmedDeletions
+    this.send(msg)
   }
 
   private send(msg: Record<string, unknown>): void {

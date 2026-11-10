@@ -31,12 +31,32 @@ import type { AttentionRow, PanelConflict } from './sync-ui'
 import { mountWorkbook } from './univer-host'
 import type { MountedWorkbook, RtlState } from './univer-host'
 import { resolveWorkbookData } from './workbook-data'
+import { installCollabGrid } from '../collab/grid'
+import { PresenceBar } from '../collab/PresenceBar'
+import { CollabSession } from '../collab/session'
+import type { CollabNoticeKind, CollabView } from '../collab/session'
+import { collabText } from '../collab/strings'
 
 type Load = { kind: 'loading' } | { kind: 'error'; message: string } | { kind: 'ready'; data: WorkbookResponse }
+
+/** A message from the realtime room for the person (Arabic). */
+export interface RoomNotice {
+  id: number
+  message: string
+  kind: CollabNoticeKind | 'locked'
+}
+
+const CONNECTING_VIEW: CollabView = { mode: 'connecting', readOnly: false, pending: 0, peers: [], locks: [] }
 
 export default function EditorScreen({ id, target }: { id: string; target?: EditorTarget | undefined }) {
   const [attempt, setAttempt] = useState(0)
   const [load, setLoad] = useState<Load>({ kind: 'loading' })
+  // What the editor mounts: the loaded workbook, then the room's snapshot after a resync.
+  // `base`: the load it belongs to, so a reload never mounts the previous load's data.
+  const [mount, setMount] = useState<{ key: number; base: WorkbookResponse; data: WorkbookResponse } | null>(null)
+  const [session, setSession] = useState<CollabSession | null>(null)
+  const [collab, setCollab] = useState<CollabView>(CONNECTING_VIEW)
+  const [roomNotice, setRoomNotice] = useState<RoomNotice | null>(null)
 
   useEffect(() => {
     const controller = new AbortController()
@@ -50,15 +70,54 @@ export default function EditorScreen({ id, target }: { id: string; target?: Edit
     return () => controller.abort()
   }, [id, attempt])
 
+  // The realtime session (spec §11): one per loaded workbook; it survives the
+  // remounts a resync causes, which replace the mounted workbook with the room's.
+  // OPEN: a resync remounts the whole editor (apps/web/OPEN_QUESTIONS.md #52).
+  useEffect(() => {
+    if (load.kind !== 'ready') return
+    const data = load.data
+    setMount({ key: 0, base: data, data })
+    let notices = 0
+    const s = new CollabSession({
+      workbookId: data.workbook.id,
+      version: data.version,
+      reload: (snapshot) => setMount((m) => ({ key: (m?.key ?? 0) + 1, base: data, data: { ...data, snapshot } })),
+      onNotice: (message, kind) => setRoomNotice({ id: ++notices, message, kind }),
+    })
+    setCollab(s.view())
+    const unsubscribe = s.subscribe(setCollab)
+    setSession(s)
+    s.start()
+    return () => {
+      unsubscribe()
+      s.stop()
+      setSession(null)
+      setCollab(CONNECTING_VIEW)
+      setRoomNotice(null)
+    }
+  }, [load])
+
   useDocumentTitle(load.kind === 'ready' ? load.data.workbook.title : null)
   const reload = () => setAttempt((n) => n + 1)
 
-  if (load.kind === 'ready') return <WorkbookEditor key={attempt} data={load.data} target={target} onReload={reload} />
+  if (load.kind === 'ready' && mount && mount.base === load.data)
+    return (
+      <WorkbookEditor
+        key={`${attempt}-${mount.key}`}
+        data={mount.data}
+        target={target}
+        onReload={reload}
+        session={session}
+        collab={collab}
+        roomNotice={roomNotice}
+        onRoomNotice={setRoomNotice}
+      />
+    )
 
   return (
     <div className="editor" data-screen="editor">
       <EditorBar title={null} />
-      {load.kind === 'loading' ? (
+      {load.kind !== 'error' ? (
         <div className="panel panel--plain editor-message" role="status">
           <LoaderCircle className="panel__icon spin" aria-hidden="true" />
           <p>{t.editor.loading}</p>
@@ -118,7 +177,18 @@ const TOOLTIP_GRACE_MS = 350
 
 type Removal = { request: RemovalRequest; resolve: (confirmed: boolean) => void }
 
-function WorkbookEditor({ data, target, onReload }: { data: WorkbookResponse; target?: EditorTarget | undefined; onReload: () => void }) {
+interface WorkbookEditorProps {
+  data: WorkbookResponse
+  target?: EditorTarget | undefined
+  onReload: () => void
+  /** Null until the session started (first render). */
+  session: CollabSession | null
+  collab: CollabView
+  roomNotice: RoomNotice | null
+  onRoomNotice: (notice: RoomNotice | null) => void
+}
+
+function WorkbookEditor({ data, target, onReload, session, collab, roomNotice, onRoomNotice }: WorkbookEditorProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const autosaveRef = useRef<Autosave | null>(null)
   const mountedRef = useRef<MountedWorkbook | null>(null)
@@ -126,6 +196,12 @@ function WorkbookEditor({ data, target, onReload }: { data: WorkbookResponse; ta
   const pollerRef = useRef<Poller | null>(null)
   const deletionsRef = useRef(new PendingDeletions())
   const editableRef = useRef(false)
+  const sessionRef = useRef<CollabSession | null>(session)
+  sessionRef.current = session
+  // Edits are shared through the room unless it could not be joined (then saved with PUT).
+  const sharedRef = useRef(true)
+  sharedRef.current = collab.mode !== 'unavailable'
+  const lockedNotices = useRef(0)
   const theme = useMemo(() => readGridTheme(), [])
   const resolved = useMemo(() => {
     const r = resolveWorkbookData(data)
@@ -165,7 +241,9 @@ function WorkbookEditor({ data, target, onReload }: { data: WorkbookResponse; ta
   const needsLink = canEdit && synced.size > 0
   const basecamp = useBasecampLink(needsLink)
   const syncedLocked = needsLink && !isLinkActive(basecamp.load)
-  const editable = canEdit && save.phase !== 'conflict' && !(syncedLocked && activeSheet !== null && synced.has(activeSheet))
+  // The room: only while joined (not a viewer, not offline or resyncing), or in the fallback.
+  const roomAllows = (collab.mode === 'live' && !collab.readOnly) || collab.mode === 'unavailable'
+  const editable = canEdit && roomAllows && save.phase !== 'conflict' && !(syncedLocked && activeSheet !== null && synced.has(activeSheet))
   editableRef.current = editable
 
   const refuse = (message: string) => {
@@ -230,7 +308,12 @@ function WorkbookEditor({ data, target, onReload }: { data: WorkbookResponse; ta
                   setRowHover(null)
                   setRemoval({ request, resolve })
                 }),
-              onDeletionsConfirmed: (uids) => deletionsRef.current.add(uids),
+              // §9.2.7: on the op that removes the rows (the room), or with the next PUT (fallback).
+              onDeletionsConfirmed: (uids) => {
+                const live = sessionRef.current
+                if (live && sharedRef.current) live.confirmDeletions(uids)
+                else deletionsRef.current.add(uids)
+              },
               openAssignees: (t) => {
                 if (cancelled) return
                 setRowHover(null)
@@ -282,7 +365,10 @@ function WorkbookEditor({ data, target, onReload }: { data: WorkbookResponse; ta
           })
           autosave = saver
           autosaveRef.current = saver
-          workbook.onChange(() => saver.markChanged())
+          // In a room session the room saves; PUT only when it could not be joined.
+          workbook.onChange(() => {
+            if (!sharedRef.current) saver.markChanged()
+          })
         }
         setEngine('ready')
       },
@@ -306,7 +392,22 @@ function WorkbookEditor({ data, target, onReload }: { data: WorkbookResponse; ta
     // Mounted once per WorkbookEditor; a reload remounts it with a new key.
   }, [])
 
-  // One place decides whether the grid takes edits: role, conflict, synced-sheet lock.
+  // The realtime session reads local edits from this editor and applies remote
+  // ones to it; frames, presence and soft locks live in the grid.
+  useEffect(() => {
+    const mounted = mountedRef.current
+    if (engine !== 'ready' || !mounted || !session) return
+    session.attach(mounted)
+    const removeGrid = installCollabGrid(mounted, session, {
+      onLocked: (message) => onRoomNotice({ id: -++lockedNotices.current, message, kind: 'locked' }),
+    })
+    return () => {
+      removeGrid()
+      session.detach(mounted)
+    }
+  }, [engine, session])
+
+  // One place decides whether the grid takes edits: role, room, conflict, synced-sheet lock.
   useEffect(() => {
     if (engine === 'ready') mountedRef.current?.setEditable(editable)
     layerRef.current && setActive(layerRef.current.activeTask())
@@ -409,12 +510,15 @@ function WorkbookEditor({ data, target, onReload }: { data: WorkbookResponse; ta
   // asks only when a save failed (otherwise leaving saves it).
   useEffect(() => {
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
-      if (!autosaveRef.current?.hasUnsavedChanges) return
+      const roomPending = sharedRef.current && (sessionRef.current?.view().pending ?? 0) > 0
+      if (!autosaveRef.current?.hasUnsavedChanges && !roomPending) return
       e.preventDefault()
       e.returnValue = ''
     }
     window.addEventListener('beforeunload', onBeforeUnload)
     setLeaveGuard(() => {
+      // Room edits not yet acknowledged would be lost with the connection.
+      if (sharedRef.current && (sessionRef.current?.view().pending ?? 0) > 0) return window.confirm(t.editor.leaveUnsaved)
       const saver = autosaveRef.current
       if (!saver?.hasUnsavedChanges) return true
       const { phase } = saver.status
@@ -451,7 +555,17 @@ function WorkbookEditor({ data, target, onReload }: { data: WorkbookResponse; ta
   }, [panelOpen, syncInfo, conflicts, data.sheets])
 
   return (
-    <div className="editor" data-screen="editor" data-workbook-id={workbook.id} data-save-phase={save.phase} data-save-version={save.version}>
+    <div
+      className="editor"
+      data-screen="editor"
+      data-workbook-id={workbook.id}
+      data-save-phase={save.phase}
+      data-save-version={save.version}
+      data-collab={collab.mode}
+      data-room-pending={collab.pending}
+      data-room-peers={collab.peers.map((p) => p.userId).join(' ')}
+      data-room-locks={JSON.stringify(collab.locks.map((l) => ({ userId: l.userId, ...l.cell })))}
+    >
       <EditorBar title={workbook.title}>
         {!canEdit ? (
           <span className="badge badge--neutral">
@@ -460,7 +574,8 @@ function WorkbookEditor({ data, target, onReload }: { data: WorkbookResponse; ta
           </span>
         ) : null}
         <div className="editor-bar__end">
-          {canEdit && resolved.ok ? <SaveIndicator status={save} /> : null}
+          {resolved.ok ? <PresenceBar view={collab} /> : null}
+          {canEdit && resolved.ok && collab.mode === 'unavailable' ? <SaveIndicator status={save} /> : null}
           <SyncBadge state={syncInfo?.state ?? workbook.syncState} />
           <button
             type="button"
@@ -499,6 +614,49 @@ function WorkbookEditor({ data, target, onReload }: { data: WorkbookResponse; ta
       ) : null}
 
       <div className="editor-notices">
+        {collab.mode === 'offline' ? (
+          <Notice tone="warning" title={collabText.offlineTitle} testId="room-offline">
+            <p>{collabText.offline}</p>
+          </Notice>
+        ) : null}
+        {collab.mode === 'resyncing' ? (
+          <Notice tone="info" testId="room-resyncing">
+            <p>{collabText.resyncing}</p>
+          </Notice>
+        ) : null}
+        {collab.mode === 'failed' ? (
+          <Notice
+            tone="danger"
+            title={collabText.failedTitle}
+            testId="room-failed"
+            actions={
+              <button type="button" className="button button--small" onClick={() => window.location.reload()}>
+                {collabText.reloadPage}
+              </button>
+            }
+          >
+            <p>{roomNotice?.kind === 'failed' ? roomNotice.message : collabText.offline}</p>
+          </Notice>
+        ) : null}
+        {collab.mode === 'unavailable' && canEdit ? (
+          <Notice tone="info" testId="room-unavailable">
+            <p>{collabText.unavailable}</p>
+          </Notice>
+        ) : null}
+        {roomNotice && roomNotice.kind !== 'failed' ? (
+          <Notice
+            tone={roomNotice.kind === 'locked' || roomNotice.kind === 'lock_denied' ? 'info' : 'warning'}
+            title={collabText.noticeTitle}
+            testId="room-notice"
+            actions={
+              <button type="button" className="button button--small" onClick={() => onRoomNotice(null)}>
+                {collabText.dismiss}
+              </button>
+            }
+          >
+            <p>{roomNotice.message}</p>
+          </Notice>
+        ) : null}
         {needsLink ? (
           <BasecampLinkBanner load={basecamp.load} onRetry={basecamp.reload} showErrors testId="editor-basecamp-link">
             <p>{t.editor.syncedLocked}</p>

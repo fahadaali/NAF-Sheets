@@ -1,6 +1,6 @@
 // D1 queries for workbooks (schema: migrations/0001_initial.sql).
 
-import type { SheetMeta, SheetSyncMode, SyncState, WorkbookMember, WorkbookMemberRole, WorkbookSource, WorkbookSummary } from '@naf-sheets/shared'
+import type { ColumnPlan, MappedField, SheetMeta, SheetSyncMode, SyncState, WorkbookMember, WorkbookMemberRole, WorkbookSource, WorkbookSummary } from '@naf-sheets/shared'
 import type { WorkbookAccess } from './access'
 
 /** One workbook as the summary queries return it, for one caller. */
@@ -112,22 +112,63 @@ interface SheetRow {
 }
 
 export async function listSheets(db: D1Database, workbookId: string): Promise<SheetMeta[]> {
-  const { results } = await db
-    .prepare(
-      `SELECT id, univer_sheet_id, title, position, sync_mode, bc_todolist_id, header_row
-       FROM sheets WHERE workbook_id = ?1 ORDER BY position, id`,
+  const [{ results }, { results: mappings }] = await db.batch([
+    db
+      .prepare(
+        `SELECT id, univer_sheet_id, title, position, sync_mode, bc_todolist_id, header_row
+         FROM sheets WHERE workbook_id = ?1 ORDER BY position, id`,
+      )
+      .bind(workbookId),
+    db
+      .prepare(
+        `SELECT m.sheet_id, m.column_key, m.field, m.free_to_description, m.completed_value, m.completed_values_json
+         FROM column_mappings m JOIN sheets s ON s.id = m.sheet_id
+         WHERE s.workbook_id = ?1 ORDER BY m.sheet_id, length(m.column_key), m.column_key`,
+      )
+      .bind(workbookId),
+  ]) as [D1Result<SheetRow>, D1Result<MappingRow>]
+  const bySheet = new Map<string, MappingRow[]>()
+  for (const m of mappings) bySheet.set(m.sheet_id, [...(bySheet.get(m.sheet_id) ?? []), m])
+  return results.map((s) => {
+    const rows = bySheet.get(s.id) ?? []
+    const columns: ColumnPlan[] = rows.map((m) =>
+      m.field === 'free' ? { columnKey: m.column_key, field: 'free', appendToDescription: m.free_to_description === 1 } : { columnKey: m.column_key, field: m.field },
     )
-    .bind(workbookId)
-    .all<SheetRow>()
-  return results.map((s) => ({
-    id: s.id,
-    univerSheetId: s.univer_sheet_id,
-    title: s.title,
-    position: s.position,
-    syncMode: s.sync_mode,
-    bcTodolistId: s.bc_todolist_id,
-    headerRow: s.header_row,
-  }))
+    return {
+      id: s.id,
+      univerSheetId: s.univer_sheet_id,
+      title: s.title,
+      position: s.position,
+      syncMode: s.sync_mode,
+      bcTodolistId: s.bc_todolist_id,
+      headerRow: s.header_row,
+      columns,
+      completedValues: completedValuesOf(rows.find((m) => m.field === 'completed')),
+    }
+  })
+}
+
+/** A sheet's column mapping row (D1 `column_mappings`, migrations 0001 and 0003). */
+interface MappingRow {
+  sheet_id: string
+  column_key: string
+  field: MappedField
+  free_to_description: number
+  completed_value: string | null
+  completed_values_json: string | null
+}
+
+function completedValuesOf(row: MappingRow | undefined): string[] {
+  if (!row) return []
+  if (row.completed_values_json) {
+    try {
+      const values = JSON.parse(row.completed_values_json) as unknown
+      if (Array.isArray(values)) return values.filter((v): v is string => typeof v === 'string')
+    } catch {
+      // Malformed JSON: fall back to the single value.
+    }
+  }
+  return row.completed_value !== null ? [row.completed_value] : []
 }
 
 interface MemberRow {

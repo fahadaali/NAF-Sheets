@@ -22,7 +22,8 @@ import { UniverSheetsNotePreset } from '@univerjs/preset-sheets-note'
 import SheetsNoteArSA from '@univerjs/preset-sheets-note/locales/ar-SA'
 import { createUniver, LocaleType, mergeLocales } from '@univerjs/presets'
 import type { FUniver, IWorkbookData } from '@univerjs/presets'
-import { CommandType } from '@univerjs/core'
+import { CommandType, ICommandService, IUndoRedoService } from '@univerjs/core'
+import type { CollabCommandService } from '../collab/univer-adapter'
 import { enableRtlGrid } from '@naf-sheets/univer-rtl'
 import type { EditorTarget } from '../lib/cell-target'
 import { rangeToA1 } from '../lib/cell-target'
@@ -51,6 +52,8 @@ export interface MountedWorkbook {
   readonly unitId: string
   /** The public Facade of this workbook, for the synced-sheet layer (src/editor/sync-layer.ts). */
   readonly facade: { univerAPI: FUniver; workbook: FWorkbook }
+  /** Univer's command and undo services, for the room adapter (src/collab/univer-adapter.ts). */
+  readonly collab: { commands: CollabCommandService; clearUndo(): void }
   /** Current `IWorkbookData` (a copy). */
   snapshot(): unknown
   setEditable(editable: boolean): void
@@ -234,6 +237,12 @@ export async function mountWorkbook(host: HTMLElement, data: Partial<IWorkbookDa
     return {
       unitId,
       facade: { univerAPI, workbook },
+      collab: {
+        commands: univer.__getInjector().get(ICommandService) as unknown as CollabCommandService,
+        clearUndo: () => {
+          if (!disposed) univer.__getInjector().get(IUndoRedoService).clearUndoRedo(unitId)
+        },
+      },
       snapshot: () => workbook.save(),
       setEditable: (editable) => {
         if (!disposed) workbook.setEditable(editable)

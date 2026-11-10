@@ -1,7 +1,7 @@
 // An in-memory stand-in for the API contract (packages/shared/src/api.ts),
 // installed on a page through route interception. Each test builds its own.
 
-import type { Page, Route } from 'playwright'
+import type { Page, Route, WebSocketRoute } from 'playwright'
 import { DEFAULT_COLUMNS } from '@naf-sheets/shared'
 import type {
   ApiError,
@@ -141,11 +141,23 @@ export class MockApi {
     return this.requests.filter((r) => r.method === method && r.path === path).length
   }
 
+  /**
+   * The workbook room (GET /api/workbooks/:id/room, a WebSocket). Default: no
+   * room — the socket closes at once, as when the room cannot be reached, and
+   * the editor falls back to saving with PUT …/snapshot. A collaboration test
+   * sets its own handler.
+   */
+  room: ((ws: WebSocketRoute) => void) | null = null
+
   async install(page: Page): Promise<void> {
     await page.route(
       (url) => url.pathname.startsWith('/api/'),
       (route) => this.handle(route),
     )
+    await page.routeWebSocket(/\/api\/workbooks\/[^/]+\/room$/, (ws) => {
+      if (this.room) this.room(ws)
+      else void ws.close({ code: 1011, reason: 'no room in the mock API' })
+    })
   }
 
   private async handle(route: Route): Promise<void> {

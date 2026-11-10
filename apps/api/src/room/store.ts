@@ -31,6 +31,8 @@ export interface LogEntry {
   footprint: Footprint
   /** For 'reset': the committed version loaded. */
   version: number | null
+  /** Synced rows the op's author confirmed for deletion (spec §9.2.7), or null. */
+  confirmedDeletions: string[] | null
 }
 
 interface OpRow extends Record<string, SqlStorageValue> {
@@ -43,6 +45,7 @@ interface OpRow extends Record<string, SqlStorageValue> {
   mutations: string
   footprint: string
   version: number | null
+  confirmed: string | null
 }
 
 function toEntry(row: OpRow): LogEntry {
@@ -56,6 +59,7 @@ function toEntry(row: OpRow): LogEntry {
     mutations: JSON.parse(row.mutations) as RoomMutation[],
     footprint: JSON.parse(row.footprint) as Footprint,
     version: row.version,
+    confirmedDeletions: row.confirmed ? (JSON.parse(row.confirmed) as string[]) : null,
   }
 }
 
@@ -73,9 +77,13 @@ export class RoomStore {
          mutations TEXT NOT NULL,
          footprint TEXT NOT NULL,
          version INTEGER,
-         applied_at INTEGER NOT NULL
+         applied_at INTEGER NOT NULL,
+         confirmed TEXT
        )`,
     )
+    // Rooms created before confirmed deletions were logged (no row is rewritten).
+    const columns = sql.exec<{ name: string }>(`PRAGMA table_info(room_ops)`).toArray().map((c) => c.name)
+    if (!columns.includes('confirmed')) sql.exec(`ALTER TABLE room_ops ADD COLUMN confirmed TEXT`)
     sql.exec(`CREATE TABLE IF NOT EXISTS room_events (at INTEGER NOT NULL, kind TEXT NOT NULL, detail TEXT NOT NULL)`)
   }
 
@@ -90,8 +98,8 @@ export class RoomStore {
 
   append(entry: LogEntry): void {
     this.sql.exec(
-      `INSERT INTO room_ops (seq, kind, client_id, user_id, op_id, origin, mutations, footprint, version, applied_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO room_ops (seq, kind, client_id, user_id, op_id, origin, mutations, footprint, version, applied_at, confirmed)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       entry.seq,
       entry.kind,
       entry.clientId,
@@ -102,6 +110,7 @@ export class RoomStore {
       JSON.stringify(entry.footprint),
       entry.version,
       Date.now(),
+      entry.confirmedDeletions && entry.confirmedDeletions.length > 0 ? JSON.stringify(entry.confirmedDeletions) : null,
     )
   }
 

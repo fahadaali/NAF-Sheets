@@ -6,7 +6,9 @@ import type { QueueMessageBody } from './background'
 import { registerBasecampLinkRoutes } from './basecamp-link'
 import type { Env } from './env'
 import { registerGoogleImportRoutes } from './google-import'
+import { setOutboundDetection } from './room/outbound-seam'
 import { registerSyncRoutes } from './sync/outbound'
+import { detectAfterRoomCommit } from './sync/room-commit'
 
 const app = createApp()
 // Registered here, after createApp's auth guard, and not inside createApp:
@@ -15,6 +17,9 @@ const app = createApp()
 registerBasecampLinkRoutes(app)
 registerGoogleImportRoutes(app)
 registerSyncRoutes(app)
+// After each room commit, changed task rows go to Basecamp with the token of
+// the person who changed them (spec §3, §9.2; src/sync/room-commit.ts).
+setOutboundDetection(detectAfterRoomCommit)
 
 export default {
   fetch: (request, env, ctx) => app.fetch(request, env, ctx),

@@ -53,6 +53,8 @@ const host = (page: Page) => page.getByTestId('univer-host')
 
 async function waitForEditor(page: Page): Promise<void> {
   await page.locator('[data-testid="univer-host"][data-engine="ready"]').waitFor({ timeout: 60_000 })
+  // The realtime room has answered (the mock API has none: the editor falls back to PUT).
+  await page.locator('[data-screen="editor"]:not([data-collab="connecting"])').waitFor({ timeout: 30_000 })
 }
 
 // Univer 1.4.0 defaults (core DEFAULT_WORKSHEET_*): the test snapshots set no sizes.

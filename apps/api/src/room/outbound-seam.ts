@@ -14,6 +14,8 @@ export interface RoomEdit {
   userId: string
   /** What the op touched (cells, rows, columns, sheet/plugin keys; `structural` for row/column/sheet changes). */
   footprint: Footprint
+  /** Synced rows `userId` confirmed for deletion on this op (spec §9.2.7); absent when none. */
+  confirmedDeletions?: string[]
 }
 
 export interface RoomCommitted {
@@ -24,6 +26,8 @@ export interface RoomCommitted {
   previousVersion: number
   /** Edits included for the first time in `version`, in room order. */
   edits: RoomEdit[]
+  /** The snapshot just committed as `version` (what detection reads; not to be changed). */
+  snapshot: Record<string, unknown>
 }
 
 export type OutboundDetection = (env: Env, event: RoomCommitted) => Promise<void>

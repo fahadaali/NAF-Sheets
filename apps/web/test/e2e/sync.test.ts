@@ -140,6 +140,8 @@ async function openEditor(api: MockApi, viewport = { width: 1280, height: 800 })
   await api.install(page)
   await page.goto(`${BASE_URL}/workbooks/${WB}`)
   await page.locator('[data-testid="univer-host"][data-engine="ready"]').waitFor({ timeout: 60_000 })
+  // The realtime room has answered (the mock API has none: the editor falls back to PUT).
+  await page.locator('[data-screen="editor"]:not([data-collab="connecting"])').waitFor({ timeout: 30_000 })
   await expect.poll(() => page.getByTestId('univer-host').getAttribute('data-rtl-mirrored'), { timeout: 15_000 }).toBe('true')
   return { context, page }
 }

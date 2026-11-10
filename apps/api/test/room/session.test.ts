@@ -8,7 +8,7 @@ import { ROOM_CLOSE } from '@naf-sheets/shared'
 import type { RoomOp } from '@naf-sheets/shared'
 import { readSnapshot } from '../../src/snapshot'
 import { updateLatestSnapshot } from '../../src/sync/workbook-writer'
-import { setOutboundDetection } from '../../src/room/outbound-seam'
+import { outboundDetection, setOutboundDetection } from '../../src/room/outbound-seam'
 import type { RoomCommitted } from '../../src/room/outbound-seam'
 import type { WorkbookRoom } from '../../src/room'
 import { addMember, call, createWorkbook, isArabic, json, seedMember, testApp } from '../helpers'
@@ -75,6 +75,22 @@ describe('joining', () => {
     expect(presence.peers.find((p) => p.userId === viewer.id)).toMatchObject({ readOnly: true, cell: null })
     a.socket.close()
     v.socket.close()
+  })
+
+  it('a first join that already shows the room’s exact version gets an empty catch-up; otherwise the snapshot', async () => {
+    const { owner, editor, id, sheet } = await setup()
+    const a = await openRoom(owner, id)
+    a.send({ type: 'hello', protocol: 1, clientId: clientId(), seq: null, version: 1 })
+    const first = await a.take('welcome')
+    expect(first).toMatchObject({ mode: 'catchup', ops: [], seq: 0, version: 1 })
+    // An older version, or a room holding unsaved ops, needs the snapshot.
+    a.send({ type: 'op', opId: opId(), baseSeq: 0, epoch: 1, mutations: [setValue(id, sheet, 1, 0, { v: 'غير محفوظ' })] })
+    await a.take('ack')
+    const b = await openRoom(editor, id)
+    b.send({ type: 'hello', protocol: 1, clientId: clientId(), seq: null, version: 1 })
+    expect((await b.take('welcome')).mode).toBe('snapshot')
+    a.close()
+    b.close()
   })
 
   it('closes a connection that speaks another protocol version, with an Arabic reason', async () => {
@@ -386,18 +402,40 @@ describe('persistence', () => {
     fresh.socket.close()
   })
 
-  it('a stale browser save never overwrites the room: it is refused after a commit, superseded before one', async () => {
+  it('a browser save while the room is live is refused with 409 room_active (R7), and is accepted again once everyone left', async () => {
     const { owner, id, sheet } = await setup()
     const loaded = await readSnapshot(env, id, 1)
     const a = await joined(owner, id)
     a.socket.send({ type: 'op', opId: opId(), baseSeq: 0, epoch: 1, mutations: [setValue(id, sheet, 1, 0, { v: 'من الغرفة' })] })
     await a.socket.take('ack')
 
-    // Before the room commits, a tab that is not in the room saves version 2.
     const put = await call(app, 'PUT', `/api/workbooks/${id}/snapshot`, { user: owner, body: { baseVersion: 1, snapshot: loaded } })
-    expect(put.status).toBe(200)
+    expect(put.status).toBe(409)
+    const body = await json<{ error: string; message: string }>(put)
+    expect(body.error).toBe('room_active')
+    expect(isArabic(body.message)).toBe(true)
+    expect(await version(id)).toBe(1)
+
+    // The last editor leaving commits (version 2); a save on that version is then accepted.
+    a.socket.close()
+    const deadline = Date.now() + 5_000
+    while ((await version(id)) === 1 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 50))
+    expect(await version(id)).toBe(2)
+    const after = await call(app, 'PUT', `/api/workbooks/${id}/snapshot`, { user: owner, body: { baseVersion: 2, snapshot: await readSnapshot(env, id, 2) } })
+    expect(after.status).toBe(200)
+  })
+
+  it('a version committed outside the room while it holds unsaved ops is superseded, never overwritten', async () => {
+    const { owner, id, sheet } = await setup()
+    const loaded = await readSnapshot(env, id, 1)
+    const a = await joined(owner, id)
+    a.socket.send({ type: 'op', opId: opId(), baseSeq: 0, epoch: 1, mutations: [setValue(id, sheet, 1, 0, { v: 'من الغرفة' })] })
+    await a.socket.take('ack')
+    // A save that passed the live check just before the session started commits version 2.
+    await env.SNAPSHOTS.put(`workbooks/${id}/snapshots/2.json`, JSON.stringify(loaded), { customMetadata: { workbookId: id, version: '2', savedBy: owner.id } })
+    await env.DB.prepare('UPDATE workbooks SET current_snapshot_version = 2 WHERE id = ?1 AND current_snapshot_version = 1').bind(id).run()
     await flush(id)
-    // The room committed on top (3); the browser's version 2 stays in R2 untouched.
+    // The room committed on top (3); version 2 stays in R2 untouched.
     expect(await version(id)).toBe(3)
     expect(cell(await readSnapshot(env, id, 3), sheet, 1, 0)?.v).toBe('من الغرفة')
     expect(cell(await readSnapshot(env, id, 2), sheet, 1, 0)).toBeUndefined()
@@ -405,10 +443,6 @@ describe('persistence', () => {
       (instance as unknown as { store: { events(): Array<{ kind: string }> } }).store.events().map((e) => e.kind),
     )
     expect(events).toContain('superseded')
-
-    // After a commit, the same stale tab is refused (409) as before phase 6.
-    const again = await call(app, 'PUT', `/api/workbooks/${id}/snapshot`, { user: owner, body: { baseVersion: 2, snapshot: loaded } })
-    expect(again.status).toBe(409)
     a.socket.close()
   })
 
@@ -435,6 +469,7 @@ describe('persistence', () => {
   it('calls the outbound seam after a commit with the edits it included and who made them', async () => {
     const { owner, editor, id, sheet } = await setup()
     const seen: RoomCommitted[] = []
+    const installed = outboundDetection()
     setOutboundDetection(async (_env, event) => {
       if (event.workbookId === id) seen.push(event)
     })
@@ -456,7 +491,7 @@ describe('persistence', () => {
       a.socket.close()
       b.socket.close()
     } finally {
-      setOutboundDetection(null)
+      setOutboundDetection(installed)
     }
   })
 })

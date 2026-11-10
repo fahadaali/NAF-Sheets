@@ -52,7 +52,13 @@ const MUTATION = 2
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
 
-export function createUniverRoomAdapter(host: UniverCollabHost): RoomEditorAdapter & { dispose(): void } {
+export interface UniverRoomAdapter extends RoomEditorAdapter {
+  /** Subscribe again to `host.commands()` (call when a workbook was mounted outside `load`). */
+  rebind(): void
+  dispose(): void
+}
+
+export function createUniverRoomAdapter(host: UniverCollabHost): UniverRoomAdapter {
   const listeners = new Set<(mutations: RoomMutation[]) => void>()
   let batch: RoomMutation[] = []
   let scheduled = false
@@ -114,6 +120,10 @@ export function createUniverRoomAdapter(host: UniverCollabHost): RoomEditorAdapt
     },
     setEditable(editable) {
       host.setEditable(editable)
+    },
+    rebind() {
+      batch = []
+      subscribe()
     },
     dispose() {
       subscription?.dispose()

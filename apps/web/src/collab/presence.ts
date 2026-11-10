@@ -1,8 +1,8 @@
 // Pure helpers for showing who is in the workbook (spec §11: avatars at the
 // top of the file, a coloured frame around the cell each person edits).
 // No colour values here: a peer gets an index into the theme's presence
-// colours (`--presence-<n>`), defined once in the theme file.
-// OPEN: the presence colours are not in the theme yet (apps/api/OPEN_QUESTIONS.md R9).
+// colours (`--presence-1` … `--presence-6`, src/styles/theme.css).
+// OPEN: how presence is shown in the grid (apps/web/OPEN_QUESTIONS.md #53).
 
 import type { RoomCell, RoomLock, RoomPeer } from '@naf-sheets/shared'
 

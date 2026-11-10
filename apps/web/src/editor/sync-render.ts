@@ -116,7 +116,7 @@ export type MarksBySheet = Map<string, SheetMarks>
 type Ctx = UniverRenderingContext
 type ViewRange = { startRow: number; endRow: number; startColumn: number; endColumn: number }
 
-function rowBounds(skeleton: SpreadsheetSkeleton, row: number): [number, number] | null {
+export function rowBounds(skeleton: SpreadsheetSkeleton, row: number): [number, number] | null {
   const acc = skeleton.rowHeightAccumulation
   const bottom = acc[row]
   if (bottom === undefined) return null
@@ -124,7 +124,7 @@ function rowBounds(skeleton: SpreadsheetSkeleton, row: number): [number, number]
   return bottom > top ? [top, bottom] : null
 }
 
-function columnBounds(skeleton: SpreadsheetSkeleton, column: number): [number, number] | null {
+export function columnBounds(skeleton: SpreadsheetSkeleton, column: number): [number, number] | null {
   const acc = skeleton.columnWidthAccumulation
   const right = acc[column]
   if (right === undefined) return null

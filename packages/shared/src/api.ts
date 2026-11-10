@@ -2,6 +2,7 @@
 // Paths are relative to the platform origin. Every error body is `ApiError`.
 
 import type { PlatformRole, SheetSyncMode, SyncState, TaskUid, WorkbookMemberRole, WorkbookSource } from './domain'
+import type { ColumnPlan } from './api-integrations'
 
 /**
  * Stable machine codes of `ApiError.error`: exactly the codes apps/api sends
@@ -21,6 +22,8 @@ export type ApiErrorCode =
   | 'invalid_snapshot'
   | 'invalid_base_version'
   | 'version_conflict'
+  /** PUT /snapshot while editors are connected to the workbook's room: the room saves it (spec §11). */
+  | 'room_active'
   | 'invalid_members'
   | 'owner_in_members'
   | 'unknown_user'
@@ -124,6 +127,15 @@ export interface SheetMeta {
   syncMode: SheetSyncMode
   bcTodolistId: number | null
   headerRow: number
+  /**
+   * The column mapping committed when the sheet was linked (D1
+   * `column_mappings`, §7.3 step 4), in column order; empty for a sheet that
+   * was never linked. GET /api/workbooks/:id always sends it; optional only
+   * for older payloads, where the editor infers the mapping from the header.
+   */
+  columns?: ColumnPlan[]
+  /** Values of the status column that mean "completed" (§7.3 step 6); empty when none were chosen. */
+  completedValues?: string[]
 }
 
 /** GET /api/workbooks/:id */
@@ -177,8 +189,9 @@ export type PutWorkbookMembersResponse = WorkbookMembersResponse
 
 /*
  * GET /api/workbooks/:id/room — WebSocket upgrade to the workbook's room
- * (Durable Object `WorkbookRoom`, spec §11). Phase 6: the message protocol is
- * not defined yet; today the room only accepts the connection.
+ * (Durable Object `WorkbookRoom`, spec §11). The message protocol is
+ * `room-protocol.ts`. While anyone is connected, PUT …/snapshot answers 409
+ * `room_active`: the room is the only writer of an open workbook.
  * - 101: upgraded, after the same access check as GET /api/workbooks/:id
  *   (every role that may open the workbook, viewers included).
  * - 404 `not_found`: the workbook does not exist or the caller has no access.

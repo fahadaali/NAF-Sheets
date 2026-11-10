@@ -16,9 +16,15 @@
 //   not touched and the row goes to `error`.
 // - A deleted row that comes back (Ctrl+Z) asks for the undo: the to-do comes
 //   back from the trash, the subtask is re-created.
+// - Authorship (spec §3: Basecamp is written with the token of the person who
+//   made the change): a browser save is one person's. A room commit can hold
+//   several people's edits, so it passes `attribution`, which names the person
+//   whose edit touched each row; a row only the server changed is left to the
+//   server change that wrote it (inbound sync records its own state).
 
 import type { LocalTask } from '@naf-sheets/shared'
 import type { SheetError, SheetIssue } from '@naf-sheets/sheet-model'
+import { findSystemColumns } from '@naf-sheets/sheet-model'
 import { diffTask } from '@naf-sheets/sync-engine'
 import type { BcOutboundMessage, Env } from '../env'
 import { localFingerprint } from './fingerprint'
@@ -38,16 +44,43 @@ import {
 } from './store'
 import type { SheetRow, TaskRow } from './store'
 
+/** A task row's place in the committed snapshot: Univer sheet id and 0-based row. */
+export interface RowLocation {
+  sheet: string
+  row: number
+}
+
+/**
+ * Who changed a task row. `fallback`: the row could not be matched to an edit
+ * (a structural edit moved rows, or a formula or note changed it) and is
+ * credited to the commit's last author. `server`: only a server change touched
+ * it; it is never credited to a person.
+ */
+export type RowAuthor = { kind: 'user' | 'fallback'; userId: string } | { kind: 'server' }
+
+export interface RowAttribution {
+  /** `location` null: the row's place is unknown (its uid was not found). */
+  authorOf(location: RowLocation | null): RowAuthor
+}
+
 export interface DetectionInput {
   workbookId: string
-  /** members.user_id of the person who saved. */
+  /**
+   * members.user_id of the person who saved. With `attribution` (a room
+   * commit), the commit's last author: used only for rows that need a push
+   * but did not change in this commit.
+   */
   actorUserId: string
   /** The snapshot that was just committed. */
   snapshot: unknown
   /** Its version. */
   version: number
-  /** `SaveSnapshotRequest.confirmedDeletions`. */
+  /** `SaveSnapshotRequest.confirmedDeletions`, credited to `actorUserId`. */
   confirmedDeletions?: readonly string[]
+  /** Room commits: who changed each row. Absent: every change is `actorUserId`'s. */
+  attribution?: RowAttribution
+  /** Room commits: uid → the person who confirmed its deletion (§9.2.7). */
+  deletionsBy?: ReadonlyMap<string, string>
 }
 
 export interface DetectionResult {
@@ -79,6 +112,14 @@ export async function detectOutboundChanges(env: Env, input: DetectionInput, now
   const at = new Date(now()).toISOString()
   const actor = input.actorUserId
   const confirmed = new Set(input.confirmedDeletions ?? [])
+  const locations = input.attribution ? rowLocations(state) : null
+  /** The person a change of `uid` is written for, or null when only the server changed it. */
+  const actorFor = (uid: string): string | null => {
+    if (!input.attribution || !locations) return actor
+    const author = input.attribution.authorOf(locations.get(uid) ?? null)
+    return author.kind === 'server' ? null : author.userId
+  }
+  const confirmerOf = (uid: string): string | null => input.deletionsBy?.get(uid) ?? (confirmed.has(uid) ? actor : null)
   const deletions = await openDeletions(db, wb.id)
   const statements: D1PreparedStatement[] = []
   const queue = new Map<string, string>()
@@ -127,6 +168,9 @@ export async function detectOutboundChanges(env: Env, input: DetectionInput, now
         continue
       }
       if (task.level === 1 && (task.parentUid === null || (!state.taskRows.has(task.parentUid) && !created.has(task.parentUid)))) continue
+      // A row the server added (inbound sync) is recorded by the server change itself.
+      const creator = actorFor(uid)
+      if (creator === null) continue
       statements.push(
         db
           .prepare(
@@ -147,7 +191,7 @@ export async function detectOutboundChanges(env: Env, input: DetectionInput, now
             issue ? 'error' : 'pending',
             issue ? issue.message : null,
             issue ? `sheet:${issue.code}` : null,
-            actor,
+            creator,
           ),
         ...assigneeStatements(db, uid, task.assignees, at),
       )
@@ -159,7 +203,7 @@ export async function detectOutboundChanges(env: Env, input: DetectionInput, now
       result.pending.push(uid)
       // A subtask waits for its to-do: the consumer queues it once the to-do exists.
       const parentHasId = task.parentUid !== null && (state.taskRows.get(task.parentUid)?.bc_recording_id ?? null) !== null
-      if (task.level === 0 || parentHasId) queue.set(uid, actor)
+      if (task.level === 0 || parentHasId) queue.set(uid, creator)
       continue
     }
 
@@ -167,12 +211,14 @@ export async function detectOutboundChanges(env: Env, input: DetectionInput, now
 
     const deletion = deletions.get(uid)
     if (deletion && (deletion.state === 'executed' || deletion.state === 'covered')) {
+      const restorer = actorFor(uid)
+      if (restorer === null) continue
       statements.push(
         deletionStateStatement(db, deletion.id, 'undo_requested', at),
-        db.prepare(`UPDATE tasks SET sync_state = 'pending', pending_actor_id = ?2, local_hash = ?3, last_local_change_at = ?4 WHERE task_uid = ?1`).bind(uid, actor, fp, at),
+        db.prepare(`UPDATE tasks SET sync_state = 'pending', pending_actor_id = ?2, local_hash = ?3, last_local_change_at = ?4 WHERE task_uid = ?1`).bind(uid, restorer, fp, at),
       )
       result.undos.push(uid)
-      queue.set(uid, actor)
+      queue.set(uid, restorer)
       continue
     }
     if (deletion && deletion.state === 'requested') {
@@ -192,6 +238,10 @@ export async function detectOutboundChanges(env: Env, input: DetectionInput, now
     }
 
     const changed = fp !== row.local_hash
+    // Changed by the server only: its own write records the row (inbound sync sets `local_hash`).
+    // OPEN: apps/api/OPEN_QUESTIONS.md R18.
+    const editor = changed ? actorFor(uid) : null
+    if (changed && editor === null) continue
     const needsPush = rowNeedsPush(state, sheet, task, sheetTasks, row)
     statements.push(
       db
@@ -207,7 +257,7 @@ export async function detectOutboundChanges(env: Env, input: DetectionInput, now
     const detectionError = row.sync_state === 'error' && isDetectionCode(row.last_error_code)
     if (needsPush && (changed || detectionError || row.sync_state === 'unlinked')) {
       // §3: an unchanged row keeps the person who edited it as its author.
-      const author = changed ? actor : (row.pending_actor_id ?? actor)
+      const author = editor ?? row.pending_actor_id ?? actor
       statements.push(
         db
           .prepare(`UPDATE tasks SET sync_state = 'pending', pending_actor_id = ?2, last_error = NULL, last_error_code = NULL WHERE task_uid = ?1`)
@@ -244,18 +294,19 @@ export async function detectOutboundChanges(env: Env, input: DetectionInput, now
       continue
     }
     if (row.trashed_at !== null || deletion) continue
-    if (confirmed.has(uid)) {
+    const confirmer = confirmerOf(uid)
+    if (confirmer !== null) {
       statements.push(
         db
           .prepare(
             `INSERT INTO task_deletions (id, task_uid, workbook_id, state, requested_by, requested_at, updated_at)
              VALUES (?1, ?2, ?3, 'requested', ?4, ?5, ?5)`,
           )
-          .bind(crypto.randomUUID(), uid, wb.id, actor, at),
-        db.prepare(`UPDATE tasks SET sync_state = 'pending', pending_actor_id = ?2, last_error = NULL, last_error_code = NULL WHERE task_uid = ?1`).bind(uid, actor),
+          .bind(crypto.randomUUID(), uid, wb.id, confirmer, at),
+        db.prepare(`UPDATE tasks SET sync_state = 'pending', pending_actor_id = ?2, last_error = NULL, last_error_code = NULL WHERE task_uid = ?1`).bind(uid, confirmer),
       )
       result.deletions.push(uid)
-      queue.set(uid, actor)
+      queue.set(uid, confirmer)
       continue
     }
     // §9.2.7: never deleted in Basecamp without the person's confirmation.
@@ -271,6 +322,29 @@ export async function detectOutboundChanges(env: Env, input: DetectionInput, now
     now,
   )
   return result
+}
+
+/** Where each task row of the synced sheets sits in the committed snapshot (by its `__uid` cell). */
+function rowLocations(state: WorkbookState): Map<string, RowLocation> {
+  const out = new Map<string, RowLocation>()
+  for (const sheet of syncedSheets(state)) {
+    const plan = state.plans.get(sheet.id)
+    const data = state.snapshot.sheets[sheet.univer_sheet_id]
+    if (!plan || !data) continue
+    const header = plan.headerRow - 1
+    const found = findSystemColumns(data, header)
+    if (!found.ok || found.value === null) continue
+    const uidColumn = found.value.uid
+    const cells = (data.cellData ?? {}) as Record<string, Record<string, { v?: unknown } | null | undefined> | undefined>
+    for (const [key, line] of Object.entries(cells)) {
+      const row = Number(key)
+      if (!Number.isInteger(row) || row <= header) continue
+      const value = line?.[String(uidColumn)]?.v
+      const uid = typeof value === 'string' ? value.trim() : typeof value === 'number' ? String(value) : ''
+      if (uid !== '' && !out.has(uid)) out.set(uid, { sheet: sheet.univer_sheet_id, row })
+    }
+  }
+  return out
 }
 
 /**

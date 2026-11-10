@@ -1695,3 +1695,59 @@ fieldset legend {
   margin: 0;
   overflow-wrap: anywhere;
 }
+
+/* ── Realtime collaboration (spec §11) ─────────────────────────────────────── */
+
+.presence {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.presence__list {
+  display: flex;
+  align-items: center;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.presence__item + .presence__item {
+  margin-inline-start: calc(var(--space-1) * -1);
+}
+
+.presence__avatar {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-bold);
+  line-height: 1;
+  color: var(--presence-contrast);
+  border: var(--border-width) solid var(--color-surface);
+}
+
+.presence__avatar.is-editing {
+  box-shadow: var(--focus-ring);
+}
+
+.presence__avatar--1 { background: var(--presence-1); }
+.presence__avatar--2 { background: var(--presence-2); }
+.presence__avatar--3 { background: var(--presence-3); }
+.presence__avatar--4 { background: var(--presence-4); }
+.presence__avatar--5 { background: var(--presence-5); }
+.presence__avatar--6 { background: var(--presence-6); }
+.presence__avatar--more {
+  color: var(--color-text-muted);
+  background: var(--color-surface-hover);
+}
+
+.room-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+}
+
+.room-status--offline,
+.room-status--failed {
+  color: var(--color-danger);
+}

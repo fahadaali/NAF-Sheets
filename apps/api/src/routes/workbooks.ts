@@ -19,7 +19,7 @@ import { existingMemberIds, getWorkbookRow, listSheets, listWorkbookMembers, lis
 import type { WorkbookSummaryRow } from '../db'
 import { ApiFailure } from '../errors'
 import { callerOf, isPlainObject, nowIso, readJson } from '../request'
-import { roomRequest } from '../room'
+import { roomRequest, roomSessionActive } from '../room'
 import { FIRST_SHEET_TITLE, blankWorkbookSnapshot, readSnapshot, writeSnapshotVersion } from '../snapshot'
 import { detectAfterSave, parseConfirmedDeletions } from '../sync/detect'
 
@@ -183,6 +183,8 @@ export function workbookRoutes(options: WorkbookRouteOptions): Hono<AppEnv> {
 
     // Nothing is written on a stale base.
     if (baseVersion !== row.current_snapshot_version) throw new ApiFailure(409, 'version_conflict')
+    // While editors are connected, the room is the only writer (apps/api/OPEN_QUESTIONS.md R7).
+    if (await roomSessionActive(c.env, row.id)) throw new ApiFailure(409, 'room_active')
 
     const db = c.env.DB
     const next = baseVersion + 1

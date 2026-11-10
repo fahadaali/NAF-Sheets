@@ -575,10 +575,12 @@ R7. **A browser save while a session is live.** PUT /snapshot is unchanged: a
     tab outside the room that saves before the room's next commit wins version
     N+1; the room then commits its state on top (N+2) and records the
     superseded version in `room_events`. Nothing is overwritten (versions are
-    create-only), but that tab's edits are no longer current. Proposed: the
-    PUT route answers 409 while `roomSessionActive(env, id)` is true (one call
-    in `src/routes/workbooks.ts`, not changed here), and the editor stops its
-    PUT autosave while connected to the room.
+    create-only), but that tab's edits are no longer current.
+    **Implemented 2026-11-10:** PUT …/snapshot answers 409 `room_active` (Arabic
+    message) while `roomSessionActive(env, id)` is true, and the editor saves
+    with PUT only when it could not join the room (apps/web OPEN_QUESTIONS #50).
+    A save that passed the check just before a session started can still be
+    superseded as above.
 
 R8. **The soft lock is enforced.** Spec §11 says a cell being edited "appears
     locked to others"; the room also refuses (`locked`) an op that touches a
@@ -586,8 +588,9 @@ R8. **The soft lock is enforced.** Spec §11 says a cell being edited "appears
     end on `unlock` or when the connection drops; there is no idle timeout.
 
 R9. **Presence colours.** Each connection gets an index 0–5
-    (`apps/web/src/collab/presence.ts`); the six colours are not in the theme
-    yet (CLAUDE.md §0: what replaces `naf-ui` is open).
+    (`apps/web/src/collab/presence.ts`). **2026-11-10:** the six colours are
+    defined in `apps/web/src/styles/theme.css` (`--presence-1…6`), provisional
+    like the rest of the theme (CLAUDE.md §0: what replaces `naf-ui` is open).
 
 R10. **Undo after remote edits.** Undo history is cleared when another
     editor's op moves rows, columns or sheets. After a remote *cell* edit it is
@@ -610,11 +613,13 @@ R13. **Author of a room commit.** R2's `savedBy` on a room commit is the author
 
 R14. **Outbound seam.** After each commit the room calls the detection
     installed with `setOutboundDetection` (`src/room/outbound-seam.ts`, marked
-    `WAVE3-SEAM: outbound detection`; a no-op until the outbound work installs
-    it) with every edit the commit includes: seq, author, and footprint (cells,
-    rows, columns, sheet/plugin keys, or structural). Mapping cells to
-    `task_uid` is left to the detection. `updateLatestSnapshot` callers'
-    changes are included with `origin: 'server'`.
+    `WAVE3-SEAM: outbound detection`) with every edit the commit includes: seq,
+    author, footprint and confirmed deletions, plus the committed snapshot.
+    **Implemented 2026-11-10:** `src/index.ts` installs `detectAfterRoomCommit`
+    (`src/sync/room-commit.ts`): each changed row is queued with the token of
+    the last person whose edit touched it (§3), confirmed deletions with the
+    person who confirmed them; server edits are never credited to a person and
+    a commit with only server edits runs no detection. See R17–R19.
 
 R15. **Cloudflare limits to confirm on the real plan** (from documentation
     known before this work, not re-checked): Worker size 3 MB gzip (Free) /
@@ -625,6 +630,27 @@ R15. **Cloudflare limits to confirm on the real plan** (from documentation
     out of the API Worker; that needs a `wrangler.toml` change (not made).
 
 R16. **The contract comment** for GET /api/workbooks/:id/room in
-    `packages/shared/src/api.ts` still says the message protocol is not
-    defined; it is now `packages/shared/src/room-protocol.ts` (that file was
-    not mine to edit).
+    `packages/shared/src/api.ts` said the message protocol was not defined.
+    **Resolved 2026-11-10:** it points to `room-protocol.ts` and documents 409
+    `room_active`.
+
+R17. **Who a row is credited to when no edit of the commit can be matched to
+    it.** Edits are matched to rows by position, valid only after the last
+    structural edit. A row behind a person's structural edit (rows inserted,
+    removed, moved or sorted), or changed without an edit on its cells (a
+    formula result, a note), is credited to the commit's last author. A row
+    behind a server reload is credited to nobody and left for the next commit.
+    A finer rule would need positions translated through structural edits.
+
+R18. **Detection inside a server-change commit runs before the caller's own
+    D1 writes** (inbound sync records `local_hash` and new task rows after
+    `updateLatestSnapshot` returns). Rows only the server touched are therefore
+    skipped by detection (never queued, never credited), so a row created by
+    inbound sync can never be created again in Basecamp by detection.
+
+R19. **Confirmed deletions travel on the next op after the dialog.** The
+    editor confirms, then lets the row removal run; the client attaches the
+    confirmed uids to the next op it sends (the removal). If that op is
+    refused, the removal is undone by the resync and the confirmation goes
+    with it. A confirmation logged in an earlier commit than the removal is not
+    used: the row is held as missing (`row_missing`) and Basecamp is untouched.

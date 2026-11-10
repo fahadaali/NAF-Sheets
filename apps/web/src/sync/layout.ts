@@ -2,15 +2,14 @@
 // system columns (`__uid`, `__parent_uid`, `__level`) and the mapped columns
 // (title, assignees, dates, status, notes, attachments).
 //
-// OPEN: the contract gives the editor no column mapping (`SheetMeta` carries
-// `headerRow` only; D1 `column_mappings` has no endpoint). The mapping is
-// inferred from the header texts with the wizard's own rules
-// (@naf-sheets/gsheets-import `suggestColumnMapping`), so a column the person
-// mapped differently in the wizard is not known here
-// (apps/web/OPEN_QUESTIONS.md #33).
+// The mapping is the one committed in the wizard (`SheetMeta.columns`, from
+// D1 `column_mappings`; apps/web/OPEN_QUESTIONS.md #33, decided). Only a
+// sheet without a stored mapping (an older payload) falls back to inferring
+// it from the header texts with the wizard's own rules
+// (@naf-sheets/gsheets-import `suggestColumnMapping`).
 
 import { suggestColumnMapping } from '@naf-sheets/gsheets-import'
-import { SYSTEM_HEADERS } from '@naf-sheets/sheet-model'
+import { SYSTEM_HEADERS, columnIndex } from '@naf-sheets/sheet-model'
 import type { MappedField, SheetMeta, SheetPlan } from '@naf-sheets/shared'
 import { columnLetters } from '../lib/cell-target'
 import { cellText, type CellReader } from './cells'
@@ -62,6 +61,7 @@ export function sheetLayout(reader: CellReader, meta: SheetMeta): SheetLayout | 
   if (meta.syncMode !== 'synced') return null
   const header = Number.isInteger(meta.headerRow) && meta.headerRow >= 1 ? meta.headerRow - 1 : 0
   const system = findSystemColumns(reader, header)
+  if (meta.columns && meta.columns.length > 0) return storedLayout(meta, header, system)
   const width = reader.lastColumn() + 1
   const headers = Array.from({ length: Math.max(0, width) }, (_, column) => {
     const text = cellText(reader.cell(header, column))
@@ -79,6 +79,22 @@ export function sheetLayout(reader: CellReader, meta: SheetMeta): SheetLayout | 
     fields.title === undefined
       ? null
       : { sheetId: meta.id, headerRow: header + 1, columns, completedValues: [], assigneeMatches: {}, hierarchy: { mode: 'flat' as const } }
+  return { sheetId: meta.univerSheetId, metaId: meta.id, header, system, fields, plan }
+}
+
+/** The layout from the mapping committed in the wizard. */
+function storedLayout(meta: SheetMeta, header: number, system: SystemColumns | null): SheetLayout {
+  const columns = meta.columns ?? []
+  const fields: Partial<Record<LayoutField, number>> = {}
+  for (const c of columns) {
+    if (c.field === 'free') continue
+    const column = columnIndex(c.columnKey)
+    if (column !== null && fields[c.field] === undefined) fields[c.field] = column
+  }
+  const plan =
+    fields.title === undefined
+      ? null
+      : { sheetId: meta.id, headerRow: header + 1, columns, completedValues: meta.completedValues ?? [], assigneeMatches: {}, hierarchy: { mode: 'flat' as const } }
   return { sheetId: meta.univerSheetId, metaId: meta.id, header, system, fields, plan }
 }
 
