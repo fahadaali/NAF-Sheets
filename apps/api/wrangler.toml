@@ -1,0 +1,106 @@
+# NAF Sheets — API Worker (spec docs/spec.md §4).
+#
+# No secret in this file, ever. Secrets go through:
+#   wrangler secret put AUTH_CLIENT_SECRET
+# Every REPLACE_WITH_* below is a real resource id that does not exist yet:
+# create the resource, then paste its id (commands next to each binding).
+
+name = "naf-sheets-api"
+main = "src/index.ts"
+compatibility_date = "2026-07-27"
+# Required by @cloudflare/vitest-pool-workers; harmless for the Worker itself.
+compatibility_flags = ["nodejs_compat"]
+
+# ─────────────────────────────────────────────────────────────
+# Non-secret variables
+# ─────────────────────────────────────────────────────────────
+[vars]
+# naf-id issuer. Compared literally with `iss`: no trailing slash.
+AUTH_ISSUER = "https://app.naflaw.sa"
+# OPEN: not decided. Case-sensitive; must equal, character for character, the
+# platform row registered in the naf-id admin panel. Until it does, every
+# sign-in fails at naf-id. See apps/api/OPEN_QUESTIONS.md #2.
+PLATFORM_ID = "REPLACE_WITH_PLATFORM_ID"
+
+# ─────────────────────────────────────────────────────────────
+# D1 — metadata, mappings, members, audit log
+#   wrangler d1 create naf-sheets
+# Migrations live at the repository root (forward-only).
+# ─────────────────────────────────────────────────────────────
+[[d1_databases]]
+binding = "DB"
+database_name = "naf-sheets"
+database_id = "REPLACE_WITH_D1_ID"
+migrations_dir = "../../migrations"
+
+# ─────────────────────────────────────────────────────────────
+# KV
+#   wrangler kv namespace create AUTH_KV     (naf-auth sessions + JWKS cache)
+#   wrangler kv namespace create SETTINGS    (settings, short-lived tokens)
+# ─────────────────────────────────────────────────────────────
+[[kv_namespaces]]
+binding = "AUTH_KV"
+id = "REPLACE_WITH_AUTH_KV_ID"
+
+[[kv_namespaces]]
+binding = "SETTINGS"
+id = "REPLACE_WITH_SETTINGS_KV_ID"
+
+# ─────────────────────────────────────────────────────────────
+# R2
+#   wrangler r2 bucket create naf-sheets-snapshots
+#   wrangler r2 bucket create naf-sheets-attachments
+# ─────────────────────────────────────────────────────────────
+[[r2_buckets]]
+binding = "SNAPSHOTS"
+bucket_name = "naf-sheets-snapshots"
+
+[[r2_buckets]]
+binding = "ATTACHMENTS"
+bucket_name = "naf-sheets-attachments"
+
+# ─────────────────────────────────────────────────────────────
+# Queues
+#   wrangler queues create bc-outbound
+#   wrangler queues create bc-outbound-dlq
+#   wrangler queues create bc-inbound
+#   wrangler queues create bc-inbound-dlq
+#
+# bc-outbound: platform → Basecamp writes (§9.2). 5 retries, then DLQ (§9.2.8).
+# bc-inbound: raw Basecamp webhook deliveries, acknowledged with 200 at once
+#             and processed here (§9.3.3).
+# ─────────────────────────────────────────────────────────────
+[[queues.producers]]
+binding = "BC_OUTBOUND"
+queue = "bc-outbound"
+
+[[queues.producers]]
+binding = "BC_INBOUND"
+queue = "bc-inbound"
+
+[[queues.consumers]]
+queue = "bc-outbound"
+max_retries = 5
+dead_letter_queue = "bc-outbound-dlq"
+
+[[queues.consumers]]
+queue = "bc-inbound"
+max_retries = 5
+dead_letter_queue = "bc-inbound-dlq"
+
+# ─────────────────────────────────────────────────────────────
+# Durable Object — one WorkbookRoom per workbook (§11)
+# ─────────────────────────────────────────────────────────────
+[[durable_objects.bindings]]
+name = "WORKBOOK_ROOM"
+class_name = "WorkbookRoom"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["WorkbookRoom"]
+
+# ─────────────────────────────────────────────────────────────
+# Cron — reconciliation every 15 minutes (§9.4)
+# ─────────────────────────────────────────────────────────────
+[triggers]
+crons = ["*/15 * * * *"]
