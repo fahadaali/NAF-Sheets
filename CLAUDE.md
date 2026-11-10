@@ -47,7 +47,7 @@ build and ends by waiting for approval.**
 
 | Phase | State |
 |---|---|
-| 0 — Spike | Univer checks done; Basecamp live test and real Google Sheets file **blocked on inputs**. Report: `docs/phase-0-report.md`. **Waiting for approval.** |
+| 0 — Spike | Univer checks done; RTL grid achieved with a mirroring layer (report §9); Basecamp live test and real Google Sheets file **blocked on inputs**. Report: `docs/phase-0-report.md`. **Waiting for approval.** |
 | 1 — Foundation | Not started. Do not start until phase 0 is approved. |
 
 `spike/` is throwaway evidence for phase 0, not a base for production code.
@@ -90,11 +90,14 @@ Planned layout (§4.3): `apps/web`, `apps/api`, `packages/{shared,gsheets-import
 
 ### Univer — constraints found in phase 0
 
-- **The grid does not render RTL.** `direction: 'rtl'` mirrors only the UI chrome (menus, toolbar, tabs, editor alignment). `worksheet.rightToLeft` is stored but never read by the renderer: column A stays on the left. Decision pending — see `docs/phase-0-report.md`.
-- Cell text uses an LTR paragraph base. Arabic+digits renders correctly; Arabic+Latin words come out in LTR order. Workaround verified: a display-only `CELL_CONTENT` interceptor wrapping such strings in `U+2067 … U+2069`.
-- With that interceptor active, Facade `getValue()` returns the **wrapped** display value. Sync and export code must read the raw model (`worksheet.getCellRaw`), never `getValue()`.
-- Sheet services are registered lazily, when the first sheet unit is created. Resolve them after `createWorkbook`, not after `createUniver`.
-- Arabic text needs an explicit right horizontal alignment; Univer defaults to left.
+- **Univer's grid does not render RTL.** `direction: 'rtl'` mirrors only the UI chrome (menus, toolbar, tabs, editor alignment); `worksheet.rightToLeft` is stored but never read by the renderer. Re-checked 2026-11-10: 1.4.0 is still the latest release.
+- **Solved by a mirroring layer: `spike/univer/src/rtl-grid.ts`** (phase 0, pending approval — `docs/phase-0-report.md` §9). It flips the sheet canvas container with CSS, flips text back per line (plain cells) or per glyph group (rich/wrapped cells), un-flips the cell editor, mirrors cell-anchored popup rectangles, swaps ArrowLeft/ArrowRight for selection moves and negates horizontal wheel deltas. The model is untouched. `npm run test:rtl` must pass 14/14.
+- The layer depends on Univer internals (`Documents.prototype._drawGlyphGroup` / `_drawGlyphGroupBackgrounds`, `scene.render`, `MoveSelectionCommand.handler`, `ICanvasPopupService.addPopup`, `FUniver._injector`). **Never raise the `@univerjs/*` pin without re-running `npm run test:rtl` and the screenshots.**
+- Never mutate a command's `params` object to change behaviour: shortcut parameters are shared between key presses. Wrap the handler and pass a copy.
+- Alignment on the mirrored grid is **logical**: model LEFT renders at the start (visual right), RIGHT at the end (visual left). The toolbar's left/right buttons therefore look inverted. Open decision — report §9.5.
+- Known gaps of the layer: rotated text and in-sheet images render mirrored; note/filter popups keep Univer's right-hand placement; untested on Firefox, Safari and touch.
+- Without the layer, cell text uses an LTR paragraph base (Arabic+Latin words come out in LTR order) and needs explicit right alignment. With the layer neither applies, and the `RLI…PDI` display interceptor from report §2.3 is not needed.
+- Sheet services and the render unit are created asynchronously after `createWorkbook`; resolve them after it (the layer waits for `created$` and for the canvas to be mounted).
 - Out of scope / Pro-only: XLSX import/export, built-in collaboration, pivot tables, charts, print, edit history.
 
 ---
@@ -123,6 +126,7 @@ npm run build
 npm run typecheck
 npm run preview &          # serves on :4173
 npm run verify             # writes results/results.json and screenshots
+npm run test:rtl           # 14 interaction checks on the mirrored (RTL) grid
 npm run closeups           # 2x cell close-ups cited in the phase 0 report
 npm run reference          # the browser's own RTL/LTR rendering of the same strings
 
