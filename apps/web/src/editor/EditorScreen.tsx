@@ -4,7 +4,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { ArrowRight, CloudCheck, CloudOff, CloudUpload, Eye, FileSpreadsheet, LoaderCircle, Settings2, TriangleExclamationPoint } from 'lucide-react'
-import type { WorkbookResponse } from '@naf-sheets/shared'
+import type { AssigneeOptionsResponse, ConflictRecord, SaveSnapshotRequest, WorkbookResponse, WorkbookSyncResponse } from '@naf-sheets/shared'
 import { api, classifySaveError, errorMessage, isAbortError } from '../lib/api'
 import { Autosave } from '../lib/autosave'
 import type { SaveStatus } from '../lib/autosave'
@@ -16,7 +16,18 @@ import { BasecampLinkBanner, isLinkActive, useBasecampLink } from '../components
 import { Notice } from '../components/Notice'
 import { SyncBadge } from '../components/SyncBadge'
 import { t } from '../strings'
+import { cellText } from '../sync/cells'
+import { CONFLICT_FIELD_COLUMN } from '../sync/conflicts'
+import { PendingDeletions, uidsInSnapshot } from '../sync/deletions'
+import { prepareSyncedSheets } from '../sync/prepare'
+import { Poller } from '../sync/sync-state'
+import { AssigneeEditor } from './AssigneeEditor'
 import { FileSettingsPanel } from './FileSettingsPanel'
+import { SyncLayer } from './sync-layer'
+import type { ActiveTask, AssigneeTarget, RemovalRequest, RowHover } from './sync-layer'
+import { readGridTheme } from './sync-render'
+import { DeletionDialog, RowTooltip, SyncPanel, SyncToolbar } from './sync-ui'
+import type { AttentionRow, PanelConflict } from './sync-ui'
 import { mountWorkbook } from './univer-host'
 import type { MountedWorkbook, RtlState } from './univer-host'
 import { resolveWorkbookData } from './workbook-data'
@@ -100,19 +111,51 @@ type Engine = 'starting' | 'ready' | 'failed'
 const syncedSheetIds = (data: WorkbookResponse): ReadonlySet<string> =>
   new Set(data.sheets.filter((s) => s.syncMode === 'synced').map((s) => s.univerSheetId))
 
+/** How long a refused command's message stays on screen. */
+const REFUSAL_MS = 12_000
+/** The row tooltip stays this long after the pointer left the row numbers (so it can be reached). */
+const TOOLTIP_GRACE_MS = 350
+
+type Removal = { request: RemovalRequest; resolve: (confirmed: boolean) => void }
+
 function WorkbookEditor({ data, target, onReload }: { data: WorkbookResponse; target?: EditorTarget | undefined; onReload: () => void }) {
   const hostRef = useRef<HTMLDivElement>(null)
   const autosaveRef = useRef<Autosave | null>(null)
   const mountedRef = useRef<MountedWorkbook | null>(null)
-  const resolved = useMemo(() => resolveWorkbookData(data), [data])
+  const layerRef = useRef<SyncLayer | null>(null)
+  const pollerRef = useRef<Poller | null>(null)
+  const deletionsRef = useRef(new PendingDeletions())
+  const editableRef = useRef(false)
+  const theme = useMemo(() => readGridTheme(), [])
+  const resolved = useMemo(() => {
+    const r = resolveWorkbookData(data)
+    // Synced sheets: wider row numbers for the sync state, status as a checkbox (src/sync/prepare.ts).
+    return r.ok ? { ...r, data: prepareSyncedSheets(r.data, data.sheets, { rowHeaderWidth: theme.rowMarginWidth }) } : r
+  }, [data, theme])
   // Workbook viewers never save (spec §3); the API refuses their writes too.
   const canEdit = data.workbook.access !== 'viewer'
+  const linked = data.workbook.bcProjectId !== null
   const [engine, setEngine] = useState<Engine>('starting')
   const [rtl, setRtl] = useState<RtlState | null>(null)
   const [save, setSave] = useState<SaveStatus>({ phase: 'saved', version: data.version, message: null })
   const [activeSheet, setActiveSheet] = useState<string | null>(null)
   const [selection, setSelection] = useState<{ kind: 'none' } | { kind: 'applied'; where: string } | { kind: 'missing' }>({ kind: 'none' })
   const [settingsOpen, setSettingsOpen] = useState(false)
+
+  // Wave 3: synced sheets.
+  const [syncInfo, setSyncInfo] = useState<WorkbookSyncResponse | null>(null)
+  const [syncProblem, setSyncProblem] = useState<string | null>(null)
+  const [conflicts, setConflicts] = useState<ConflictRecord[]>([])
+  const [refusal, setRefusal] = useState<string | null>(null)
+  const [removal, setRemoval] = useState<Removal | null>(null)
+  const [assigneeTarget, setAssigneeTarget] = useState<AssigneeTarget | null>(null)
+  const [rowHover, setRowHover] = useState<RowHover | null>(null)
+  const [panelOpen, setPanelOpen] = useState(false)
+  const [active, setActive] = useState<ActiveTask | null>(null)
+  const [people, setPeople] = useState<AssigneeOptionsResponse | null>(null)
+  const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const tooltipHovered = useRef(false)
+  const refusalTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Spec §3: synced sheets cannot be edited before the user links their own
   // Basecamp account (local sheets can). Until the link is known to be
@@ -123,6 +166,25 @@ function WorkbookEditor({ data, target, onReload }: { data: WorkbookResponse; ta
   const basecamp = useBasecampLink(needsLink)
   const syncedLocked = needsLink && !isLinkActive(basecamp.load)
   const editable = canEdit && save.phase !== 'conflict' && !(syncedLocked && activeSheet !== null && synced.has(activeSheet))
+  editableRef.current = editable
+
+  const refuse = (message: string) => {
+    setRefusal(message)
+    if (refusalTimer.current) clearTimeout(refusalTimer.current)
+    refusalTimer.current = setTimeout(() => setRefusal(null), REFUSAL_MS)
+  }
+
+  const showRowHover = (hover: RowHover | null) => {
+    if (hoverTimer.current) clearTimeout(hoverTimer.current)
+    hoverTimer.current = null
+    if (hover) {
+      setRowHover(hover)
+      return
+    }
+    hoverTimer.current = setTimeout(() => {
+      if (!tooltipHovered.current) setRowHover(null)
+    }, TOOLTIP_GRACE_MS)
+  }
 
   useEffect(() => {
     const host = hostRef.current
@@ -130,6 +192,8 @@ function WorkbookEditor({ data, target, onReload }: { data: WorkbookResponse; ta
     let cancelled = false
     let mounted: MountedWorkbook | null = null
     let autosave: Autosave | null = null
+    let layer: SyncLayer | null = null
+    let frame = 0
 
     mountWorkbook(host, resolved.data, {
       isCancelled: () => cancelled,
@@ -152,17 +216,65 @@ function WorkbookEditor({ data, target, onReload }: { data: WorkbookResponse; ta
         workbook.onActiveSheetChange((sheetId) => {
           if (!cancelled) setActiveSheet(sheetId)
         })
+        if (synced.size > 0) {
+          try {
+            layer = new SyncLayer(workbook.facade.univerAPI, workbook.facade.workbook, host, {
+              metas: data.sheets,
+              theme,
+              canWrite: () => editableRef.current,
+              onRefused: (message) => {
+                if (!cancelled) refuse(message)
+              },
+              confirmRemoval: (request) =>
+                new Promise<boolean>((resolve) => {
+                  setRowHover(null)
+                  setRemoval({ request, resolve })
+                }),
+              onDeletionsConfirmed: (uids) => deletionsRef.current.add(uids),
+              openAssignees: (t) => {
+                if (cancelled) return
+                setRowHover(null)
+                setAssigneeTarget(t)
+              },
+              onRowHover: (hover) => {
+                if (!cancelled) showRowHover(hover)
+              },
+              onActiveChange: () => {
+                if (cancelled || frame) return
+                frame = requestAnimationFrame(() => {
+                  frame = 0
+                  if (!cancelled) setActive(layer?.activeTask() ?? null)
+                })
+              },
+            })
+            layerRef.current = layer
+          } catch (error) {
+            console.error('[editor] the synced-sheet layer failed to start', error)
+          }
+        }
         if (!canEdit) {
           workbook.setEditable(false)
         } else {
           const saver = new Autosave({
             initialVersion: data.version,
-            save: (baseVersion, snapshot) => api.saveSnapshot(data.workbook.id, { baseVersion, snapshot }).then((r) => r.version),
+            save: async (baseVersion, snapshot) => {
+              // §9.2.7: rows removed after the deletion dialog, and still gone in this snapshot.
+              const confirmedDeletions = deletionsRef.current.forSnapshot(uidsInSnapshot(snapshot, data.sheets))
+              const body: SaveSnapshotRequest = { baseVersion, snapshot }
+              if (confirmedDeletions.length > 0) body.confirmedDeletions = confirmedDeletions
+              const result = await api.saveSnapshot(data.workbook.id, body)
+              deletionsRef.current.acknowledge(confirmedDeletions)
+              return result.version
+            },
             getSnapshot: () => workbook.snapshot(),
             classifyError: classifySaveError,
             onStatus: (status) => {
               if (cancelled) return
-              setSave(status)
+              setSave((previous) => {
+                // Right after each save, read the rows' sync state again.
+                if (status.phase === 'saved' && status.version !== previous.version) pollerRef.current?.poke()
+                return status
+              })
               // Never let further edits pile up on a version that cannot be saved.
               // OPEN: unsaved edits are dropped on reload (OPEN_QUESTIONS.md #11).
               if (status.phase === 'conflict') workbook.setEditable(false)
@@ -182,10 +294,13 @@ function WorkbookEditor({ data, target, onReload }: { data: WorkbookResponse; ta
 
     return () => {
       cancelled = true
+      if (frame) cancelAnimationFrame(frame)
       autosaveRef.current = null
       mountedRef.current = null
+      layerRef.current = null
       // Reads the snapshot synchronously, then the editor can go.
       if (autosave) void autosave.finalize()
+      layer?.dispose()
       mounted?.dispose()
     }
     // Mounted once per WorkbookEditor; a reload remounts it with a new key.
@@ -194,7 +309,47 @@ function WorkbookEditor({ data, target, onReload }: { data: WorkbookResponse; ta
   // One place decides whether the grid takes edits: role, conflict, synced-sheet lock.
   useEffect(() => {
     if (engine === 'ready') mountedRef.current?.setEditable(editable)
+    layerRef.current && setActive(layerRef.current.activeTask())
   }, [engine, editable])
+
+  // Rows' sync state: every 10 s while the editor is open, and after each save (spec §5.2).
+  useEffect(() => {
+    if (engine !== 'ready' || !linked || synced.size === 0) return
+    const controller = new AbortController()
+    let showsConflicts = false
+    const poller = new Poller(async () => {
+      try {
+        const info = await api.getSync(data.workbook.id, controller.signal)
+        setSyncInfo(info)
+        setSyncProblem(null)
+        layerRef.current?.setSyncInfo(info)
+        if (info.counts.conflict > 0 || showsConflicts) {
+          const { conflicts: list } = await api.getConflicts(data.workbook.id, controller.signal)
+          showsConflicts = list.length > 0
+          setConflicts(list)
+          layerRef.current?.setConflicts(list)
+        }
+      } catch (error) {
+        if (!isAbortError(error)) setSyncProblem(errorMessage(error))
+        throw error
+      }
+    })
+    pollerRef.current = poller
+    poller.start()
+    return () => {
+      poller.stop()
+      controller.abort()
+      pollerRef.current = null
+    }
+  }, [engine, linked, synced.size, data.workbook.id])
+
+  // Names for conflict values (assignees arrive as ids): read once, when there are conflicts to show.
+  useEffect(() => {
+    if (conflicts.length === 0 || people !== null || !linked) return
+    const controller = new AbortController()
+    api.getAssigneeOptions(data.workbook.id, controller.signal).then(setPeople, () => undefined)
+    return () => controller.abort()
+  }, [conflicts.length, people, linked, data.workbook.id])
 
   // The place asked for in the address (import report links, spec §7.2).
   const targetKey = target ? `${target.sheet}|${target.range ? `${target.range.startRow},${target.range.startColumn},${target.range.endRow},${target.range.endColumn}` : ''}` : ''
@@ -216,6 +371,40 @@ function WorkbookEditor({ data, target, onReload }: { data: WorkbookResponse; ta
     return null
   }
 
+  /** «مزامنة الآن» (§9.4). */
+  const syncNow = async (): Promise<{ ok: boolean; message: string }> => {
+    try {
+      const { queued } = await api.syncNow(data.workbook.id)
+      pollerRef.current?.poke()
+      return { ok: true, message: t.rowSync.syncNowDone(queued) }
+    } catch (error) {
+      return { ok: false, message: errorMessage(error) }
+    }
+  }
+
+  const resolveConflict = (run: (id: string, conflictId: string) => Promise<unknown>) => async (conflict: ConflictRecord): Promise<string | null> => {
+    try {
+      await run(data.workbook.id, conflict.id)
+      const remaining = conflicts.filter((c) => c.id !== conflict.id)
+      setConflicts(remaining)
+      layerRef.current?.setConflicts(remaining)
+      pollerRef.current?.poke()
+      return null
+    } catch (error) {
+      return errorMessage(error)
+    }
+  }
+
+  const goTo = (uid: string, field?: ConflictRecord['field']) => {
+    const layer = layerRef.current
+    const at = layer?.locate(uid)
+    if (!layer || !at) return
+    const mapped = field ? CONFLICT_FIELD_COLUMN[field] : null
+    const column = (mapped ? at.layout.fields[mapped] : undefined) ?? at.layout.fields.title ?? 0
+    setPanelOpen(false)
+    layer.goTo(at.sheetId, at.row, column)
+  }
+
   // Unsaved work: the browser asks before closing the tab; in-app navigation
   // asks only when a save failed (otherwise leaving saves it).
   useEffect(() => {
@@ -234,10 +423,32 @@ function WorkbookEditor({ data, target, onReload }: { data: WorkbookResponse; ta
     return () => {
       window.removeEventListener('beforeunload', onBeforeUnload)
       setLeaveGuard(null)
+      if (hoverTimer.current) clearTimeout(hoverTimer.current)
+      if (refusalTimer.current) clearTimeout(refusalTimer.current)
     }
   }, [])
 
   const { workbook } = data
+  const onSyncedSheet = engine === 'ready' && activeSheet !== null && synced.has(activeSheet)
+  const panelData = useMemo(() => {
+    const layer = layerRef.current
+    if (!panelOpen || !layer) return { conflicts: [] as PanelConflict[], attention: [] as AttentionRow[] }
+    const titleOf = (uid: string) => {
+      const at = layer.locate(uid)
+      const reader = at ? layer.reader(at.sheetId) : null
+      return at && reader && at.layout.fields.title !== undefined ? cellText(reader.cell(at.row, at.layout.fields.title)).trim() : ''
+    }
+    const attention: AttentionRow[] = []
+    for (const task of syncInfo?.tasks ?? []) {
+      const state = task.remoteStatus !== 'active' ? 'deleted' : task.state
+      if (state !== 'error' && state !== 'deleted' && state !== 'conflict') continue
+      const at = layer.locate(task.uid)
+      if (!at) continue
+      const meta = data.sheets.find((s) => s.univerSheetId === at.sheetId)
+      attention.push({ uid: task.uid, sheetId: at.sheetId, sheetTitle: meta?.title ?? '', row: at.row, title: titleOf(task.uid), state, message: task.message, bcUrl: task.bcUrl })
+    }
+    return { conflicts: conflicts.map((conflict) => ({ conflict, title: titleOf(conflict.uid), located: layer.locate(conflict.uid) !== null })), attention }
+  }, [panelOpen, syncInfo, conflicts, data.sheets])
 
   return (
     <div className="editor" data-screen="editor" data-workbook-id={workbook.id} data-save-phase={save.phase} data-save-version={save.version}>
@@ -250,7 +461,7 @@ function WorkbookEditor({ data, target, onReload }: { data: WorkbookResponse; ta
         ) : null}
         <div className="editor-bar__end">
           {canEdit && resolved.ok ? <SaveIndicator status={save} /> : null}
-          <SyncBadge state={workbook.syncState} />
+          <SyncBadge state={syncInfo?.state ?? workbook.syncState} />
           <button
             type="button"
             className="icon-button"
@@ -264,13 +475,58 @@ function WorkbookEditor({ data, target, onReload }: { data: WorkbookResponse; ta
           </button>
         </div>
       </EditorBar>
-      <FileSettingsPanel open={settingsOpen} workbook={workbook} onClose={() => setSettingsOpen(false)} onStartWizard={startWizard} />
+      <FileSettingsPanel
+        open={settingsOpen}
+        workbook={workbook}
+        onClose={() => setSettingsOpen(false)}
+        onStartWizard={startWizard}
+        onSyncNow={linked && canEdit && synced.size > 0 ? syncNow : undefined}
+      />
+
+      {onSyncedSheet ? (
+        <SyncToolbar
+          active={active}
+          canWrite={editable}
+          counts={syncInfo?.counts ?? null}
+          onIndent={() => void layerRef.current?.indentActive('indent')}
+          onOutdent={() => void layerRef.current?.indentActive('outdent')}
+          onToggleCollapse={() => layerRef.current?.toggleCollapse()}
+          onOpenPanel={() => {
+            setRowHover(null)
+            setPanelOpen(true)
+          }}
+        />
+      ) : null}
 
       <div className="editor-notices">
         {needsLink ? (
           <BasecampLinkBanner load={basecamp.load} onRetry={basecamp.reload} showErrors testId="editor-basecamp-link">
             <p>{t.editor.syncedLocked}</p>
           </BasecampLinkBanner>
+        ) : null}
+        {refusal ? (
+          <Notice
+            tone="danger"
+            title={t.guard.refusedTitle}
+            testId="sync-refusal"
+            actions={
+              <button type="button" className="button button--small" onClick={() => setRefusal(null)}>
+                {t.guard.dismiss}
+              </button>
+            }
+          >
+            <p>{refusal}</p>
+          </Notice>
+        ) : null}
+        {syncInfo?.notice ? (
+          <Notice tone="warning" title={t.rowSync.noticeTitle} testId="sync-notice">
+            <p>{syncInfo.notice}</p>
+          </Notice>
+        ) : null}
+        {syncProblem ? (
+          <Notice tone="info" testId="sync-poll-error">
+            <p>{t.rowSync.pollFailed}</p>
+          </Notice>
         ) : null}
         {selection.kind === 'missing' ? (
           <Notice tone="info" testId="editor-target-missing">
@@ -351,6 +607,7 @@ function WorkbookEditor({ data, target, onReload }: { data: WorkbookResponse; ta
             data-active-sheet={activeSheet ?? ''}
             data-editable={engine === 'ready' ? String(editable) : 'pending'}
             data-selection={selection.kind === 'applied' ? selection.where : ''}
+            data-pending-deletions={deletionsRef.current.size}
           />
           {engine === 'starting' ? (
             <div className="editor-overlay" role="status">
@@ -360,6 +617,58 @@ function WorkbookEditor({ data, target, onReload }: { data: WorkbookResponse; ta
           ) : null}
         </div>
       ) : null}
+
+      {rowHover ? (
+        <div
+          onMouseEnter={() => {
+            tooltipHovered.current = true
+          }}
+          onMouseLeave={() => {
+            tooltipHovered.current = false
+            showRowHover(null)
+          }}
+        >
+          <RowTooltip
+            hover={rowHover}
+            canWrite={editable}
+            onClose={() => setRowHover(null)}
+            onRemoveRow={() => {
+              setRowHover(null)
+              layerRef.current?.removeRow(rowHover.sheetId, rowHover.row)
+            }}
+          />
+        </div>
+      ) : null}
+      {removal ? (
+        <DeletionDialog
+          request={removal.request}
+          onDecide={(confirmed) => {
+            removal.resolve(confirmed)
+            setRemoval(null)
+          }}
+        />
+      ) : null}
+      {assigneeTarget ? (
+        <AssigneeEditor
+          target={assigneeTarget}
+          workbookId={workbook.id}
+          projectId={workbook.bcProjectId}
+          onSave={(text) => layerRef.current?.writeAssignees(assigneeTarget, text) ?? false}
+          onClose={() => setAssigneeTarget(null)}
+        />
+      ) : null}
+      <SyncPanel
+        open={panelOpen}
+        info={syncInfo}
+        conflicts={panelData.conflicts}
+        attention={panelData.attention}
+        options={people}
+        canResolve={editable}
+        onClose={() => setPanelOpen(false)}
+        onGoTo={goTo}
+        onRestore={resolveConflict((id, cid) => api.restoreConflict(id, cid))}
+        onDismiss={resolveConflict((id, cid) => api.dismissConflict(id, cid))}
+      />
     </div>
   )
 }

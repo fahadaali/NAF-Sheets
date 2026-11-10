@@ -6,7 +6,7 @@
 // This module and its CSS are only reached through the lazily loaded editor
 // screen, so the files screen never downloads Univer (~2 MB gzip).
 
-import { UniverSheetsCorePreset } from '@univerjs/preset-sheets-core'
+import { CalculationMode, UniverSheetsCorePreset } from '@univerjs/preset-sheets-core'
 import SheetsCoreArSA from '@univerjs/preset-sheets-core/locales/ar-SA'
 import { UniverSheetsConditionalFormattingPreset } from '@univerjs/preset-sheets-conditional-formatting'
 import SheetsCfArSA from '@univerjs/preset-sheets-conditional-formatting/locales/ar-SA'
@@ -21,7 +21,7 @@ import SheetsLinkArSA from '@univerjs/preset-sheets-hyper-link/locales/ar-SA'
 import { UniverSheetsNotePreset } from '@univerjs/preset-sheets-note'
 import SheetsNoteArSA from '@univerjs/preset-sheets-note/locales/ar-SA'
 import { createUniver, LocaleType, mergeLocales } from '@univerjs/presets'
-import type { IWorkbookData } from '@univerjs/presets'
+import type { FUniver, IWorkbookData } from '@univerjs/presets'
 import { CommandType } from '@univerjs/core'
 import { enableRtlGrid } from '@naf-sheets/univer-rtl'
 import type { EditorTarget } from '../lib/cell-target'
@@ -36,6 +36,10 @@ import '@univerjs/preset-sheets-data-validation/lib/index.css'
 import '@univerjs/preset-sheets-hyper-link/lib/index.css'
 import '@univerjs/preset-sheets-note/lib/index.css'
 
+/** The Facade workbook and worksheet types, as `createWorkbook` returns them. */
+export type FWorkbook = ReturnType<FUniver['createWorkbook']>
+export type FWorksheet = ReturnType<FWorkbook['getActiveSheet']>
+
 /** What the editor shows about the right-to-left grid layer. */
 export interface RtlState {
   mirrored: boolean
@@ -45,6 +49,8 @@ export interface RtlState {
 
 export interface MountedWorkbook {
   readonly unitId: string
+  /** The public Facade of this workbook, for the synced-sheet layer (src/editor/sync-layer.ts). */
+  readonly facade: { univerAPI: FUniver; workbook: FWorkbook }
   /** Current `IWorkbookData` (a copy). */
   snapshot(): unknown
   setEditable(editable: boolean): void
@@ -90,7 +96,18 @@ export async function mountWorkbook(host: HTMLElement, data: Partial<IWorkbookDa
       [LocaleType.AR_SA]: mergeLocales(SheetsCoreArSA, SheetsCfArSA, SheetsFilterArSA, SheetsSortArSA, SheetsDvArSA, SheetsLinkArSA, SheetsNoteArSA),
     },
     presets: [
-      UniverSheetsCorePreset({ container: host, header: true, toolbar: true, formulaBar: true }),
+      UniverSheetsCorePreset({
+        container: host,
+        header: true,
+        toolbar: true,
+        formulaBar: true,
+        // Every formula is computed when the workbook opens, not only those
+        // without a cached value: a server write (inbound sync, sheet-model
+        // OPEN_QUESTIONS #16) leaves stale cached values in formulas that
+        // depend on the cells it changed. The results are local-only
+        // mutations, so opening still saves nothing (apps/web/OPEN_QUESTIONS.md #38).
+        formula: { initialFormulaComputing: CalculationMode.FORCED },
+      }),
       UniverSheetsConditionalFormattingPreset(),
       UniverSheetsFilterPreset(),
       UniverSheetsSortPreset(),
@@ -216,6 +233,7 @@ export async function mountWorkbook(host: HTMLElement, data: Partial<IWorkbookDa
 
     return {
       unitId,
+      facade: { univerAPI, workbook },
       snapshot: () => workbook.save(),
       setEditable: (editable) => {
         if (!disposed) workbook.setEditable(editable)

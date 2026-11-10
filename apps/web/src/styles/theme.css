@@ -94,4 +94,29 @@
   --stepper-dot-size: 1.75rem;
   --select-max-width: 22rem;
   --input-number-width: 6rem;
+
+  /*
+   * Synced sheets in the grid (wave 3). The grid is a canvas: the editor reads
+   * these with getComputedStyle and draws with them, so they stay here too.
+   * Pixel values are unitless where the canvas needs a number.
+   */
+  --row-state-synced: var(--color-success);
+  --row-state-pending: var(--color-info);
+  --row-state-error: var(--color-danger);
+  --row-state-conflict: var(--color-warning);
+  --row-state-deleted: var(--color-neutral);
+  --unsynced-hatch: #9aa0a6;
+  --unsynced-hatch-alpha: 0.45;
+  --unsynced-hatch-spacing: 6;
+  --conflict-marker: var(--color-warning);
+  --conflict-marker-size: 8;
+  /* Row header width of a synced sheet (Univer's default is 46): room for the indicator. */
+  --row-margin-width: 64;
+  --row-indicator-size: 14;
+  /* Start padding of a subtask's title (sheet-model `subtaskIndent`). */
+  --subtask-indent: 16;
+  --avatar-size: 1.5rem;
+  --chip-height: 1.5rem;
+  --picker-list-height: 18rem;
+  --tooltip-max-width: 20rem;
 }

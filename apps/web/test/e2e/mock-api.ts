@@ -6,6 +6,11 @@ import { DEFAULT_COLUMNS } from '@naf-sheets/shared'
 import type {
   ApiError,
   ApiErrorCode,
+  AssigneeOptionsResponse,
+  ConflictRecord,
+  CreateExternalContactRequest,
+  ExternalContact,
+  GrantProjectPersonRequest,
   BasecampLinkResponse,
   BasecampProjectsResponse,
   BasecampTodolistsResponse,
@@ -23,6 +28,7 @@ import type {
   SheetMeta,
   WorkbookResponse,
   WorkbookSummary,
+  WorkbookSyncResponse,
 } from '@naf-sheets/shared'
 
 export interface Recorded {
@@ -98,6 +104,19 @@ export class MockApi {
     bcProjectId: plan.project.mode === 'existing' ? plan.project.projectId : plan.project.mode === 'create' ? 777 : null,
     sheets: plan.sheets.map((s) => ({ sheetId: s.sheetId, bcTodolistId: s.mode === 'local' ? null : (s.todolistId ?? 888), queuedTasks: 0 })),
   })
+
+  // --- Wave 3 (packages/shared/src/api-sync.ts) -----------------------------
+  /** GET …/sync per workbook; unlinked when absent. */
+  sync: Record<string, WorkbookSyncResponse> = {}
+  /** GET …/conflicts per workbook (unresolved). */
+  conflicts: Record<string, ConflictRecord[]> = {}
+  /** GET …/assignee-options per workbook. */
+  assigneeOptions: Record<string, AssigneeOptionsResponse> = {}
+  /** POST …/project-people: what to answer (default: the person joins the project). */
+  grant: ((workbookId: string, req: GrantProjectPersonRequest) => Reply) | null = null
+  /** POST …/sync-now: lists queued. */
+  syncNowQueued = 2
+  private externalCount = 0
 
   bodies(method: string, path: string): unknown[] {
     return this.requests.filter((r) => r.method === method && r.path === path).map((r) => r.body)
@@ -198,11 +217,62 @@ export class MockApi {
     return undefined
   }
 
+  /** The endpoints of packages/shared/src/api-sync.ts; undefined when the path is not one of them. */
+  private wave3(method: string, path: string, body: unknown): Reply | undefined {
+    if (path === '/api/external-contacts' && method === 'POST') {
+      if (this.me.user.role === 'viewer') return error(403, 'forbidden', 'ليست لديك صلاحية إضافة جهات خارجية.')
+      const req = body as CreateExternalContactRequest
+      if (typeof req?.name !== 'string' || req.name.trim() === '') return error(400, 'invalid_request', 'اسم الجهة الخارجية فارغ. اكتبه ثم أعد المحاولة.')
+      const contact: ExternalContact = { id: `ext-new-${++this.externalCount}`, name: req.name.trim(), organization: req.organization ?? null, email: req.email ?? null, phone: req.phone ?? null }
+      for (const options of Object.values(this.assigneeOptions)) options.externals = [...options.externals, contact]
+      return { status: 201, body: contact }
+    }
+    const m = /^\/api\/workbooks\/([^/]+)\/(sync|sync-now|conflicts|assignee-options|project-people|conflicts\/([^/]+)\/(restore|dismiss))$/.exec(path)
+    if (!m?.[1]) return undefined
+    const id = decodeURIComponent(m[1])
+    const stored = this.workbooks.get(id)
+    if (!stored) return error(404, 'not_found', 'الملف غير موجود. عُد إلى قائمة الملفات واختر ملفاً آخر.')
+    const reader = stored.workbook.access === 'viewer'
+    const what = m[2]
+    if (what === 'sync' && method === 'GET') {
+      return { status: 200, body: this.sync[id] ?? { state: 'unlinked', lastSuccessAt: null, counts: { pending: 0, error: 0, conflict: 0 }, notice: null, tasks: [] } }
+    }
+    if (what === 'sync-now' && method === 'POST') {
+      if (reader) return error(403, 'forbidden', 'ليست لديك صلاحية طلب المزامنة.')
+      return { status: 202, body: { queued: this.syncNowQueued } }
+    }
+    if (what === 'conflicts' && method === 'GET') return { status: 200, body: { conflicts: this.conflicts[id] ?? [] } }
+    if (m[3] && method === 'POST') {
+      if (reader) return error(403, 'forbidden', 'ليست لديك صلاحية حل التعارضات.')
+      const list = this.conflicts[id] ?? []
+      if (!list.some((c) => c.id === m[3])) return error(404, 'not_found', 'التعارض غير موجود؛ ربما حُلّ من قبل. حدّث الصفحة.')
+      this.conflicts[id] = list.filter((c) => c.id !== m[3])
+      return m[4] === 'restore' ? { status: 202, body: { restored: true } } : { status: 204, body: undefined }
+    }
+    if (what === 'assignee-options' && method === 'GET') {
+      return { status: 200, body: this.assigneeOptions[id] ?? { projectPeople: [], accountPeople: [], externals: [], refreshedAt: null } }
+    }
+    if (what === 'project-people' && method === 'POST') {
+      if (reader) return error(403, 'forbidden', 'ليست لديك صلاحية تعديل الملف.')
+      const req = body as GrantProjectPersonRequest
+      if (this.grant) return this.grant(id, req)
+      const options = this.assigneeOptions[id]
+      const person = options?.accountPeople.find((p) => p.id === req.bcPersonId)
+      if (!options || !person) return error(404, 'not_found', 'الشخص غير موجود في حساب Basecamp.')
+      options.accountPeople = options.accountPeople.filter((p) => p.id !== person.id)
+      options.projectPeople = [...options.projectPeople, person]
+      return { status: 200, body: options }
+    }
+    return undefined
+  }
+
   private reply(method: string, url: URL, body: unknown): Reply {
     const path = url.pathname
     if (method === 'GET' && path === '/api/me') return { status: 200, body: this.me }
     const wave2 = this.wave2(method, path, body)
     if (wave2) return wave2
+    const wave3 = this.wave3(method, path, body)
+    if (wave3) return wave3
 
     if (path === '/api/workbooks') {
       if (method === 'GET') {

@@ -7,13 +7,17 @@
 // `onUnauthorized` with the login URL; the app sends the browser there.
 
 import type {
+  AssigneeOptionsResponse,
   BasecampLinkResponse,
   BasecampPeopleResponse,
   BasecampProjectsResponse,
   BasecampTodolistsResponse,
+  CreateExternalContactRequest,
   CreateWorkbookRequest,
   CreateWorkbookResponse,
+  ExternalContact,
   GoogleLinkResponse,
+  GrantProjectPersonRequest,
   ImportGsheetsRequest,
   ImportGsheetsResponse,
   ImportReportResponse,
@@ -23,11 +27,15 @@ import type {
   MeResponse,
   PeopleMatchesResponse,
   PutPeopleMatchRequest,
+  RestoreConflictResponse,
   RevokeBasecampLinkResponse,
   SaveSnapshotRequest,
   SaveSnapshotResponse,
+  SyncNowResponse,
+  WorkbookConflictsResponse,
   WorkbookListResponse,
   WorkbookResponse,
+  WorkbookSyncResponse,
 } from '@naf-sheets/shared'
 import { t } from '../strings'
 import type { SaveErrorKind } from './autosave'
@@ -212,6 +220,30 @@ export function createApiClient(options: ApiClientOptions = {}) {
     /** GET /api/workbooks/:id/import-report */
     getImportReport: (id: string, signal?: AbortSignal) =>
       request<ImportReportResponse>('GET', `${workbookPath(id)}/import-report`, undefined, signal),
+
+    // --- Wave 3: packages/shared/src/api-sync.ts ------------------------------
+
+    /** GET /api/workbooks/:id/sync — per-row sync state; every role that may open the workbook. */
+    getSync: (id: string, signal?: AbortSignal) => request<WorkbookSyncResponse>('GET', `${workbookPath(id)}/sync`, undefined, signal),
+    /** POST /api/workbooks/:id/sync-now → 202 «مزامنة الآن». */
+    syncNow: (id: string) => request<SyncNowResponse>('POST', `${workbookPath(id)}/sync-now`),
+    /** GET /api/workbooks/:id/conflicts — unresolved only. */
+    getConflicts: (id: string, signal?: AbortSignal) =>
+      request<WorkbookConflictsResponse>('GET', `${workbookPath(id)}/conflicts`, undefined, signal),
+    /** POST /api/workbooks/:id/conflicts/:conflictId/restore → 202: the losing value comes back. */
+    restoreConflict: (id: string, conflictId: string) =>
+      request<RestoreConflictResponse>('POST', `${workbookPath(id)}/conflicts/${encodeURIComponent(conflictId)}/restore`),
+    /** POST /api/workbooks/:id/conflicts/:conflictId/dismiss → 204: the winner stays. */
+    dismissConflict: (id: string, conflictId: string) =>
+      request<unknown>('POST', `${workbookPath(id)}/conflicts/${encodeURIComponent(conflictId)}/dismiss`, undefined, undefined, true).then(() => undefined),
+    /** GET /api/workbooks/:id/assignee-options — the assignee cell's sections (§8.2). */
+    getAssigneeOptions: (id: string, signal?: AbortSignal) =>
+      request<AssigneeOptionsResponse>('GET', `${workbookPath(id)}/assignee-options`, undefined, signal),
+    /** POST /api/external-contacts → 201 (§8.2 case 3). */
+    createExternalContact: (body: CreateExternalContactRequest) => request<ExternalContact>('POST', '/api/external-contacts', body),
+    /** POST /api/workbooks/:id/project-people — adds an account member to the project with the caller's token (§8.2 case 1). */
+    grantProjectPerson: (id: string, body: GrantProjectPersonRequest) =>
+      request<AssigneeOptionsResponse>('POST', `${workbookPath(id)}/project-people`, body),
   }
 }
 

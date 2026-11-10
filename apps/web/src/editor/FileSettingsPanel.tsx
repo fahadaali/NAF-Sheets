@@ -1,9 +1,10 @@
 // «إعدادات الملف» (spec §12.1 item 3), side panel. So far it holds the
 // Basecamp link of the workbook: its project, or the way into the linking
-// wizard (§7.3). Members, new-list behaviour and «مزامنة الآن» are later work.
+// wizard (§7.3), and «مزامنة الآن» (§9.4) for a linked workbook. Members and
+// new-list behaviour are later work.
 
 import { useEffect, useId, useRef, useState } from 'react'
-import { FolderKanban, LoaderCircle, X } from 'lucide-react'
+import { FolderKanban, LoaderCircle, RefreshCw, X } from 'lucide-react'
 import type { WorkbookResponse } from '@naf-sheets/shared'
 import { Notice } from '../components/Notice'
 import { t } from '../strings'
@@ -21,16 +22,21 @@ export function FileSettingsPanel({
   workbook,
   onClose,
   onStartWizard,
+  onSyncNow,
 }: {
   open: boolean
   workbook: WorkbookResponse['workbook']
   onClose: () => void
   /** Saves pending edits, then opens the wizard; resolves with an Arabic message when it could not. */
   onStartWizard: () => Promise<string | null>
+  /** «مزامنة الآن» (POST …/sync-now); absent when the caller may not, or nothing syncs. */
+  onSyncNow?: (() => Promise<{ ok: boolean; message: string }>) | undefined
 }) {
   const ref = useRef<HTMLDialogElement>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [syncing, setSyncing] = useState(false)
+  const [syncResult, setSyncResult] = useState<{ ok: boolean; message: string } | null>(null)
   const ids = useId()
 
   useEffect(() => {
@@ -38,6 +44,7 @@ export function FileSettingsPanel({
     if (!dialog) return
     if (open && !dialog.open) {
       setError(null)
+      setSyncResult(null)
       dialog.showModal()
     } else if (!open && dialog.open) {
       dialog.close()
@@ -51,6 +58,14 @@ export function FileSettingsPanel({
     const problem = await onStartWizard()
     setBusy(false)
     if (problem) setError(problem)
+  }
+
+  const syncNow = async () => {
+    if (!onSyncNow || syncing) return
+    setSyncing(true)
+    setSyncResult(null)
+    setSyncResult(await onSyncNow())
+    setSyncing(false)
   }
 
   const linked = workbook.bcProjectId !== null
@@ -77,10 +92,23 @@ export function FileSettingsPanel({
           {t.fileSettings.basecampSection}
         </h3>
         {linked ? (
-          <p>
-            {/* OPEN: the contract carries the project id only, not its name (OPEN_QUESTIONS.md #3). */}
-            {t.fileSettings.linkedTo} <bdi className="num">{workbook.bcProjectId}</bdi>
-          </p>
+          <>
+            <p>
+              {/* OPEN: the contract carries the project id only, not its name (OPEN_QUESTIONS.md #3). */}
+              {t.fileSettings.linkedTo} <bdi className="num">{workbook.bcProjectId}</bdi>
+            </p>
+            {onSyncNow ? (
+              <button type="button" className="button" onClick={() => void syncNow()} disabled={syncing} data-testid="sync-now">
+                {syncing ? <LoaderCircle className="icon spin" aria-hidden="true" /> : <RefreshCw className="icon" aria-hidden="true" />}
+                {syncing ? t.rowSync.syncNowRunning : t.rowSync.syncNow}
+              </button>
+            ) : null}
+            {syncResult ? (
+              <Notice tone={syncResult.ok ? 'info' : 'danger'} testId="sync-now-result">
+                <p>{syncResult.message}</p>
+              </Notice>
+            ) : null}
+          </>
         ) : (
           <>
             <p className="muted">{t.fileSettings.unlinked}</p>
