@@ -12,6 +12,7 @@
     "@naf-sheets/basecamp": "0.0.0",
     "@naf-sheets/gsheets-import": "0.0.0",
     "@naf-sheets/shared": "0.0.0",
+    "@naf-sheets/sheet-model": "0.0.0",
     "@naf-sheets/sync-engine": "0.0.0",
     "hono": "4.13.17",
     "naf-auth": "github:fahadaali/naf-auth#v3.4.0"

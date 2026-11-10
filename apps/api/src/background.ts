@@ -1,6 +1,9 @@
-// Queue consumers and the cron trigger. Phases 3–4 stubs: typed, no work yet.
+// Queue consumers and the cron trigger: dispatch only. The work lives in
+// src/sync/outbound (bc-outbound) and src/sync/inbound (bc-inbound, cron).
 
 import type { BcInboundMessage, BcOutboundMessage, Env } from './env'
+import { handleInboundBatch, runReconciliation } from './sync/inbound'
+import { handleOutboundBatch } from './sync/outbound'
 
 export const OUTBOUND_QUEUE = 'bc-outbound'
 export const INBOUND_QUEUE = 'bc-inbound'
@@ -25,12 +28,12 @@ export type QueueMessageBody = BcOutboundMessage | BcInboundMessage
  * Basecamp regardless of dropped events. Payloads are never logged (§14).
  */
 // OPEN: bc-inbound and its retry count are this file's reading of spec §9.3.3 (OPEN_QUESTIONS.md #16).
-export async function handleQueue(batch: MessageBatch<QueueMessageBody>, _env: Env, _ctx: ExecutionContext): Promise<void> {
+export async function handleQueue(batch: MessageBatch<QueueMessageBody>, env: Env, ctx: ExecutionContext): Promise<void> {
   switch (batch.queue) {
     case OUTBOUND_QUEUE:
+      return handleOutboundBatch(batch as MessageBatch<BcOutboundMessage>, env, ctx)
     case INBOUND_QUEUE:
-      for (const message of batch.messages) message.ack()
-      return
+      return handleInboundBatch(batch as MessageBatch<BcInboundMessage>, env, ctx)
     default:
       // A queue this Worker does not know: leave the messages to be retried.
       console.error(`queue consumer: unknown queue ${batch.queue}`)
@@ -46,4 +49,6 @@ export async function handleQueue(batch: MessageBatch<QueueMessageBody>, _env: E
  * diff changed tasks; check every webhook is `active` and re-enable it;
  * refresh bc_people_cache (§9.5). Read-only service token only.
  */
-export async function handleScheduled(_controller: ScheduledController, _env: Env, _ctx: ExecutionContext): Promise<void> {}
+export async function handleScheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+  await runReconciliation(env, ctx)
+}

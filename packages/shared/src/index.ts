@@ -1,3 +1,5 @@
 export * from './domain'
 export * from './api'
 export * from './api-integrations'
+export * from './api-sync'
+export * from './room-protocol'

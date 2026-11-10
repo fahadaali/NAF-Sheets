@@ -6,6 +6,7 @@ import type { QueueMessageBody } from './background'
 import { registerBasecampLinkRoutes } from './basecamp-link'
 import type { Env } from './env'
 import { registerGoogleImportRoutes } from './google-import'
+import { registerSyncRoutes } from './sync/outbound'
 
 const app = createApp()
 // Registered here, after createApp's auth guard, and not inside createApp:
@@ -13,6 +14,7 @@ const app = createApp()
 // Launchpad/Google. Each module throws if registered twice on one app.
 registerBasecampLinkRoutes(app)
 registerGoogleImportRoutes(app)
+registerSyncRoutes(app)
 
 export default {
   fetch: (request, env, ctx) => app.fetch(request, env, ctx),
