@@ -134,22 +134,35 @@ Planned layout (§4.3): `apps/web`, `apps/api`, `packages/{shared,gsheets-import
 
 ## 4. Commands
 
-Phase 0 spike only (no application exists yet):
+From the repository root (npm workspaces; `.npmrc` sets `save-exact` and `legacy-peer-deps`):
 
 ```bash
-# Univer feature check — builds a test page and drives it in headless Chromium
-cd spike/univer
-npm install
-npm run build
-npm run typecheck
-npm run preview &          # serves on :4173
-npm run verify             # writes results/results.json and screenshots
-npm run test:rtl           # 14 interaction checks on the mirrored (RTL) grid
-npm run closeups           # 2x cell close-ups cited in the phase 0 report
-npm run reference          # the browser's own RTL/LTR rendering of the same strings
-
-# Basecamp live-test kit — tests run offline against a mock Basecamp
-cd spike/basecamp
-npm test
-# live run: see spike/basecamp/README.md (needs a test project and credentials)
+npm ci                     # install exactly what package-lock.json says
+npm run typecheck          # every workspace
+npm test                   # every workspace's unit/integration tests (vitest)
 ```
+
+Per package:
+
+```bash
+# apps/api — Worker + D1/R2/KV/Queues tests on local Miniflare (no remote calls)
+cd apps/api && npx vitest run
+
+# apps/web — unit tests, then the browser smoke test against a mocked API (:4174)
+cd apps/web && npx vitest run && npm run test:e2e
+
+# packages/univer-rtl — the RTL grid layer
+cd packages/univer-rtl
+npm test                   # 72 unit tests (pure helpers + Univer contract)
+npm run check:pins         # every @univerjs/* == VERIFIED_UNIVER_VERSION
+npm run harness:build && (npm run harness:preview &)   # test page on :4175
+npm run test:rtl           # 33 interaction checks (BROWSER=chromium|firefox|webkit)
+npm run perf:rtl           # frame cost with and without the mirror
+
+# packages/gsheets-import — regenerate the Univer function list after a Univer bump
+cd packages/gsheets-import && npm run generate:functions
+```
+
+Never run `playwright install` locally: Chromium is pre-installed; CI installs Firefox and WebKit.
+
+Phase 0 evidence (frozen; do not develop there): `spike/univer`, `spike/basecamp` (live Basecamp kit: see its README).
