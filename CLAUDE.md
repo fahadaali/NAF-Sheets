@@ -102,16 +102,20 @@ Planned layout (§4.3): `apps/web`, `apps/api`, `packages/{shared,gsheets-import
 - Writes go out with **the acting user's own token**. The service token is for webhooks, read-only reconciliation and member caches only. The single documented exception is the automatic parent-assignment rule (§8.1).
 - Retry `429` after `Retry-After` and `5xx` with backoff. Never retry `404`; `Reason: Account Inactive` stops the whole account's sync.
 
-### Univer — constraints found in phase 0
+### Univer — constraints and the RTL grid layer
 
-- **Univer's grid does not render RTL.** `direction: 'rtl'` mirrors only the UI chrome (menus, toolbar, tabs, editor alignment); `worksheet.rightToLeft` is stored but never read by the renderer. Re-checked 2026-11-10: 1.4.0 is still the latest release.
-- **Solved by a mirroring layer: `spike/univer/src/rtl-grid.ts`** (phase 0, pending approval — `docs/phase-0-report.md` §9). It flips the sheet canvas container with CSS, flips text back per line (plain cells) or per glyph group (rich/wrapped cells), un-flips the cell editor, mirrors cell-anchored popup rectangles, swaps ArrowLeft/ArrowRight for selection moves and negates horizontal wheel deltas. The model is untouched. `npm run test:rtl` must pass 14/14.
-- The layer depends on Univer internals (`Documents.prototype._drawGlyphGroup` / `_drawGlyphGroupBackgrounds`, `scene.render`, `MoveSelectionCommand.handler`, `ICanvasPopupService.addPopup`, `FUniver._injector`). **Never raise the `@univerjs/*` pin without re-running `npm run test:rtl` and the screenshots.**
+- **Univer's grid does not render RTL** (1.4.0, re-checked 2026-11-10): `direction: 'rtl'` mirrors only the UI chrome; `worksheet.rightToLeft` is never read by the renderer.
+- **Solved by `@naf-sheets/univer-rtl`** (`packages/univer-rtl/src/rtl-grid.ts`; phase 0 original in `spike/univer`). It flips the canvas container with CSS and flips back what must not be mirrored: text per line or glyph group, rotated cells as a whole, images, the cell editor. It mirrors popup anchors and placement directions, swaps arrow keys and the toolbar's left/right alignment, fixes touch hit testing and negates horizontal wheel deltas. The model is never changed by the mirror.
+- **Alignment is logical** (owner decision 2026-11-10): model LEFT = start = visual right. The toolbar and alignment shortcuts are swapped so their buttons mean what they show; programmatic writes (Facade, import, sync — anything that passes an explicit `range`) are stored as given. The Google Sheets import must state which it writes.
+- **Upgrade safety (owner requirement: updates must not break it):**
+  1. Every `@univerjs/*` is pinned exactly, with the lockfile; `save-exact` in `.npmrc`. Nothing changes without a deliberate pull request.
+  2. `npm run check:pins` fails unless every `@univerjs/*` equals `VERIFIED_UNIVER_VERSION` in `rtl-grid.ts`. Raising Univer therefore means raising that constant in the same PR.
+  3. CI (`.github/workflows/rtl-grid.yml`) runs the interaction suite in Chromium, Firefox and WebKit; a Univer bump merges only when it is green.
+  4. At runtime `checkUniverContract()` verifies every hooked internal before applying anything. A missing or changed hook leaves the stock grid untouched and reports why (`RtlGridStatus`). A heartbeat withdraws the mirror if plain text stops flowing through the flip-back path. Both are covered by tests.
 - Never mutate a command's `params` object to change behaviour: shortcut parameters are shared between key presses. Wrap the handler and pass a copy.
-- Alignment on the mirrored grid is **logical**: model LEFT renders at the start (visual right), RIGHT at the end (visual left). The toolbar's left/right buttons therefore look inverted. Open decision — report §9.5.
-- Known gaps of the layer: rotated text and in-sheet images render mirrored; note/filter popups keep Univer's right-hand placement; untested on Firefox, Safari and touch.
-- Without the layer, cell text uses an LTR paragraph base (Arabic+Latin words come out in LTR order) and needs explicit right alignment. With the layer neither applies, and the `RLI…PDI` display interceptor from report §2.3 is not needed.
-- Sheet services and the render unit are created asynchronously after `createWorkbook`; resolve them after it (the layer waits for `created$` and for the canvas to be mounted).
+- Univer's automatic row height depends on timing (whether the cell editor is initialised before data is written). Tests and the app must wait for lifecycle `Steady` before mutating, or row heights differ between runs.
+- `FRange.getCellRect()` is raw skeleton geometry: it ignores scroll and zoom. Do not position anything with it after scrolling or zooming.
+- Sheet services and the render unit are created asynchronously after `createWorkbook`; resolve them after it.
 - Out of scope / Pro-only: XLSX import/export, built-in collaboration, pivot tables, charts, print, edit history.
 
 ---
