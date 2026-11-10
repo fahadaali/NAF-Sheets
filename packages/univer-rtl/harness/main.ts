@@ -40,6 +40,7 @@ import { enableRtlGrid, enableRtlText, textLayerCounters, textLayerState } from 
 import type { RtlGridStatus } from '../src/index'
 import { Documents, IRenderManagerService } from '@univerjs/engine-render'
 import { NodePositionConvertToCursor } from '@univerjs/docs-ui'
+import { IPlatformService } from '@univerjs/ui'
 
 import '@univerjs/preset-sheets-core/lib/index.css'
 import '@univerjs/preset-sheets-conditional-formatting/lib/index.css'
@@ -471,3 +472,11 @@ run().catch((e) => {
 ;(window as unknown as { univerAPI: unknown }).univerAPI = univerAPI
 // Diagnostics of the document-text layer, for the interaction suite.
 ;(window as unknown as { __rtlText: unknown }).__rtlText = { state: textLayerState, counters: textLayerCounters }
+// Univer's own platform decision, which picks its key map: with Mac bindings,
+// line start/end are Cmd+Left/Right and Home/End are not bound. Playwright's
+// WebKit identifies itself as Safari on a Mac, so it gets Mac bindings.
+;(window as unknown as { __univerKeys: unknown }).__univerKeys = () => ({
+  mac: (univerAPI as unknown as { _injector: { get: (t: unknown) => { isMac: boolean } } })._injector.get(IPlatformService).isMac,
+  appVersion: navigator.appVersion,
+  platform: navigator.platform,
+})

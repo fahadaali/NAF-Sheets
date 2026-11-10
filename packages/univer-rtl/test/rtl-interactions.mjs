@@ -14,9 +14,14 @@
 //
 // Run while `npm run harness:preview` is serving on :4175.
 //   BROWSER=chromium|firefox|webkit   (default chromium; CI runs all three)
+//   USER_AGENT=...                    (optional) for every page. With a Mac user
+//                                     agent, Univer uses its Mac key map (as it
+//                                     does in Playwright's WebKit): a way to run
+//                                     that key map in Chromium locally.
 // Writes results/rtl-interactions[-browser].json and results/mirror-*.png.
 import { createRequire } from 'node:module'
 import { mkdirSync, writeFileSync } from 'node:fs'
+import { applyKnownUpstream } from './known-upstream.mjs'
 
 const playwright = createRequire(import.meta.url)('playwright')
 const BROWSER = process.env.BROWSER ?? 'chromium'
@@ -49,7 +54,7 @@ const FILLTEXT_RECORDER = () => {
   }
 }
 const openPage = async (query, contextOptions = {}, { record = false } = {}) => {
-  const context = await browser.newContext({ viewport: { width: 1280, height: 720 }, deviceScaleFactor: 1, ...contextOptions })
+  const context = await browser.newContext({ viewport: { width: 1280, height: 720 }, deviceScaleFactor: 1, ...(process.env.USER_AGENT ? { userAgent: process.env.USER_AGENT } : {}), ...contextOptions })
   if (record) await context.addInitScript(FILLTEXT_RECORDER)
   const page = await context.newPage()
   page.on('pageerror', (e) => pageErrors.push(`${query}: ${String(e).slice(0, 300)}`))
@@ -59,6 +64,13 @@ const openPage = async (query, contextOptions = {}, { record = false } = {}) => 
   return page
 }
 const page = await openPage('?dir=rtl&grid=mirror&selftest=0')
+// Univer's key map for this browser (harness/main.ts, from Univer's own
+// IPlatformService): with Mac bindings, line start/end are Cmd+Left/Right and
+// Home/End are not bound at all. Line moves are pressed the way this platform's
+// users press them; the control check below records both.
+const KEYS = await page.evaluate(() => window.__univerKeys())
+const LINE_START = KEYS.mac ? 'Meta+ArrowLeft' : 'Home'
+const LINE_END = KEYS.mac ? 'Meta+ArrowRight' : 'End'
 // Pixel analysis runs in a blank page, away from the patched canvas prototype.
 const lab = await (await browser.newContext()).newPage()
 
@@ -195,9 +207,10 @@ const paintedUnits = (p, unitId) => p.evaluate(async (unitId) => {
   return [...seen.values()].sort((a, b) => a.x0 - b.x0)
 }, unitId)
 // The browser's own layout of `text` in a dir= element, cut into the same units: whole Arabic runs, single other characters, no spaces.
-const browserUnits = (p, text, dir = 'rtl') => p.evaluate(({ text, dir, run }) => {
+// By default the paragraph direction is the browser's own first-strong rule (dir="auto"), as in the layer; text without a strong character follows the RTL surface.
+const browserUnits = (p, text, dir) => p.evaluate(({ text, dir, run }) => {
   const el = document.createElement('div')
-  el.dir = dir
+  el.dir = dir ?? (/\p{L}/u.test(text) ? 'auto' : 'rtl')
   el.style.cssText = 'position:fixed;top:0;left:0;white-space:pre;font:11pt "Thmanyah Sans";visibility:hidden'
   el.textContent = text
   document.body.append(el)
@@ -803,11 +816,11 @@ await check('arrow keys move the caret visually; Home and End go to the logical 
     return at
   }
   // Pure Arabic: ArrowLeft goes forward in reading order, ArrowRight back.
-  const got = { home: await run(['Home']), end: await run(['End']), homeLeft3: await run(['Home', 'ArrowLeft', 'ArrowLeft', 'ArrowLeft']), endRight2: await run(['End', 'ArrowRight', 'ArrowRight']) }
+  const got = { home: await run([LINE_START]), end: await run([LINE_END]), homeLeft3: await run([LINE_START, 'ArrowLeft', 'ArrowLeft', 'ArrowLeft']), endRight2: await run([LINE_END, 'ArrowRight', 'ArrowRight']) }
   // Mixed line: the caret must move strictly left on every ArrowLeft until the
   // visual left end of the text, and strictly right back to the right end.
   await openEditor(tp, 'A1')
-  await tp.keyboard.press('Home')
+  await tp.keyboard.press(LINE_START)
   const units = await paintedUnits(tp, EDITOR_ID)
   const xs = [await caretX(tp)]
   for (let i = 0; i < 34; i++) {
@@ -842,7 +855,7 @@ await check('arrow keys move the caret visually; Home and End go to the logical 
 await check('Shift+Arrow and drag select the right glyphs (a split selection is two rectangles)', async () => {
   // Shift+ArrowLeft x3 from Home in «إعداد خطة الاتصال»: the first three letters, on the right.
   await openEditor(tp, 'A8')
-  await tp.keyboard.press('Home')
+  await tp.keyboard.press(LINE_START)
   const right = Math.max(...(await paintedUnits(tp, EDITOR_ID)).map((u) => u.x1))
   for (let i = 0; i < 3; i++) await tp.keyboard.press('Shift+ArrowLeft')
   const shiftRects = await selectionRects(tp)
@@ -878,24 +891,28 @@ await check('typing Arabic renders in bidi order live; the stored value is what 
   await openEditor(tp, 'A7')
   const steps = []
   let ok = true
+  let soFar = ''
   for (const piece of typed.split(/(?<= )/)) {
     await tp.keyboard.type(piece)
     await tp.waitForTimeout(60)
+    soFar += piece
     const shown = await docText(tp)
     const same = sameUnits(await paintedUnits(tp, EDITOR_ID), await browserUnits(tp, shown))
     ok = ok && same
-    steps.push({ shown, same })
+    steps.push({ typed: soFar, shown, same })
   }
   const shown = await docText(tp)
   await tp.keyboard.press('Enter')
   await tp.waitForTimeout(300)
   const stored = await value('A7', tp)
-  return { ok: ok && stored === shown, stored, shown, typedIntact: shown === typed, steps }
+  // Firefox: Playwright's synthetic Arabic input is corrupted before Univer sees it (known upstream, test/known-upstream.mjs).
+  const typedIntact = shown === typed
+  return { ok: ok && stored === shown && typedIntact, typed, stored, shown, typedIntact, steps }
 })
 
 await check('IME: the input sits at the caret, and composed text is ordered as it is composed', async () => {
   await openEditor(tp, 'A8')
-  await tp.keyboard.press('End')
+  await tp.keyboard.press(LINE_END)
   const caret = await caretX(tp)
   const ime = await imeBox(tp)
   let composition = 'not available in this browser (CDP is Chromium only)'
@@ -976,11 +993,60 @@ await check('enabled right after createWorkbook (as apps/web does): document tex
   const status = await p.evaluate(() => window.__rtlStatus)
   await sheet(p, 'bidi')
   await openEditor(p, 'A8')
-  await p.keyboard.press('Home')
+  await p.keyboard.press(LINE_START)
   for (let i = 0; i < 3; i++) await p.keyboard.press('ArrowLeft')
   const at = await markerOffset(p)
   await p.close()
-  return { ok: status?.mirrored === true && status.text?.applied === true && at === 3, status, offsetAfterHomeAndThreeArrowLeft: at }
+  return { ok: status?.mirrored === true && status.text?.applied === true && at === 3, status, lineStart: LINE_START, offsetAfterLineStartAndThreeArrowLeft: at }
+})
+
+await check('control (not the layer): line start/end and arrow keys in the editor of the unmirrored grid', async () => {
+  // Stock Univer, no mirror, no text layer, a Latin cell (per-letter glyphs in
+  // stock Univer too): do the keys reach Univer's editor in this browser, and
+  // which key map is it using? Univer binds line start/end to Home/End, except
+  // with Mac bindings, where they are Cmd+Left/Right and Home/End do nothing.
+  // The check passes only if stock Univer behaves exactly so.
+  const p = await openPage('?dir=rtl&selftest=0')
+  const keys = await p.evaluate(() => window.__univerKeys())
+  await sheet(p, 'bidi')
+  const text = BIDI_ROWS[6]
+  const run = async (presses) => {
+    const { x, y } = centre(await cellBox(p, 'A6', false))
+    await p.mouse.dblclick(x, y)
+    await p.waitForTimeout(350)
+    for (const k of presses) await p.keyboard.press(k)
+    const at = await markerOffset(p)
+    await cancelEdit(p)
+    return at
+  }
+  const got = {
+    lineStart: await run([LINE_START]),
+    lineEnd: await run([LINE_END]),
+    homeAfterLineEnd: await run([LINE_END, 'Home']),
+    endAfterLineStart: await run([LINE_START, 'End']),
+    lineStartRight3: await run([LINE_START, 'ArrowRight', 'ArrowRight', 'ArrowRight']),
+    lineEndLeft2: await run([LINE_END, 'ArrowLeft', 'ArrowLeft']),
+  }
+  const { x, y } = centre(await cellBox(p, 'A6', false))
+  await p.mouse.dblclick(x, y)
+  await p.waitForTimeout(350)
+  await p.keyboard.press(LINE_START)
+  for (let i = 0; i < 3; i++) await p.keyboard.press('Shift+ArrowRight')
+  await p.keyboard.type('Y')
+  const afterShift = await docText(p)
+  await cancelEdit(p)
+  await p.close()
+  const expected = {
+    lineStart: 0,
+    lineEnd: text.length,
+    // Home/End: bound only without Mac bindings.
+    homeAfterLineEnd: keys.mac ? text.length : 0,
+    endAfterLineStart: keys.mac ? 0 : text.length,
+    lineStartRight3: 3,
+    lineEndLeft2: text.length - 2,
+  }
+  const ok = keys.mac === KEYS.mac && Object.entries(expected).every(([k, v]) => got[k] === v) && afterShift === 'Y' + text.slice(3)
+  return { ok, keys, lineKeys: [LINE_START, LINE_END], got, expected, afterShift }
 })
 
 await check('control (not the layer): typing Arabic into the editor of the unmirrored grid', async () => {
@@ -1026,7 +1092,7 @@ await check('safety net: document text painted around the hook withdraws the tex
   const p = await openPage('?dir=rtl&grid=mirror&selftest=0&simulateBreak=text-heartbeat', {}, { record: true })
   await sheet(p, 'bidi')
   await openEditor(p, 'A8')
-  await p.keyboard.press('End')
+  await p.keyboard.press(LINE_END)
   await p.keyboard.type('ب')
   await p.waitForTimeout(600)
   const status = await p.evaluate(() => window.__rtlStatus)
@@ -1039,25 +1105,13 @@ await check('safety net: document text painted around the hook withdraws the tex
 await page.screenshot({ path: `${OUT}mirror-final${TAG}.png` })
 await browser.close()
 
-// Known upstream issue, matched strictly against evidence (report §9.8):
-// in Firefox, Playwright's synthetic Arabic typing reaches Univer 1.4.0's cell
-// editor duplicated and reversed — in the UNMIRRORED grid as well, so the mirror
-// is not the cause. Only when the mirrored editing check and the control fail
-// with the identical stored text, and the editor still sat on its cell, are the
-// two recorded as `knownUpstream` instead of failing the run. A mirrored result
-// that differs from the control is still a failure; a fix upstream shows up as
-// both passing.
-{
-  const edit = checks.find((c) => c.name.startsWith('double-click opens the editor'))
-  const control = checks.find((c) => c.name.startsWith('control (not the layer)'))
-  const editorOnCell = edit?.detail?.editor && edit.detail.cell && Math.abs(edit.detail.editor.right - edit.detail.cell.right) <= 6
-  if (BROWSER === 'firefox' && edit && control && !edit.ok && !control.ok && edit.detail.stored === control.detail.stored && editorOnCell) {
-    for (const c of [edit, control]) {
-      c.ok = true
-      c.knownUpstream = 'Univer 1.4.0 editor + Firefox: synthetic Arabic input stored duplicated and reversed, identically without the mirror'
-    }
-  }
-}
+// Known upstream defects, matched strictly against evidence: see
+// test/known-upstream.mjs (its rules have unit tests of their own). In short:
+// in Firefox, Playwright's synthetic Arabic typing reaches Univer 1.4.0's editor
+// duplicated and reversed, in the UNMIRRORED grid as well. Only when every
+// condition of a rule holds is a check recorded as `knownUpstream` instead of
+// failing the run; a fix upstream shows up as the checks passing.
+applyKnownUpstream(checks, BROWSER)
 
 const summary = { browser: BROWSER, passed: checks.filter((c) => c.ok && !c.knownUpstream).length, knownUpstream: checks.filter((c) => c.knownUpstream).length, total: checks.length, pageErrors, checks }
 writeFileSync(`${OUT}rtl-interactions${TAG}.json`, JSON.stringify(summary, null, 2))

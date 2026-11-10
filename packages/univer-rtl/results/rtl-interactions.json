@@ -1,8 +1,8 @@
 {
   "browser": "chromium",
-  "passed": 48,
+  "passed": 49,
   "knownUpstream": 0,
-  "total": 48,
+  "total": 49,
   "pageErrors": [],
   "checks": [
     {
@@ -673,27 +673,33 @@
       "ok": true,
       "detail": {
         "ok": true,
+        "typed": "نص تجريبي LinkedIn 2026 نهاية",
         "stored": "نص تجريبي LinkedIn 2026 نهاية",
         "shown": "نص تجريبي LinkedIn 2026 نهاية",
         "typedIntact": true,
         "steps": [
           {
+            "typed": "نص ",
             "shown": "نص ",
             "same": true
           },
           {
+            "typed": "نص تجريبي ",
             "shown": "نص تجريبي ",
             "same": true
           },
           {
+            "typed": "نص تجريبي LinkedIn ",
             "shown": "نص تجريبي LinkedIn ",
             "same": true
           },
           {
+            "typed": "نص تجريبي LinkedIn 2026 ",
             "shown": "نص تجريبي LinkedIn 2026 ",
             "same": true
           },
           {
+            "typed": "نص تجريبي LinkedIn 2026 نهاية",
             "shown": "نص تجريبي LinkedIn 2026 نهاية",
             "same": true
           }
@@ -845,7 +851,41 @@
             "applied": true
           }
         },
-        "offsetAfterHomeAndThreeArrowLeft": 3
+        "lineStart": "Home",
+        "offsetAfterLineStartAndThreeArrowLeft": 3
+      }
+    },
+    {
+      "name": "control (not the layer): line start/end and arrow keys in the editor of the unmirrored grid",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "keys": {
+          "mac": false,
+          "appVersion": "5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.12 Safari/537.36",
+          "platform": "Linux x86_64"
+        },
+        "lineKeys": [
+          "Home",
+          "End"
+        ],
+        "got": {
+          "lineStart": 0,
+          "lineEnd": 15,
+          "homeAfterLineEnd": 0,
+          "endAfterLineStart": 15,
+          "lineStartRight3": 3,
+          "lineEndLeft2": 13
+        },
+        "expected": {
+          "lineStart": 0,
+          "lineEnd": 15,
+          "homeAfterLineEnd": 0,
+          "endAfterLineStart": 15,
+          "lineStartRight3": 3,
+          "lineEndLeft2": 13
+        },
+        "afterShift": "Yecamp API v2"
       }
     },
     {

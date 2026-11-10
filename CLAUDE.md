@@ -154,10 +154,10 @@ cd apps/web && npx vitest run && npm run test:e2e
 
 # packages/univer-rtl — the RTL grid layer
 cd packages/univer-rtl
-npm test                   # 220 unit tests (pure helpers, UAX #9 bidi, text geometry, Univer contract)
+npm test                   # 233 unit tests (pure helpers, UAX #9 bidi, text geometry, known-upstream rules, Univer contract)
 npm run check:pins         # every @univerjs/* == VERIFIED_UNIVER_VERSION
 npm run harness:build && (npm run harness:preview &)   # test page on :4175
-npm run test:rtl           # 48 interaction checks (BROWSER=chromium|firefox|webkit)
+npm run test:rtl           # 49 interaction checks (BROWSER=chromium|firefox|webkit; USER_AGENT for the Mac key map)
 npm run perf:rtl           # frame cost with and without the mirror
 
 # packages/gsheets-import — regenerate the Univer function list after a Univer bump
