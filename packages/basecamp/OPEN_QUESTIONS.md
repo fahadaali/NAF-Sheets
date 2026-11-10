@@ -103,6 +103,41 @@ does the narrowest safe thing and the question stays here until someone decides.
     `Content-Type` and `Content-Length` (attachments.md); JSON there cannot work.
     The client follows the docs for this one endpoint. (`src/client.ts`)
 
+## Phase 5: attachments and comments (2026-11-10)
+
+14. **How `download_url` authenticates.** rich_text.md documents
+    `download_url` in "Structured attachment metadata" (and attachments.md in
+    the create response) but not whether it needs the OAuth token or answers
+    with a redirect to signed storage. `attachments.download` sends the token
+    only to URLs of this account (`https://3.basecampapi.com/{account}/…` or
+    `https://storage.3.basecamp.com/{account}/…`; anything else is refused
+    before a request), follows at most 3 redirects, HTTPS only, and never sends
+    the token after a redirect. One attempt: 429 / 5xx are thrown (`retryable`)
+    for the caller. Other hosts (e.g. `preview.3.basecamp.com`) are refused
+    until the live test shows they are needed. (`src/http.ts` `download`)
+
+15. **`attachable_sgid` and the description's `sgid`.** The create example in
+    attachments.md has `attachable_sgid` equal to `sgid`; the platform keys a
+    file by that value both when it embeds `<bc-attachment sgid="…">` and when
+    it reads `description_attachments[].sgid` back. Confirm they are the same
+    string for every file. No `caption` (or other attribute) is sent: only
+    `sgid` is in the docs the repository cites.
+
+16. **Streamed uploads.** `AttachmentUpload.data` may be a `BinarySource`
+    (`byteLength` + `open()`): the stream is opened again for every attempt
+    and `byteLength` is sent as Content-Length. In a Worker the caller must give
+    a known-length stream (e.g. through `FixedLengthStream`), or the runtime
+    sends it chunked and Basecamp's Content-Length requirement may refuse it.
+
+17. **`comments_count` and `description_attachments`** are read leniently by
+    `normaliseTodo` (absent key → absent field; malformed counter → null;
+    attachment entry without `sgid` skipped). They are not synced fields and are
+    never part of the sync engine's hash.
+
+18. **Uploads (`Upload` recordings, docs & files) are not read.** Spec §10 says
+    "the project's uploads tied to the task"; the documented API has no link
+    between an upload in a vault and a to-do, so nothing is wrapped for them.
+
 ## Smaller notes
 
 - **More than one enabled to-do set** in a project's `dock` is refused

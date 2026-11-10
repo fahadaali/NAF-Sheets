@@ -11,9 +11,11 @@
 
 import type { IsoDate, RemoteSubtask, RemoteTodo, SubtaskCreate, SubtaskPatch, TodoWrite } from '@naf-sheets/shared'
 import {
+  type BinarySource,
   type Conditional,
   type ConditionalCache,
   DEFAULT_RETRY_POLICY,
+  type DownloadResult,
   type FetchLike,
   HttpCore,
   type RetryPolicy,
@@ -136,7 +138,11 @@ export interface AttachmentUpload {
   name: string
   /** The file's own media type (attachments.md requires it; not JSON). */
   contentType: string
-  data: ArrayBuffer | Uint8Array
+  /**
+   * The bytes, or a stored file streamed for each attempt (phase 5: the
+   * platform's R2 copy, never buffered whole in memory).
+   */
+  data: ArrayBuffer | Uint8Array | BinarySource
 }
 
 export type BasecampClient = ReturnType<typeof createBasecampClient>
@@ -422,6 +428,9 @@ export function createBasecampClient(options: BasecampClientOptions) {
   }
 
   const comments = {
+    // comments.md "Get a comment": GET /comments/{id}.json (its `parent` is the commented recording).
+    get: async (token: string, commentId: number): Promise<RawComment> =>
+      http.parse(token, { method: 'GET', target: `/comments/${id('commentId', commentId)}.json` }, asComment),
     // comments.md "Get comments": GET /recordings/{id}/comments.json (paginated, active only).
     list: (token: string, recordingId: number): Paged<RawComment> =>
       http.paged(token, `/recordings/${id('recordingId', recordingId)}/comments.json`, undefined, asObject<RawComment>),
@@ -445,7 +454,7 @@ export function createBasecampClient(options: BasecampClientOptions) {
       if (typeof file.contentType !== 'string' || !/^[\w.+-]+\/[\w.+-]+/.test(file.contentType)) {
         throw new TypeError('attachment contentType must be a media type such as image/png')
       }
-      const data = file.data instanceof Uint8Array ? new Uint8Array(file.data).buffer : file.data
+      const data = attachmentBody(file.data)
       const attachment = await http.parse(
         token,
         { method: 'POST', target: '/attachments.json', query: { name: file.name }, binary: { data, contentType: file.contentType } },
@@ -453,6 +462,14 @@ export function createBasecampClient(options: BasecampClientOptions) {
       )
       return { attachableSgid: attachment.attachable_sgid, attachment }
     },
+    /**
+     * The file behind an attachment's `download_url` (rich_text.md
+     * "Structured attachment metadata"), streamed, read with the caller's own
+     * token. Only URLs of this account are fetched; a redirect is followed
+     * without the token. OPEN: the docs do not say how `download_url`
+     * authenticates or whether it redirects (OPEN_QUESTIONS.md #14).
+     */
+    download: async (token: string, downloadUrl: string): Promise<DownloadResult> => http.download(token, downloadUrl),
   }
 
   return {
@@ -566,6 +583,23 @@ function asObject<T>(value: unknown): T {
 function asEnrollments(value: unknown): RawEnrollment[] {
   if (!Array.isArray(value)) throw new TypeError('enrollment response must be a JSON array')
   return value.map(asObject<RawEnrollment>)
+}
+
+function asComment(value: unknown): RawComment {
+  const c = asObject<RawComment>(value)
+  if (c.type !== 'Comment') throw new TypeError('expected a recording of type Comment')
+  return c
+}
+
+/** Bytes as an ArrayBuffer (a copy for a Uint8Array view), or a stored file as it is. */
+function attachmentBody(data: AttachmentUpload['data']): ArrayBuffer | BinarySource {
+  if (data instanceof Uint8Array) return new Uint8Array(data).buffer
+  if (typeof (data as Partial<BinarySource>).open === 'function') {
+    const source = data as BinarySource
+    if (!Number.isSafeInteger(source.byteLength) || source.byteLength < 0) throw new TypeError('attachment byteLength must be the exact size in bytes')
+    return source
+  }
+  return data as ArrayBuffer
 }
 
 function asAttachment(value: unknown): RawAttachment {

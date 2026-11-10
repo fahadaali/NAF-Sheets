@@ -102,6 +102,22 @@ export interface LocalTask {
 
 export type RecordingStatus = 'active' | 'archived' | 'trashed'
 
+/**
+ * One file of a to-do's description (phase 5, spec §10), from
+ * `description_attachments` (bc-api rich_text.md "Structured attachment
+ * metadata"). Only `sgid` is required; Basecamp's other fields are null when
+ * they are missing or of an unexpected type.
+ */
+export interface RemoteAttachment {
+  /** The `sgid` of the `<bc-attachment>` element in the description. */
+  sgid: string
+  id: number | null
+  filename: string | null
+  contentType: string | null
+  byteSize: number | null
+  downloadUrl: string | null
+}
+
 export interface RemoteTodo {
   type: 'todo'
   id: number
@@ -123,6 +139,18 @@ export interface RemoteTodo {
   subtasksCount: number
   subtasksCompletedCount: number
   creatorId: number | null
+  /**
+   * Phase 5: `comments_count` (the to-do's comment counter, spec §9.3.5).
+   * Absent when Basecamp did not send the key, null when it was not a count.
+   * Not a synced field: never part of the hash or the diff.
+   */
+  commentsCount?: number | null
+  /**
+   * Phase 5: `description_attachments` (spec §10, inbound). Absent when
+   * Basecamp did not send the key. Not part of the hash or the diff: the
+   * `<bc-attachment>` elements themselves travel inside `descriptionHtml`.
+   */
+  descriptionAttachments?: RemoteAttachment[]
 }
 
 export interface RemoteSubtask {
@@ -220,11 +248,15 @@ export type OutboundAction =
 
 export type InboundAction =
   | { type: 'create_row'; task: LocalTask; remote: RemoteTask }
-  /** `assignMode`: a Basecamp edit switched the to-do to manual assignment (§8.1). */
+  /**
+   * `assignMode`: a Basecamp edit switched the to-do to manual assignment (§8.1).
+   * `attachments`: the file names the attachments cell shows (phase 5, §10);
+   * written by the API from D1, never produced by the sync engine.
+   */
   | {
       type: 'update_row'
       uid: TaskUid
-      fields: Partial<Pick<LocalTask, 'title' | 'assignees' | 'dueOn' | 'startsOn' | 'completed' | 'notesHtml' | 'position' | 'assignMode'>>
+      fields: Partial<Pick<LocalTask, 'title' | 'assignees' | 'dueOn' | 'startsOn' | 'completed' | 'notesHtml' | 'position' | 'assignMode' | 'attachments'>>
     }
   /** Shown struck through and grey; removed from the sheet only by a user (§9.3.10). */
   | { type: 'mark_deleted_remotely'; uid: TaskUid; status: Exclude<RecordingStatus, 'active'> | 'deleted' }

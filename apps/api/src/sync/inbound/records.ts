@@ -262,7 +262,9 @@ export async function reconcileList(run: InboundRun, sheet: SheetRow, options: {
       row.remote_status === 'active' &&
       row.last_remote_change_at === todo.updatedAt &&
       row.bc_subtasks_count === todo.subtasksCount &&
-      row.bc_subtasks_completed_count === todo.subtasksCompletedCount
+      row.bc_subtasks_completed_count === todo.subtasksCompletedCount &&
+      // Phase 5: a new comment may not move `updated_at`; the counter is compared too.
+      (typeof todo.commentsCount !== 'number' || row.bc_comments_count === todo.commentsCount)
     ) {
       continue
     }

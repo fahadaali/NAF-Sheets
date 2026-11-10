@@ -5,7 +5,7 @@ import type { Assignee, IsoDate, MappedField, SheetPlan } from '@naf-sheets/shar
 import { columnIndex } from './a1'
 import { cellText, getCell, hasFormula, isTruthyBoolean, nafData, ownStyle, sameJson, setCell, withNafData, type SheetSnapshot, type WorkbookSnapshot } from './cells'
 import { ISO_DATE_PATTERN, isoToSerial, readDateValue, type DateRead } from './dates'
-import { escapeHtml, htmlToComparableText } from './engine'
+import { attachmentElementsOf, escapeHtml, htmlToComparableText, withoutAttachments } from './engine'
 import { fail, ok, type Result } from './errors'
 import { validationRulesAt } from './resources'
 import { CELL_TYPE, CHECKBOX_DEFAULT, DV_TYPE, type ICellData, type IStyleData } from './univer'
@@ -212,16 +212,35 @@ export function textToHtml(text: string): string {
 }
 
 /**
+ * What a notes cell shows for description HTML: its visible text, with the
+ * files (`<bc-attachment>`) left out — they are chips in the attachments
+ * column (phase 5, spec §10), not text a person types.
+ */
+export function notesText(html: string): string {
+  return htmlToComparableText(withoutAttachments(html))
+}
+
+/**
  * The notes cell as description HTML. When the text is still what was
  * rendered from Basecamp's HTML (kept in the cell's platform data), that HTML
  * is returned unchanged: formatting and attachments survive a round trip.
+ *
+ * Phase 5 (spec §8.2 "attachments included", §10): the files of the stored
+ * HTML survive any edit of the cell's text. Edited text becomes new HTML
+ * followed by those files; a cleared cell keeps the files alone. Only the
+ * attachment editor removes a file.
  */
 export function readNotes(cell: ICellData | undefined): string | null {
   const text = cellText(cell)
-  if (comparableText(text) === '') return null
   const stored = nafData(cell).notesHtml
-  if (stored !== undefined && comparableText(text) === htmlToComparableText(stored)) return stored
-  return textToHtml(text)
+  const files = stored !== undefined ? attachmentElementsOf(stored) : ''
+  if (comparableText(text) === '') {
+    if (files === '') return null
+    // Files only: the stored HTML as it is when it holds nothing else.
+    return stored !== undefined && notesText(stored) === '' ? stored : files
+  }
+  if (stored !== undefined && comparableText(text) === notesText(stored)) return stored
+  return textToHtml(text) + files
 }
 
 // ---------------------------------------------------------------------------
@@ -334,10 +353,14 @@ export function writeCompleted(
   return writeValue(sheet, row, column, { v: completed ? 1 : 0, t: CELL_TYPE.BOOLEAN })
 }
 
-/** Notes: the text rendered from the HTML, with the HTML kept in the cell's platform data. */
+/**
+ * Notes: the text rendered from the HTML, with the HTML kept in the cell's
+ * platform data. HTML that holds only files (phase 5) keeps an empty cell and
+ * the HTML, so the files are not lost by the next read.
+ */
 export function writeNotes(sheet: SheetSnapshot, row: number, column: number, html: string | null): WriteOutcome {
   const current = getCell(sheet, row, column)
-  if (html === null || htmlToComparableText(html) === '') {
+  if (html === null || (notesText(html) === '' && attachmentElementsOf(html) === '')) {
     return writeValue(sheet, row, column, null, (cell) => {
       const data = nafData(cell)
       delete data.notesHtml
@@ -346,6 +369,22 @@ export function writeNotes(sheet: SheetSnapshot, row: number, column: number, ht
   }
   // Already showing this HTML (or text that reads the same, and the HTML is kept): leave it.
   if (current !== undefined && readNotes(current) === html) return 'unchanged'
-  const text = htmlToComparableText(html)
-  return writeValue(sheet, row, column, { v: text, t: CELL_TYPE.STRING }, (cell) => withNafData(cell, { ...nafData(cell), notesHtml: html }))
+  const text = notesText(html)
+  return writeValue(sheet, row, column, text === '' ? null : { v: text, t: CELL_TYPE.STRING }, (cell) => withNafData(cell, { ...nafData(cell), notesHtml: html }))
+}
+
+/** Separator of file names in the attachments cell (the Arabic comma, as for assignee names). */
+export const ATTACHMENT_NAME_SEPARATOR = '، '
+
+/**
+ * Attachments column (phase 5, spec §10): the names of the row's files, as
+ * D1 holds them. The cell only shows them; the attachment editor manages the
+ * files themselves.
+ */
+export function writeAttachmentNames(sheet: SheetSnapshot, row: number, column: number, names: readonly string[]): WriteOutcome {
+  const text = names
+    .map((n) => n.replace(/\s+/g, ' ').trim())
+    .filter((n) => n !== '')
+    .join(ATTACHMENT_NAME_SEPARATOR)
+  return writeValue(sheet, row, column, text === '' ? null : { v: text, t: CELL_TYPE.STRING })
 }

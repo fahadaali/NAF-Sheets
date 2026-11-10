@@ -257,7 +257,24 @@ describe('readTasks: notes', () => {
     const html = '<div><strong>مهم</strong>: راجع <a href="https://x">المسودة</a><br>ثم أرسلها</div><bc-attachment sgid="x"></bc-attachment>'
     putRow(workbook, S, 1, { G: { v: 'مهم: راجع المسودة\nثم أرسلها', custom: { nafSheets: { notesHtml: html } } } })
     expect(read(workbook).tasks[0]?.notesHtml).toBe(html)
+    // Phase 5 (spec §8.2, §10): editing the text keeps the description's files after the new text.
     putRow(workbook, S, 1, { G: { v: 'نص جديد <كتبه> شخص', custom: { nafSheets: { notesHtml: html } } } })
-    expect(read(workbook).tasks[0]?.notesHtml).toBe('<div>نص جديد &lt;كتبه&gt; شخص</div>')
+    expect(read(workbook).tasks[0]?.notesHtml).toBe('<div>نص جديد &lt;كتبه&gt; شخص</div><bc-attachment sgid="x"></bc-attachment>')
+  })
+
+  it('phase 5: clearing the text keeps the files; a cell of files only reads back as its stored HTML', () => {
+    const { workbook } = linkedWorkbook(['مهمة'])
+    const files = '<bc-attachment sgid="a"><figure><figcaption>خطة.pdf</figcaption></figure></bc-attachment>\n<bc-attachment sgid="b"></bc-attachment>'
+    const html = `<div>نص</div>${files}`
+    // The cell shows the text only: a file's caption is not notes text.
+    putRow(workbook, S, 1, { G: { v: 'نص', custom: { nafSheets: { notesHtml: html } } } })
+    expect(read(workbook).tasks[0]?.notesHtml).toBe(html)
+    putRow(workbook, S, 1, { G: { custom: { nafSheets: { notesHtml: html } } } })
+    expect(read(workbook).tasks[0]?.notesHtml).toBe('<bc-attachment sgid="a"><figure><figcaption>خطة.pdf</figcaption></figure></bc-attachment><bc-attachment sgid="b"></bc-attachment>')
+    putRow(workbook, S, 1, { G: { custom: { nafSheets: { notesHtml: files } } } })
+    expect(read(workbook).tasks[0]?.notesHtml).toBe(files)
+    // Without stored files, an empty cell is still no notes.
+    putRow(workbook, S, 1, { G: { custom: { nafSheets: { notesHtml: '<div>نص</div>' } } } })
+    expect(read(workbook).tasks[0]?.notesHtml).toBeNull()
   })
 })

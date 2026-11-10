@@ -17,6 +17,7 @@ import {
   isMultipleList,
   normalizeName,
   readCompleted,
+  writeAttachmentNames,
   writeCompleted,
   writeDate,
   writeNotes,
@@ -86,7 +87,7 @@ function report(ctx: Ctx, outcome: WriteOutcome | 'checkbox_formula', sheetId: s
   if (outcome === 'checkbox_formula') ctx.issues.push(issue('checkbox_formula', { sheetId, row, column, uid }))
 }
 
-type TaskFields = Partial<Pick<LocalTask, 'title' | 'assignees' | 'dueOn' | 'startsOn' | 'completed' | 'notesHtml'>>
+type TaskFields = Partial<Pick<LocalTask, 'title' | 'assignees' | 'dueOn' | 'startsOn' | 'completed' | 'notesHtml' | 'attachments'>>
 
 /** Writes the mapped fields given in `fields` into one row. */
 function writeFields(workbook: WorkbookSnapshot, table: TaskTable, plan: Plan, row: number, uid: TaskUid, fields: TaskFields, ctx: Ctx): void {
@@ -99,6 +100,9 @@ function writeFields(workbook: WorkbookSnapshot, table: TaskTable, plan: Plan, r
   if (fields.startsOn !== undefined && f.starts_on !== undefined) at(f.starts_on, writeDate(workbook, sheet, row, f.starts_on, fields.startsOn))
   if (fields.completed !== undefined && f.completed !== undefined) at(f.completed, writeCompleted(workbook, table.sheetId, row, f.completed, plan, fields.completed))
   if (fields.notesHtml !== undefined && f.notes !== undefined) at(f.notes, writeNotes(sheet, row, f.notes, fields.notesHtml))
+  if (fields.attachments !== undefined && f.attachments !== undefined) {
+    at(f.attachments, writeAttachmentNames(sheet, row, f.attachments, fields.attachments.map((a) => a.filename)))
+  }
 }
 
 function writeAssignees(workbook: WorkbookSnapshot, table: TaskTable, row: number, column: number, uid: TaskUid, assignees: readonly Assignee[], ctx: Ctx): void {
@@ -159,7 +163,8 @@ function createRow(workbook: WorkbookSnapshot, action: Extract<InboundAction, { 
   if (!free.ok) return free
   const row = free.value[0] as number
   writeSystemCells(t.sheet, row, t.system, { uid: task.uid, parentUid: task.level === 1 ? task.parentUid : null, level: task.level })
-  writeFields(workbook, t, ctx.plan, row, task.uid, task, ctx)
+  // A new row's files are written by the API once it knows them (phase 5); an empty list writes nothing.
+  writeFields(workbook, t, ctx.plan, row, task.uid, task.attachments.length > 0 ? task : { ...task, attachments: undefined }, ctx)
   const rows: OrderRow[] = [...orderRowsOf(t), { uid: task.uid, parentUid: task.level === 1 ? task.parentUid : null, level: task.level, position: 0, row }]
   const placed = placeAt(rows, task.uid, task.position)
   if (!placed.ok) return placed

@@ -4,7 +4,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { findTodosetId, NAF_WEBHOOK_TYPES } from '../src/client'
-import { UnexpectedResponseError } from '../src/errors'
+import { NotFoundError, RateLimitedError, ServerError, UnexpectedResponseError } from '../src/errors'
 import {
   createAttachmentExample,
   enrollPeopleExample,
@@ -19,7 +19,7 @@ import {
   listWebhooksExample,
   updateProjectAccessExample,
 } from './fixtures/docs-examples'
-import { makeClient, reply, TOKEN } from './helpers'
+import { ACCOUNT, BASE, makeClient, reply, TOKEN } from './helpers'
 
 describe('projects (projects.md)', () => {
   it('gets a project and finds its enabled to-do set in the dock', async () => {
@@ -213,6 +213,15 @@ describe('comments (comments.md)', () => {
     ])
     await expect(client.comments.create(TOKEN, 1, '')).rejects.toThrow(TypeError)
   })
+
+  it('phase 5: gets one comment (its parent is the commented recording); another type is unexpected', async () => {
+    const { client, calls } = makeClient(reply(200, getCommentExample))
+    const comment = await client.comments.get(TOKEN, 1069479852)
+    expect(calls[0]?.path).toBe('/comments/1069479852.json')
+    expect(comment.parent.id).toBe(1069479842)
+    const other = makeClient(reply(200, { ...(getCommentExample as object), type: 'Message' }))
+    await expect(other.client.comments.get(TOKEN, 1)).rejects.toBeInstanceOf(UnexpectedResponseError)
+  })
 })
 
 describe('attachments (attachments.md)', () => {
@@ -244,6 +253,66 @@ describe('attachments (attachments.md)', () => {
     await expect(client.attachments.upload(TOKEN, { name: 'a.png', contentType: 'image/png', data: new ArrayBuffer(1) })).rejects.toBeInstanceOf(
       UnexpectedResponseError,
     )
+  })
+})
+
+describe('attachments, phase 5: a stored file streamed, and downloads', () => {
+  const streamOf = (bytes: number[]) => new Response(new Uint8Array(bytes)).body as ReadableStream<Uint8Array>
+
+  it('streams a stored file with its exact length, and opens it again for a retried attempt', async () => {
+    let opened = 0
+    const { client, calls } = makeClient([reply(503, {}), reply(201, createAttachmentExample)])
+    const r = await client.attachments.upload(TOKEN, {
+      name: 'خطة.pdf',
+      contentType: 'application/pdf',
+      data: { byteLength: 3, open: () => (opened++, streamOf([1, 2, 3])) },
+    })
+    expect(r.attachableSgid).toBe((createAttachmentExample as { attachable_sgid: string }).attachable_sgid)
+    expect(opened).toBe(2)
+    expect(calls).toHaveLength(2)
+    for (const call of calls) {
+      expect(call.headers['Content-Length']).toBe('3')
+      expect(call.headers['Content-Type']).toBe('application/pdf')
+      expect(call.rawBody).toBeInstanceOf(ReadableStream)
+    }
+    expect([...new Uint8Array(await new Response(calls[1]?.rawBody as ReadableStream).arrayBuffer())]).toEqual([1, 2, 3])
+    await expect(client.attachments.upload(TOKEN, { name: 'a', contentType: 'text/plain', data: { byteLength: -1, open: () => streamOf([]) } })).rejects.toThrow(/byteLength/)
+  })
+
+  it('downloads a file of this account with the token, and follows a redirect without it', async () => {
+    const storage = `https://storage.3.basecamp.com/${ACCOUNT}/blobs/k1/download/plan.pdf`
+    const signed = 'https://bc-blobs.example/plan.pdf?sig=1'
+    const { client, calls, limiter } = makeClient((call) =>
+      call.url === storage ? reply(302, undefined, { Location: signed }) : { status: 200, bytes: new Uint8Array([7, 8]), headers: { 'Content-Type': 'application/pdf', 'Content-Length': '2' } },
+    )
+    const file = await client.attachments.download(TOKEN, storage)
+    expect(file.contentType).toBe('application/pdf')
+    expect(file.contentLength).toBe(2)
+    expect([...new Uint8Array(await new Response(file.body).arrayBuffer())]).toEqual([7, 8])
+    expect(calls.map((c) => [c.url, c.headers['Authorization'] ?? null, c.redirect])).toEqual([
+      [storage, `Bearer ${TOKEN}`, 'manual'],
+      [signed, null, 'manual'],
+    ])
+    expect(calls.every((c) => c.headers['User-Agent'] === 'NAF Comms (info@naflaw.sa)')).toBe(true)
+    expect(limiter.acquired).toBe(2)
+  })
+
+  it('refuses a URL outside the account before any request, and maps failures', async () => {
+    const { client, calls } = makeClient((call) =>
+      call.url.endsWith('/gone.pdf') ? reply(404, {}) : call.url.endsWith('/busy.pdf') ? reply(429, {}, { 'Retry-After': '3' }) : call.url.endsWith('/down.pdf') ? reply(503, {}) : reply(302, undefined, { Location: 'http://plain.example/x' }),
+    )
+    for (const url of ['https://evil.example/x.pdf', `https://storage.3.basecamp.com/999/blobs/x.pdf`, `http://storage.3.basecamp.com/${ACCOUNT}/x.pdf`, 'not a url']) {
+      await expect(client.attachments.download(TOKEN, url)).rejects.toThrow(TypeError)
+    }
+    expect(calls).toHaveLength(0)
+    await expect(client.attachments.download(TOKEN, `${BASE}/blobs/gone.pdf`)).rejects.toBeInstanceOf(NotFoundError)
+    const limited = await client.attachments.download(TOKEN, `${BASE}/blobs/busy.pdf`).catch((e: unknown) => e)
+    expect(limited).toBeInstanceOf(RateLimitedError)
+    expect((limited as RateLimitedError).retryAfterMs).toBe(3000)
+    await expect(client.attachments.download(TOKEN, `${BASE}/blobs/down.pdf`)).rejects.toBeInstanceOf(ServerError)
+    // A redirect to plain HTTP is refused.
+    await expect(client.attachments.download(TOKEN, `${BASE}/blobs/moved.pdf`)).rejects.toBeInstanceOf(UnexpectedResponseError)
+    for (const c of calls) expect(String(c.headers['Authorization'] ?? '')).not.toContain('evil')
   })
 })
 

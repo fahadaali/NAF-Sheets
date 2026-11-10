@@ -12,6 +12,7 @@ import type { BcInboundQueueMessage, BcOutboundMessage, Env } from '../../src/en
 import type { SyncDeps } from '../../src/sync/deps'
 import { handleInboundBatchWith, runReconciliationWith } from '../../src/sync/inbound'
 import { handleOutboundBatchWith, registerSyncRoutes } from '../../src/sync/outbound'
+import { registerPhase5Routes } from '../../src/phase5'
 import { call, createWorkbook, json, seedMember, testApp } from '../helpers'
 import type { SeededMember } from '../helpers'
 import { FakeBasecamp, uniqueId } from './fake-basecamp'
@@ -68,6 +69,7 @@ export function harness(): Harness {
   const deps: SyncDeps = { fetch: fake.fetch, now: () => Date.now(), limiter: { acquire: async () => {} }, sleep: async () => {} }
   const app = testApp()
   registerSyncRoutes(app, deps)
+  registerPhase5Routes(app, deps)
   return { fake, env: syncEnv, deps, app, outbound, inbound, dlq }
 }
 

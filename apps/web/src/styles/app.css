@@ -1751,3 +1751,214 @@ fieldset legend {
 .room-status--failed {
   color: var(--color-danger);
 }
+
+/* ── Phase 5: attachments (spec §5.2, §10) and comments (§12.1 item 5) ─────── */
+
+.attachments__body {
+  border: calc(var(--border-width) * 2) dashed transparent;
+  border-radius: var(--radius-md);
+}
+
+/* The whole dialog accepts a drop; it shows it while files are dragged over. */
+.attachments__body.is-dragging {
+  border-color: var(--dropzone-active-border);
+  background: var(--dropzone-active-background);
+}
+
+.attachment-list,
+.upload-list,
+.comment-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  inline-size: 100%;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.attachments .attachment-list,
+.attachments .upload-list {
+  max-block-size: var(--attachment-list-height);
+  overflow-y: auto;
+}
+
+.attachment-chip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+.attachment-chip:focus-within {
+  border-color: var(--color-focus);
+}
+
+.attachment-chip--failed {
+  border-color: var(--color-danger);
+}
+
+.attachment-chip__icon {
+  color: var(--color-text-muted);
+}
+
+.attachment-chip__name {
+  flex: 1 1 8rem;
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+  color: var(--color-accent);
+  font-weight: var(--font-weight-medium);
+  text-decoration: none;
+}
+
+.attachment-chip__name:hover {
+  text-decoration: underline;
+}
+
+.attachment-chip__name:focus-visible,
+.attachment-chip__remove:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: var(--radius-sm);
+}
+
+.attachment-chip__remove {
+  inline-size: var(--chip-height);
+  block-size: var(--chip-height);
+}
+
+.attachment-chip__remove:hover {
+  background: var(--color-surface-hover);
+}
+
+.attachment-chip__message {
+  flex-basis: 100%;
+  color: var(--color-danger);
+}
+
+.upload-item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-2);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.upload-item--error {
+  border-color: var(--color-danger);
+}
+
+.upload-item__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.upload-item__name {
+  flex: 1;
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+
+.upload-item__progress {
+  inline-size: 100%;
+  block-size: var(--progress-height);
+  accent-color: var(--progress-fill);
+}
+
+.upload-item__error {
+  color: var(--color-danger);
+}
+
+.dropzone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  text-align: center;
+  border: calc(var(--border-width) * 2) dashed var(--dropzone-border);
+  border-radius: var(--radius-md);
+}
+
+.dropzone.is-active {
+  border-color: var(--dropzone-active-border);
+  background: var(--dropzone-active-background);
+}
+
+.details-panel {
+  inline-size: min(var(--details-panel-width), 100vw);
+}
+
+.details-panel .attachment-list {
+  max-block-size: var(--attachment-list-height);
+  overflow-y: auto;
+}
+
+.comment-list {
+  max-block-size: var(--comment-list-height);
+  overflow-y: auto;
+}
+
+.comment {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3);
+  background: var(--color-surface-muted);
+  border-radius: var(--radius-md);
+}
+
+.comment__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.comment__link {
+  margin-inline-start: auto;
+}
+
+/* The person's line breaks, never markup (the API sends plain text). */
+.comment__text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.comment-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  inline-size: 100%;
+}
+
+.comment-form textarea {
+  inline-size: 100%;
+  min-block-size: var(--comment-input-height);
+  padding: var(--space-2);
+  font: inherit;
+  color: var(--color-text);
+  background: var(--color-surface);
+  border: var(--border-width) solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  resize: vertical;
+}
+
+.comment-form textarea:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.comment-form textarea[aria-invalid='true'] {
+  border-color: var(--color-danger);
+}
+
+.row-tooltip__counts {
+  gap: var(--space-3);
+}

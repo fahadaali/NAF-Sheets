@@ -117,6 +117,12 @@ a deliberate test change. Nothing here has been tried in a browser with
    until the phase 0 live test. While the text still reads like the HTML that
    came from Basecamp, that HTML is returned unchanged (formatting and
    `bc-attachment`s survive).
+   **Phase 5 (2026-11-10):** the description's files now survive *any* edit
+   of the cell: edited text becomes new HTML followed by the stored
+   `<bc-attachment>` elements, and a cleared cell keeps the files alone (an
+   empty cell with the HTML in its platform data). The cell shows the text
+   without the files (`notesText`). Only the attachment editor removes a file.
+   Before this, editing the notes cell dropped every file from Basecamp.
 
 9. **Un-completing a text status column.** When Basecamp un-completes a to-do
    whose status cell holds a "completed" value, the cell is cleared: which
@@ -144,3 +150,9 @@ a deliberate test change. Nothing here has been tried in a browser with
 20. **Assign mode without the row state**: `manual` for a to-do with assignees,
     `auto` otherwise (§8.1's default for a new row). Pass D1's
     `tasks.assign_mode` through `rowState`.
+
+21. **The attachments column** (phase 5): `update_row.fields.attachments`
+    writes the file names, joined with «، » (`writeAttachmentNames`); an empty
+    list clears the cell. The API writes it from D1 after every change; the
+    column is never read back (the files live in D1 `attachments`). A new row
+    writes the column only when it has files.

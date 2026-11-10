@@ -23,6 +23,15 @@ export interface TaskSyncInfo {
   bcUrl: string | null
   /** Level-0 rows only (§8.1); null for subtasks. */
   assignMode: AssignMode | null
+  /**
+   * Phase 5 (./api-phase5.ts): the to-do's comment counter as last seen in
+   * Basecamp (webhook `comment_created`, reconciliation, the details panel);
+   * null for a subtask (comments live on its to-do) or while unknown.
+   * Optional: absent from payloads that predate phase 5.
+   */
+  commentsCount?: number | null
+  /** Phase 5: files attached to the row in the platform (not removed). Optional as above. */
+  attachmentsCount?: number
 }
 
 /** GET /api/workbooks/:id/sync — every role that may open the workbook. */

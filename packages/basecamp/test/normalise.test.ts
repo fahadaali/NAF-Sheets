@@ -29,6 +29,9 @@ describe('normaliseTodo', () => {
       subtasksCount: 0,
       subtasksCompletedCount: 0,
       creatorId: 1049715938,
+      // Phase 5: both keys are in the documented example.
+      commentsCount: 0,
+      descriptionAttachments: [],
     }
     expect(normaliseTodo(first(listTodosExample))).toEqual(expected)
   })
@@ -53,7 +56,33 @@ describe('normaliseTodo', () => {
       subtasksCount: 0,
       subtasksCompletedCount: 0,
       creatorId: 1049715938,
+      commentsCount: 0,
+      descriptionAttachments: [],
     } satisfies RemoteTodo)
+  })
+
+  it('phase 5: reads comments_count and description_attachments leniently, and leaves them out when not sent', () => {
+    const bare = normaliseTodo(rawTodo(5))
+    expect(bare).not.toHaveProperty('commentsCount')
+    expect(bare).not.toHaveProperty('descriptionAttachments')
+    const full = normaliseTodo(
+      rawTodo(5, {
+        comments_count: 3,
+        description_attachments: [
+          { id: 7, sgid: 'sg-1', filename: 'خطة.pdf', content_type: 'application/pdf', byte_size: 2048, download_url: `${'https://storage.3.basecamp.com'}/1/blobs/k/download/a.pdf` },
+          { id: 8, filename: 'no-sgid.png' },
+          'junk',
+          { sgid: 'sg-2', byte_size: -1, id: 'x' },
+        ],
+      }),
+    )
+    expect(full.commentsCount).toBe(3)
+    expect(full.descriptionAttachments).toEqual([
+      { sgid: 'sg-1', id: 7, filename: 'خطة.pdf', contentType: 'application/pdf', byteSize: 2048, downloadUrl: 'https://storage.3.basecamp.com/1/blobs/k/download/a.pdf' },
+      { sgid: 'sg-2', id: null, filename: null, contentType: null, byteSize: null, downloadUrl: null },
+    ])
+    expect(normaliseTodo(rawTodo(5, { comments_count: 'many', description_attachments: null })).commentsCount).toBeNull()
+    expect(normaliseTodo(rawTodo(5, { description_attachments: null })).descriptionAttachments).toEqual([])
   })
 
   it('reads a missing or null position as unknown (null), never as a number', () => {

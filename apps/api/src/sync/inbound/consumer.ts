@@ -7,7 +7,7 @@
 // fetched with the service token before anything is diffed. An unknown kind
 // gets the same fetch and generic diff; it never fails the message.
 
-import { AccountInactiveError, UnexpectedResponseError } from '@naf-sheets/basecamp'
+import { AccountInactiveError, NotFoundError, UnexpectedResponseError } from '@naf-sheets/basecamp'
 import type { RawWebhookEvent } from '@naf-sheets/basecamp'
 import { LinkFailure, withServiceToken } from '../../basecamp-link'
 import type { LinkContext } from '../../basecamp-link'
@@ -196,12 +196,38 @@ async function handleEvent(run: InboundRun, event: RawWebhookEvent, recordingId:
       await inboundList(run, recordingId, kind)
       return
     case 'Comment':
+      // Phase 5 (§9.3.5 `comment_created`, and any other comment kind): the
+      // comment is read, never trusted from the payload; its to-do is read
+      // again, which refreshes the row's comment counter (and anything else).
+      await commentEvent(run, kind, recordingId, creatorBcId)
+      return
     case 'Upload':
-      // OPEN: comments and attachments are not synced in this wave (S16).
-      await ignore(run, kind, 'out_of_scope')
+      // OPEN (P8): the documented API ties an upload (docs & files) to a vault, not to a to-do (§10 "uploads tied to the task").
+      await ignore(run, kind, 'upload_not_linked_to_task')
       return
     default:
       await ignore(run, kind, 'unknown_type')
+  }
+}
+
+async function commentEvent(run: InboundRun, kind: string, commentId: number, creatorBcId: number | null): Promise<void> {
+  let parent: { id: number; type: string } | null = null
+  try {
+    const comment = await run.client.comments.get(run.token, commentId)
+    if (comment.bucket?.id !== run.state.wb.bc_project_id) return ignore(run, kind, 'bucket_mismatch')
+    parent = comment.parent ? { id: comment.parent.id, type: comment.parent.type } : null
+  } catch (error) {
+    if (error instanceof NotFoundError) return ignore(run, kind, 'comment_gone')
+    if (error instanceof UnexpectedResponseError) return ignore(run, kind, 'unexpected_record')
+    throw error
+  }
+  // Comments live on to-dos only (§8 table); a comment on anything else is not a row's.
+  if (!parent || parent.type !== 'Todo' || !Number.isSafeInteger(parent.id) || parent.id <= 0) return ignore(run, kind, 'comment_not_on_todo')
+  try {
+    await inboundTodo(run, { id: parent.id, remote: await fetchTodo(run, parent.id), creatorBcId })
+  } catch (error) {
+    if (!(error instanceof UnexpectedResponseError)) throw error
+    await ignore(run, kind, 'unexpected_record')
   }
 }
 

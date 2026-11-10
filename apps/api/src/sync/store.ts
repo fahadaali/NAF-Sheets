@@ -159,12 +159,14 @@ export interface TaskRow {
   bc_subtasks_count: number | null
   bc_subtasks_completed_count: number | null
   created_at: string
+  /** Phase 5 (migration 0004): the to-do's comment counter as last seen in Basecamp. */
+  bc_comments_count?: number | null
 }
 
 const TASK_COLUMNS = `t.task_uid, t.sheet_id, t.parent_uid, t.level, t.bc_recording_id, t.bc_type, t.assign_mode, t.completed,
   t.last_synced_hash, t.last_synced_base_json, t.last_local_change_at, t.last_remote_change_at, t.sync_state, t.last_error,
   t.last_error_code, t.remote_status, t.trashed_at, t.local_hash, t.pending_actor_id, t.bc_subtasks_count,
-  t.bc_subtasks_completed_count, t.created_at`
+  t.bc_subtasks_completed_count, t.created_at, t.bc_comments_count`
 
 export async function tasksOfWorkbook(db: D1Database, workbookId: string): Promise<TaskRow[]> {
   const { results } = await db

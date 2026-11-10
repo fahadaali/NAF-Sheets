@@ -14,6 +14,8 @@ export interface Reply {
   /** Object/array → JSON text; string → sent as-is; undefined → empty body. */
   body?: unknown
   headers?: Record<string, string>
+  /** Raw bytes for `body` of a streamed answer (downloads). */
+  bytes?: Uint8Array
 }
 
 export interface Call {
@@ -22,7 +24,7 @@ export interface Call {
   path: string
   method: string
   headers: Record<string, string>
-  rawBody: string | ArrayBuffer | undefined
+  rawBody: string | ArrayBuffer | ReadableStream<Uint8Array> | undefined
   /** Parsed JSON body, when the body is a string. */
   json: unknown
   redirect: string
@@ -37,10 +39,12 @@ export function reply(status: number, body?: unknown, headers?: Record<string, s
 function toResponse(r: Reply): FetchResponse {
   const headers = new Map(Object.entries(r.headers ?? {}).map(([k, v]) => [k.toLowerCase(), v]))
   const text = r.body === undefined ? '' : typeof r.body === 'string' ? r.body : JSON.stringify(r.body)
+  const bytes = r.bytes
   return {
     status: r.status,
     headers: { get: (name: string) => headers.get(name.toLowerCase()) ?? null },
     text: async () => text,
+    body: bytes ? new Response(bytes).body : new Response(text).body,
   }
 }
 

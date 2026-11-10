@@ -8,6 +8,11 @@
 
 import type {
   AssigneeOptionsResponse,
+  AttachmentSettingsResponse,
+  CreateCommentResponse,
+  TaskAttachmentsResponse,
+  TaskCommentsResponse,
+  UploadAttachmentResponse,
   BasecampLinkResponse,
   BasecampPeopleResponse,
   BasecampProjectsResponse,
@@ -244,6 +249,27 @@ export function createApiClient(options: ApiClientOptions = {}) {
     /** POST /api/workbooks/:id/project-people — adds an account member to the project with the caller's token (§8.2 case 1). */
     grantProjectPerson: (id: string, body: GrantProjectPersonRequest) =>
       request<AssigneeOptionsResponse>('POST', `${workbookPath(id)}/project-people`, body),
+
+    // --- Phase 5: packages/shared/src/api-phase5.ts ----------------------------
+    // The upload itself (raw body, with progress) is `uploadAttachment` in ./upload.ts.
+
+    /** GET /api/attachment-settings — the size limit the editor checks before uploading. */
+    getAttachmentSettings: (signal?: AbortSignal) => request<AttachmentSettingsResponse>('GET', '/api/attachment-settings', undefined, signal),
+    /** GET /api/workbooks/:id/tasks/:uid/attachments */
+    getTaskAttachments: (id: string, uid: string, signal?: AbortSignal) =>
+      request<TaskAttachmentsResponse>('GET', `${workbookPath(id)}/tasks/${encodeURIComponent(uid)}/attachments`, undefined, signal),
+    /** POST /api/workbooks/:id/attachments/:attachmentId/remove — only after the person confirmed (§10). */
+    removeAttachment: (id: string, attachmentId: string) =>
+      request<TaskAttachmentsResponse>('POST', `${workbookPath(id)}/attachments/${encodeURIComponent(attachmentId)}/remove`, { confirmed: true }),
+    /** POST /api/workbooks/:id/attachments/:attachmentId/retry — sends a `failed` file to Basecamp again. */
+    retryAttachment: (id: string, attachmentId: string) =>
+      request<UploadAttachmentResponse>('POST', `${workbookPath(id)}/attachments/${encodeURIComponent(attachmentId)}/retry`),
+    /** GET /api/workbooks/:id/tasks/:uid/comments — with the caller's own Basecamp token. */
+    getTaskComments: (id: string, uid: string, signal?: AbortSignal) =>
+      request<TaskCommentsResponse>('GET', `${workbookPath(id)}/tasks/${encodeURIComponent(uid)}/comments`, undefined, signal),
+    /** POST /api/workbooks/:id/tasks/:uid/comments → 201 (a subtask's row comments on its to-do). */
+    createComment: (id: string, uid: string, content: string) =>
+      request<CreateCommentResponse>('POST', `${workbookPath(id)}/tasks/${encodeURIComponent(uid)}/comments`, { content }),
   }
 }
 

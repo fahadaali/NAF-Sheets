@@ -5,7 +5,7 @@
 // is missing or of the wrong type throws `NormaliseError` instead of being
 // silently defaulted, so a wrong value can never reach a three-way diff.
 
-import type { IsoDate, RecordingStatus, RemoteSubtask, RemoteTodo } from '@naf-sheets/shared'
+import type { IsoDate, RecordingStatus, RemoteAttachment, RemoteSubtask, RemoteTodo } from '@naf-sheets/shared'
 
 export class NormaliseError extends Error {
   override readonly name = 'NormaliseError'
@@ -125,6 +125,38 @@ class Reader {
   }
 }
 
+/**
+ * Phase 5 (spec §9.3.5, §10): the comment counter and the description's files.
+ * Not synced fields, so they are read leniently: a key Basecamp did not send
+ * stays absent, a malformed counter is null, and an attachment entry without
+ * an `sgid` (rich_text.md "Structured attachment metadata") is skipped. They
+ * can never make a to-do unreadable.
+ */
+function todoExtras(raw: Obj): Pick<RemoteTodo, 'commentsCount' | 'descriptionAttachments'> {
+  const out: Pick<RemoteTodo, 'commentsCount' | 'descriptionAttachments'> = {}
+  if ('comments_count' in raw) {
+    const n = raw['comments_count']
+    out.commentsCount = typeof n === 'number' && Number.isSafeInteger(n) && n >= 0 ? n : null
+  }
+  if ('description_attachments' in raw) {
+    const list = raw['description_attachments']
+    out.descriptionAttachments = Array.isArray(list) ? list.flatMap((a) => remoteAttachment(a)) : []
+  }
+  return out
+}
+
+function remoteAttachment(value: unknown): RemoteAttachment[] {
+  if (!isObj(value)) return []
+  const sgid = value['sgid']
+  if (typeof sgid !== 'string' || sgid === '') return []
+  const text = (key: string): string | null => (typeof value[key] === 'string' && value[key] !== '' ? (value[key] as string) : null)
+  const count = (key: string, min: number): number | null => {
+    const n = value[key]
+    return typeof n === 'number' && Number.isSafeInteger(n) && n >= min ? n : null
+  }
+  return [{ sgid, id: count('id', 1), filename: text('filename'), contentType: text('content_type'), byteSize: count('byte_size', 0), downloadUrl: text('download_url') }]
+}
+
 /** A to-do from `GET /todolists/{id}/todos.json`, `GET /todos/{id}.json`, or a create/update response. */
 export function normaliseTodo(raw: unknown): RemoteTodo {
   if (!isObj(raw)) throw new NormaliseError('to-do', '(root)', 'must be an object')
@@ -151,6 +183,7 @@ export function normaliseTodo(raw: unknown): RemoteTodo {
     subtasksCount: r.count('subtasks_count'),
     subtasksCompletedCount: r.count('subtasks_completed_count'),
     creatorId: r.creatorId(),
+    ...todoExtras(raw),
   }
 }
 

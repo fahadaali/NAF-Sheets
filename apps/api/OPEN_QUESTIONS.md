@@ -454,6 +454,8 @@ S15. **Assignee options without the caller's own link.** The project people
 
 S16. **Out of scope in this wave, data untouched:** comments
     (`comment_created` is logged as ignored), attachments and uploads,
+    *(phase 5, 2026-11-10: comments and attachments are now handled — see
+    "Phase 5: attachments and comments" P1–P21; `Upload` events stay ignored, P8)*
     Basecamp invitations (§8.2 case 2) and external-contact e-mail (§17-7).
     Descriptions round-trip byte for byte, so `bc-attachment` tags survive.
 
@@ -654,3 +656,146 @@ R19. **Confirmed deletions travel on the next op after the dialog.** The
     refused, the removal is undone by the resync and the confirmation goes
     with it. A confirmation logged in an earlier commit than the removal is not
     used: the row is held as missing (`row_missing`) and Basecamp is untouched.
+
+## Phase 5: attachments and comments
+
+`src/phase5/` (spec §5.2, §8 table, §8.2, §10, §12.1 item 5, §9.3.5; contract
+`packages/shared/src/api-phase5.ts`), the hooks in `src/sync/task-sync.ts` and
+`src/sync/inbound/consumer.ts`, and `migrations/0004_phase5_attachments_comments.sql`.
+Marked `OPEN (Pn)` in the code. Every test runs on the fake Basecamp
+(`test/sync/fake-basecamp.ts`, extended); **nothing here has been tried
+against real Basecamp** (P18). Items marked **(owner)** need the owner.
+
+P1. **Where an uploaded file goes in the description: the end of the
+    person's part**, right before the managed block — not inside the block.
+    Spec §8.2 keeps "what precedes the block verbatim, *attachments included*",
+    so files are expected there; the block is rewritten whole and compared by
+    its visible text (a file has none), so a file inside it would be dropped
+    or invisible to the comparison; and it is where Basecamp shows a file a
+    person attached. Only `<bc-attachment sgid="…"></bc-attachment>` is
+    written (the attribute rich_text.md documents). Confirm.
+
+P2. **Found and fixed while building phase 5: a sheet without a notes
+    column wiped the description.** The engine read "no notes" as a local edit
+    and the next outbound update sent an empty description — the text a person
+    wrote in Basecamp and its files were lost (contradicts §8.2 and §16
+    scenario 8). Now the person's part *follows Basecamp* when the sheet's
+    mapping has no notes column (`diffLocal` in `src/sync/state.ts`, at the
+    three diff call sites; fingerprints unchanged). Test:
+    `test/phase5/probe-notes.test.ts`. Confirm the rule.
+
+P3. **(owner)** **Subtask files** (§8 table, §17-5): kept in the platform
+    with a notice (`state: 'local_only'`), the default. The spec's alternative
+    — attach to the parent to-do with a reference to the subtask, as a
+    setting — is not built; `AttachmentSettings.subtaskMode` has the one value
+    `'local'`.
+
+P4. **(owner)** **The 30-day archive (§10).** A removed chip keeps its D1 row
+    (`removed_at`, `removed_by`) and its R2 object where it is; `purge_after`
+    records removed_at + 30 days. Nothing purges it: deleting data needs the
+    owner's decision (CLAUDE.md §3). Decide the mechanism (a cron that deletes
+    objects past `purge_after`, or an R2 lifecycle rule on a prefix — which
+    would mean moving objects), and whether a removed file can be restored
+    within the 30 days (no route for it yet).
+
+P5. **Removing a chip of a to-do deleted or archived in Basecamp**, or of a
+    subtask / local row: only the platform's chip goes; Basecamp is not called.
+
+P6. **(owner)** **Size limit.** Default 100 MB = 100 × 1024 × 1024 bytes; an
+    admin can lower it (`PUT /api/admin/attachment-settings`, KV `SETTINGS`),
+    not raise it above 100 MB: the Worker cannot take a larger request body on
+    the Free / Pro plans (Cloudflare's published limit, not re-checked here).
+    A larger limit needs another upload path (direct to R2 with a signed URL).
+    The limit is checked on `Content-Length` before a byte is read; the body is
+    streamed to R2 through `FixedLengthStream` (never buffered whole), and from
+    R2 to Basecamp the same way (re-opened for each retried attempt).
+
+P7. **Downloads of files that came from Basecamp** (no platform copy) are
+    read from Basecamp with the caller's own token (§3, §10 «بصلاحيات
+    المستخدم»). A viewer who never linked Basecamp gets 403
+    `basecamp_not_linked`. Alternatives: copy such files into R2 when they are
+    first seen (with the service token), or allow the service token for this
+    read. Files uploaded from the platform are served from R2 to anyone who may
+    open the workbook.
+
+P8. **Uploads (docs & files) are not tied to tasks.** §10 says "the project's
+    uploads tied to the task"; the documented API ties an `Upload` to a vault,
+    not to a to-do. `Upload` webhook events are logged as ignored
+    (`upload_not_linked_to_task`); files are read from the description only.
+
+P9. **The upload runs in the request, not in the `bc-outbound` queue**: R2,
+    then Basecamp's `POST /attachments.json` and the description `PUT`, with
+    the caller's token, so the person sees the outcome at once. A Basecamp
+    failure keeps the file as `failed` with the Arabic reason and a retry route;
+    the response is still 201. How long a 100 MB upload to Basecamp may take
+    inside one request was not measured.
+
+P10. **The description write takes the task's sync lease** (the one the
+    queue consumers take), waiting up to 6 × 500 ms; then 409 `task_busy` (for
+    an upload: the file is kept, `failed`, retry). The to-do is read fresh with
+    the caller's token right before the `PUT`, which carries every field
+    (§9.2.4) with `notify: false`; then the ordinary sync step runs read-only on
+    Basecamp's answer, so the notes cell and the 3-way base learn the new
+    description and no later diff takes the file out. A notes edit still
+    pending in the sheet at that moment is resolved by the engine afterwards
+    (a logged, restorable conflict, last writer wins).
+
+P11. **Notes cells keep files.** sheet-model now keeps the description's
+    `<bc-attachment>` elements when a person edits or clears the notes text
+    (sheet-model OPEN #8), so only the attachment editor removes a file. Before
+    this, editing the notes cell dropped every file from Basecamp.
+
+P12. **Inbound extraction.** Files are keyed by `sgid` (`uq_attachments_task_sgid`).
+    Name, type, size and `download_url` come from `description_attachments`
+    when Basecamp sends it; otherwise from the element's `filename` attribute
+    (not documented), else «مرفق», size 0. A file that left the description in
+    Basecamp loses its chip (`removed_by` NULL); a platform copy, if any, is
+    kept 30 days. A file still `uploading` or `failed` is left alone.
+
+P13. **The attachments cell is display-only**: the server writes the names
+    (joined with «، », sheet-model `writeAttachmentNames`) after every change; a
+    person's paste into it is replaced at the next change (apps/web OPEN #58).
+
+P14. **Comments are read live** from Basecamp with the caller's token; the
+    platform keeps no copy, only the counter (`tasks.bc_comments_count`, from
+    `comments_count`). Webhook `Comment` events (any kind) read the comment,
+    then its to-do, with the service token; reconciliation also re-reads a
+    to-do whose counter changed (a new comment may not move `updated_at`).
+    After a comment is added from the platform the counter goes up by one until
+    the next read. Comments are shown as plain text (markup removed); a
+    comment's own files are shown by name only.
+
+P15. **A viewer reading comments needs their own Basecamp link** (403
+    `basecamp_not_linked` with `link`). Alternative: the service token for this
+    read-only call (§3 reserves it for background work).
+
+P16. **Comment markup sent**: `<div>` with the escaped text and `<br>` per line
+    (tags rich_text.md allows); not verified live.
+
+P17. **Contract additions** besides `api-phase5.ts`: optional
+    `TaskSyncInfo.commentsCount` / `attachmentsCount` in `api-sync.ts` (the
+    editor's per-row counter, polled with GET …/sync); `RemoteTodo.commentsCount`
+    / `descriptionAttachments` and `RemoteAttachment` in `domain.ts`;
+    `update_row.fields.attachments` (written by the API only, never by the
+    engine). The upload is a raw body with `?name=`, not multipart.
+
+P18. **(owner)** **Phase 5 acceptance needs real Basecamp** (spec §15): the
+    binary `POST /attachments.json`, a `<bc-attachment>` surviving Basecamp's
+    sanitiser in the description, the shape of `description_attachments`, how
+    `download_url` authenticates (packages/basecamp OPEN #14), the comments
+    endpoints, the `comment_created` payload. None of it ran against Basecamp;
+    the live kit in `spike/basecamp/` does not cover it yet.
+
+P19. **`attachable_sgid` = the description's `sgid`** is assumed
+    (packages/basecamp OPEN #15).
+
+P20. **Download headers.** Files are served from the API origin with
+    `Content-Disposition: attachment` (UTF-8 name), `X-Content-Type-Options:
+    nosniff` and `Content-Security-Policy: default-src 'none'; sandbox`, so an
+    uploaded HTML file never runs as a page of the platform. A separate download
+    origin would be stronger.
+
+P21. **Accepted files.** Any media type is accepted (no allow-list); the type
+    is sanitised (`application/octet-stream` when unusable). Names lose control
+    characters and bidi overrides, `/` and `\` become `_`, at most 255
+    characters. Should some types be refused?

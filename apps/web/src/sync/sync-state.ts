@@ -18,6 +18,10 @@ export interface RowIndicator {
   bcUrl: string | null
   assignMode: AssignMode | null
   remoteStatus: TaskSyncInfo['remoteStatus'] | null
+  /** Phase 5: the to-do's comments in Basecamp; null for a subtask or while unknown. */
+  commentsCount: number | null
+  /** Phase 5: files attached to the row in the platform. */
+  attachmentsCount: number
 }
 
 /**
@@ -33,12 +37,22 @@ export function rowIndicators(info: WorkbookSyncResponse | null, rows: readonly 
   for (const r of rows) {
     const task = byUid.get(r.uid)
     if (!task) {
-      out.set(r.row, { row: r.row, uid: r.uid, state: 'pending', message: null, bcUrl: null, assignMode: null, remoteStatus: null })
+      out.set(r.row, { row: r.row, uid: r.uid, state: 'pending', message: null, bcUrl: null, assignMode: null, remoteStatus: null, commentsCount: null, attachmentsCount: 0 })
       continue
     }
     if (task.state === 'unlinked') continue
     const state: RowState = task.remoteStatus !== 'active' ? 'deleted' : task.state
-    out.set(r.row, { row: r.row, uid: r.uid, state, message: task.message, bcUrl: task.bcUrl, assignMode: task.assignMode, remoteStatus: task.remoteStatus })
+    out.set(r.row, {
+      row: r.row,
+      uid: r.uid,
+      state,
+      message: task.message,
+      bcUrl: task.bcUrl,
+      assignMode: task.assignMode,
+      remoteStatus: task.remoteStatus,
+      commentsCount: task.commentsCount ?? null,
+      attachmentsCount: task.attachmentsCount ?? 0,
+    })
   }
   return out
 }

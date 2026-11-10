@@ -136,3 +136,13 @@ for every to-do update (`SyncedBase` has no `completionSubscriberIds`).
     trash (basecamp OPEN_QUESTIONS.md #10, live test), and the executor runs
     the undo before diffing the restored row — a row whose record is still
     trashed would otherwise be marked deleted in Basecamp. (`src/deletion.ts`)
+
+## Phase 5 (2026-11-10)
+
+- **Files in the description** (`src/attachments.ts`): `<bc-attachment>`
+  elements are found by a tolerant pattern (quoted attributes may hold `>`; an
+  element ends at its first closing tag). The platform writes only
+  `<bc-attachment sgid="…"></bc-attachment>` at the end of the person's part,
+  never in the managed block (apps/api OPEN_QUESTIONS.md P1). The diff itself is
+  unchanged: files travel inside `notesHtml` like any other markup.
+

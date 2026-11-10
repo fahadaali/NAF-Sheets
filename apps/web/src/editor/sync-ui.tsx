@@ -14,12 +14,14 @@ import {
   ListIndentIncrease,
   LoaderCircle,
   LocateFixed,
+  MessageSquare,
+  Paperclip,
   RotateCcw,
   Trash2,
   X,
 } from 'lucide-react'
 import type { AssigneeOptionsResponse, ConflictRecord, TaskUid, WorkbookSyncResponse } from '@naf-sheets/shared'
-import { formatDateTime } from '../lib/format'
+import { formatCount, formatDateTime } from '../lib/format'
 import { Notice } from '../components/Notice'
 import { t } from '../strings'
 import { conflictFieldLabel, formatConflictValue } from '../sync/conflicts'
@@ -76,6 +78,22 @@ export function RowTooltip({ hover, canWrite, onClose, onRemoveRow }: { hover: R
       {ind.message ? <p className="small">{ind.message}</p> : null}
       {ind.state === 'deleted' ? <p className="small">{t.rowSync.deletedBody}</p> : null}
       {ind.state === 'pending' && !ind.message ? <p className="small muted">{t.rowSync.pendingBody}</p> : null}
+      {(ind.commentsCount ?? 0) > 0 || ind.attachmentsCount > 0 ? (
+        <p className="small with-icon row-tooltip__counts" data-testid="row-counts">
+          {(ind.commentsCount ?? 0) > 0 ? (
+            <span className="with-icon" title={t.comments.countLabel}>
+              <MessageSquare className="icon" aria-hidden="true" />
+              <bdi className="num">{t.comments.count(ind.commentsCount as number)}</bdi>
+            </span>
+          ) : null}
+          {ind.attachmentsCount > 0 ? (
+            <span className="with-icon" title={t.attachments.title}>
+              <Paperclip className="icon" aria-hidden="true" />
+              <bdi className="num">{t.attachments.count(ind.attachmentsCount)}</bdi>
+            </span>
+          ) : null}
+        </p>
+      ) : null}
       {hover.progress && hover.progress.total > 0 ? (
         <p className="small" data-testid="row-progress">
           {t.hierarchy.progressLabel}: <bdi className="num">{t.hierarchy.progress(hover.progress.done, hover.progress.total)}</bdi>
@@ -245,7 +263,7 @@ export function SyncPanel({
       </div>
       <section className="side-panel__section">
         <p className="small">
-          {t.rowSync.lastSuccess}: {last ? <bdi className="num">{last}</bdi> : <span className="muted">{t.rowSync.never}</span>}
+          {t.rowSync.lastSuccess}: {last ? <bdi dir="ltr" className="num">{last}</bdi> :<span className="muted">{t.rowSync.never}</span>}
         </p>
         {message ? (
           <Notice tone={message.tone} testId="sync-panel-message">
@@ -363,24 +381,31 @@ export function SyncPanel({
   )
 }
 
-/** Above the grid on a synced sheet: Tab / Shift+Tab as buttons, collapse, progress, the panel. */
+/** Above the grid on a synced sheet: Tab / Shift+Tab as buttons, collapse, progress, files, details, the panel. */
 export function SyncToolbar({
   active,
   canWrite,
   counts,
+  rowCounts,
   onIndent,
   onOutdent,
   onToggleCollapse,
   onOpenPanel,
+  onOpenAttachments,
+  onOpenDetails,
   children,
 }: {
   active: ActiveTask | null
   canWrite: boolean
   counts: { error: number; conflict: number; pending: number } | null
+  /** Phase 5: the selected row's files and its to-do's comments. */
+  rowCounts?: { attachments: number; comments: number | null } | null
   onIndent: () => void
   onOutdent: () => void
   onToggleCollapse: () => void
   onOpenPanel: () => void
+  onOpenAttachments?: () => void
+  onOpenDetails?: () => void
   children?: ReactNode
 }) {
   const task = active?.task ?? null
@@ -406,6 +431,28 @@ export function SyncToolbar({
         </span>
       ) : null}
       <span className="sync-toolbar__spacer" />
+      {onOpenAttachments ? (
+        <button type="button" className="button button--small" onClick={onOpenAttachments} disabled={!task} aria-haspopup="dialog" data-testid="attachments-button" title={t.attachments.title}>
+          <Paperclip className="icon" aria-hidden="true" />
+          <span className="sync-toolbar__label">{t.attachments.title}</span>
+          {(rowCounts?.attachments ?? 0) > 0 ? (
+            <span className="badge badge--neutral">
+              <bdi className="num">{formatCount(rowCounts?.attachments ?? 0)}</bdi>
+            </span>
+          ) : null}
+        </button>
+      ) : null}
+      {onOpenDetails ? (
+        <button type="button" className="button button--small" onClick={onOpenDetails} disabled={!task} aria-haspopup="dialog" data-testid="details-button" title={t.details.buttonHint}>
+          <MessageSquare className="icon" aria-hidden="true" />
+          <span className="sync-toolbar__label">{t.details.button}</span>
+          {(rowCounts?.comments ?? 0) > 0 ? (
+            <span className="badge badge--info" data-testid="details-button-count" aria-label={t.comments.count(rowCounts?.comments ?? 0)}>
+              <bdi className="num">{formatCount(rowCounts?.comments ?? 0)}</bdi>
+            </span>
+          ) : null}
+        </button>
+      ) : null}
       {children}
       <button type="button" className="button button--small" onClick={onOpenPanel} aria-haspopup="dialog" data-testid="sync-panel-button">
         <Activity className="icon" aria-hidden="true" />

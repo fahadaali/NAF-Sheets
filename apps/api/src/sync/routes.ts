@@ -296,13 +296,17 @@ interface TaskStateRow {
   last_error: string | null
   remote_status: TaskSyncInfo['remoteStatus']
   assign_mode: 'auto' | 'manual'
+  bc_comments_count: number | null
+  attachments_count: number
 }
 
 const RANK: Record<SyncState, number> = { error: 4, conflict: 3, pending: 2, synced: 1, unlinked: 0 }
 
 async function syncResponse(env: Env, wb: WorkbookSyncRow): Promise<WorkbookSyncResponse> {
   const { results } = await env.DB.prepare(
-    `SELECT t.task_uid, t.sheet_id, t.level, t.parent_uid, t.bc_recording_id, t.sync_state, t.last_error, t.remote_status, t.assign_mode
+    `SELECT t.task_uid, t.sheet_id, t.level, t.parent_uid, t.bc_recording_id, t.sync_state, t.last_error, t.remote_status, t.assign_mode,
+            t.bc_comments_count,
+            (SELECT COUNT(*) FROM attachments a WHERE a.task_uid = t.task_uid AND a.removed_at IS NULL) AS attachments_count
      FROM tasks t JOIN sheets s ON s.id = t.sheet_id
      WHERE s.workbook_id = ?1 AND t.trashed_at IS NULL ORDER BY t.created_at, t.task_uid`,
   )
@@ -323,6 +327,9 @@ async function syncResponse(env: Env, wb: WorkbookSyncRow): Promise<WorkbookSync
     remoteStatus: r.remote_status,
     bcUrl: r.level === 0 ? url(r.bc_recording_id) : r.bc_recording_id === null ? null : url(byUid.get(r.parent_uid ?? '')?.bc_recording_id ?? null),
     assignMode: r.level === 0 ? r.assign_mode : null,
+    // Phase 5: comments live on to-dos (§8 table); a subtask shows none of its own.
+    commentsCount: r.level === 0 ? r.bc_comments_count : null,
+    attachmentsCount: r.attachments_count,
   }))
   const counts = { pending: 0, error: 0, conflict: 0 }
   let worst: SyncState = 'synced'

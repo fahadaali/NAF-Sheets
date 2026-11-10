@@ -60,6 +60,28 @@ export interface FakeWebhook {
   active: boolean
 }
 
+/** A comment on a to-do (comments.md). */
+export interface FakeComment {
+  id: number
+  todoId: number
+  bucketId: number
+  content: string
+  creatorId: number
+  createdAt: string
+  status: 'active' | 'trashed'
+}
+
+/** A file uploaded with POST /attachments.json (attachments.md), by its attachable sgid. */
+export interface FakeBlob {
+  id: number
+  sgid: string
+  key: string
+  filename: string
+  contentType: string
+  bytes: Uint8Array
+  uploadedBy: number
+}
+
 export interface RecordedCall {
   method: string
   path: string
@@ -91,6 +113,9 @@ export class FakeBasecamp {
   readonly todos = new Map<number, FakeTodo>()
   readonly subtasks = new Map<number, FakeSubtask>()
   readonly webhooks = new Map<number, FakeWebhook>()
+  /** Phase 5: comments by id, and uploaded files by sgid. */
+  readonly comments = new Map<number, FakeComment>()
+  readonly blobs = new Map<string, FakeBlob>()
   /** token → Basecamp person id (who the token belongs to). */
   readonly tokens = new Map<string, number>()
   /** Page size of list endpoints (Basecamp's is larger; small here to exercise `Link`). */
@@ -181,6 +206,46 @@ export class FakeBasecamp {
     return s
   }
 
+  /** A comment on a to-do, as a person would add it in Basecamp. */
+  addComment(todoId: number, content: string, creatorId = 1): FakeComment {
+    const todo = this.todos.get(todoId) as FakeTodo
+    const c: FakeComment = { id: uniqueId(), todoId, bucketId: todo.bucketId, content, creatorId, createdAt: this.tick(), status: 'active' }
+    this.comments.set(c.id, c)
+    return c
+  }
+
+  /** A file uploaded to Basecamp (not yet in any description); returns its sgid. */
+  addBlob(filename: string, contentType: string, bytes: Uint8Array, uploadedBy = 1): FakeBlob {
+    const id = uniqueId()
+    const b: FakeBlob = { id, sgid: `BAh-sgid-${id}==--${hashText(filename)}`, key: `key${id}`, filename, contentType, bytes, uploadedBy }
+    this.blobs.set(b.sgid, b)
+    return b
+  }
+
+  storageUrl(b: FakeBlob): string {
+    return `https://storage.3.basecamp.com/${this.accountId}/blobs/${b.key}/download/${encodeURIComponent(b.filename)}`
+  }
+
+  /** The documented element for a file, as a person attaching it in Basecamp would leave it (rich_text.md). */
+  attachmentHtml(b: FakeBlob): string {
+    return `<bc-attachment sgid="${b.sgid}" content-type="${b.contentType}" filename="${b.filename}"><figure><figcaption>${b.filename}</figcaption></figure></bc-attachment>`
+  }
+
+  commentsOf(todoId: number): FakeComment[] {
+    return [...this.comments.values()].filter((c) => c.todoId === todoId && c.status === 'active').sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id - b.id)
+  }
+
+  /** `description_attachments` (rich_text.md "Structured attachment metadata") of a description. */
+  private descriptionAttachments(html: string): Record<string, unknown>[] {
+    const out: Record<string, unknown>[] = []
+    for (const m of html.matchAll(/<bc-attachment\b[^>]*\ssgid="([^"]+)"/g)) {
+      const b = this.blobs.get(m[1] as string)
+      if (!b || out.some((x) => x['sgid'] === b.sgid)) continue
+      out.push({ id: b.id, sgid: b.sgid, filename: b.filename, content_type: b.contentType, byte_size: b.bytes.byteLength, download_url: this.storageUrl(b) })
+    }
+    return out
+  }
+
   /** The next `times` requests matching `match` answer `status`. */
   fail(match: (c: RecordedCall) => boolean, status: number, options: { headers?: Record<string, string>; body?: unknown; times?: number } = {}): void {
     this.failures.push({ match, status, headers: options.headers, body: options.body, times: options.times ?? 1 })
@@ -224,6 +289,8 @@ export class FakeBasecamp {
       subtasks_count: subs.length,
       subtasks_completed_count: subs.filter((s) => s.completed).length,
       subtasks_url: `${this.apiBase}/recordings/${t.id}/subtasks.json`,
+      comments_count: this.commentsOf(t.id).length,
+      description_attachments: this.descriptionAttachments(t.description),
       url: `${this.apiBase}/todos/${t.id}.json`,
       app_url: `https://3.basecamp.com/${this.accountId}/buckets/${t.bucketId}/todos/${t.id}`,
     }
@@ -270,9 +337,14 @@ export class FakeBasecamp {
 
   // --- HTTP --------------------------------------------------------------------------
 
+  /** Bodies of binary uploads, in order (phase 5). */
+  readonly uploads: Array<{ name: string; contentType: string; contentLength: string; bytes: Uint8Array; token: string }> = []
+
   fetch = async (url: string, init: RequestInit): Promise<Response> => {
     const headers = Object.fromEntries(new Headers(init.headers as HeadersInit).entries())
     const method = (init.method ?? 'GET').toUpperCase()
+    const storage = `https://storage.3.basecamp.com/${this.accountId}/blobs/`
+    if (url.startsWith(storage)) return this.download(url, method, headers)
     if (!url.startsWith(`${this.apiBase}/`)) throw new Error(`FakeBasecamp: unexpected request ${method} ${url}`)
     const u = new URL(url)
     const path = u.pathname.slice(`/${this.accountId}`.length)
@@ -283,6 +355,24 @@ export class FakeBasecamp {
     this.calls.push(call)
 
     if (headers['user-agent'] !== 'NAF Comms (info@naflaw.sa)') return reply(400, { error: 'user agent' })
+    // attachments.md: raw bytes with the file's own type and length (not JSON).
+    if (method === 'POST' && path === '/attachments.json') {
+      const failure = this.failures.find((f) => f.times > 0 && f.match(call))
+      if (failure) {
+        failure.times -= 1
+        return reply(failure.status, failure.body ?? {}, failure.headers)
+      }
+      const me = this.tokens.get(token)
+      if (me === undefined) return reply(401, { error: 'unauthorized' })
+      const ct = headers['content-type'] ?? ''
+      if (ct === '' || ct.startsWith('application/json')) return reply(415, {})
+      const bytes = new Uint8Array(await new Response(init.body as BodyInit).arrayBuffer())
+      if (String(bytes.byteLength) !== headers['content-length']) return reply(400, { error: 'length' })
+      const name = u.searchParams.get('name') ?? ''
+      this.uploads.push({ name, contentType: ct, contentLength: headers['content-length'] ?? '', bytes, token })
+      const b = this.addBlob(name, ct, bytes, me)
+      return reply(201, { id: b.id, attachable_sgid: b.sgid, sgid: b.sgid, filename: b.filename, content_type: ct, byte_size: bytes.byteLength, download_url: this.storageUrl(b) })
+    }
     if ((method === 'POST' || method === 'PUT') && headers['content-type'] !== 'application/json; charset=utf-8') return reply(415, {})
     const failure = this.failures.find((f) => f.times > 0 && f.match(call))
     if (failure) {
@@ -458,6 +548,24 @@ export class FakeBasecamp {
       return new Response(null, { status: 204 })
     }
 
+    // Comments (comments.md)
+    if ((m = /^\/recordings\/(\d+)\/comments\.json$/.exec(path))) {
+      const todo = this.todos.get(Number(m[1]))
+      if (!todo) return reply(404, {})
+      const project = this.projects.get(todo.bucketId)
+      if (project && !project.peopleIds.has(me)) return reply(404, {})
+      if (method === 'POST') {
+        if (todo.status === 'trashed') return reply(422, {})
+        const c = this.addComment(todo.id, String(b['content'] ?? ''), me)
+        return reply(201, this.rawComment(c))
+      }
+      return this.paged(call, this.commentsOf(todo.id).map((c) => this.rawComment(c)))
+    }
+    if ((m = /^\/comments\/(\d+)\.json$/.exec(path)) && method === 'GET') {
+      const c = this.comments.get(Number(m[1]))
+      return c ? reply(200, this.rawComment(c)) : reply(404, {})
+    }
+
     // Webhooks
     if ((m = /^\/buckets\/(\d+)\/webhooks\.json$/.exec(path))) {
       const projectId = Number(m[1])
@@ -494,6 +602,39 @@ export class FakeBasecamp {
       dueOn: typeof b['due_on'] === 'string' ? (b['due_on'] as string) : null,
       startsOn: typeof b['starts_on'] === 'string' ? (b['starts_on'] as string) : null,
     }
+  }
+
+  rawComment(c: FakeComment): Record<string, unknown> {
+    const todo = this.todos.get(c.todoId)
+    return {
+      id: c.id,
+      status: c.status,
+      type: 'Comment',
+      created_at: c.createdAt,
+      updated_at: c.createdAt,
+      title: `Re: ${todo?.content ?? ''}`,
+      content: c.content,
+      content_attachments: this.descriptionAttachments(c.content),
+      parent: { id: c.todoId, title: todo?.content ?? '', type: 'Todo', url: '', app_url: '' },
+      bucket: { id: c.bucketId, name: 'مشروع', type: 'Project' },
+      creator: { ...this.personRef(c.creatorId), avatar_url: `${this.apiBase}/people/${c.creatorId}/avatar` },
+      url: `${this.apiBase}/comments/${c.id}.json`,
+      app_url: `https://3.basecamp.com/${this.accountId}/buckets/${c.bucketId}/todos/${c.todoId}#__recording_${c.id}`,
+    }
+  }
+
+  /** GET of a stored file: the token is required; recorded like any call. */
+  private download(url: string, method: string, headers: Record<string, string>): Response {
+    const token = (headers['authorization'] ?? '').replace(/^Bearer /, '')
+    const u = new URL(url)
+    this.calls.push({ method, path: u.pathname, query: u.searchParams, token, body: null, headers })
+    if (method !== 'GET') return reply(405, {})
+    const me = this.tokens.get(token)
+    if (me === undefined) return reply(401, { error: 'unauthorized' })
+    const key = /\/blobs\/([^/]+)\//.exec(u.pathname)?.[1]
+    const b = [...this.blobs.values()].find((x) => x.key === key)
+    if (!b) return reply(404, {})
+    return new Response(b.bytes, { status: 200, headers: { 'content-type': b.contentType, 'content-length': String(b.bytes.byteLength) } })
   }
 
   private rawProject(id: number): Record<string, unknown> {

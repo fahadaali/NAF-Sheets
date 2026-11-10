@@ -163,6 +163,33 @@ describe('update_row', () => {
     expect(cell(cleared.workbook, S, 1, 'G')).toBeUndefined()
   })
 
+  it('phase 5: a description of files only keeps an empty cell with the HTML, and reads back unchanged', () => {
+    const { workbook } = linkedWorkbook(['مهمة'])
+    const html = '<bc-attachment sgid="s-1"></bc-attachment>'
+    const result = apply(workbook, [{ type: 'update_row', uid: 'u-1', fields: { notesHtml: html } }])
+    expect(cell(result.workbook, S, 1, 'G')).toEqual({ custom: { nafSheets: { notesHtml: html } } })
+    expect(readBack(result.workbook)[0]?.notesHtml).toBe(html)
+    // A file added after the text: the cell's text does not change, the stored HTML does.
+    const withText = apply(workbook, [{ type: 'update_row', uid: 'u-1', fields: { notesHtml: '<div>نص</div>' } }])
+    const added = apply(withText.workbook, [{ type: 'update_row', uid: 'u-1', fields: { notesHtml: `<div>نص</div>${html}` } }])
+    expect(cell(added.workbook, S, 1, 'G')).toEqual({ v: 'نص', t: 1, custom: { nafSheets: { notesHtml: `<div>نص</div>${html}` } } })
+    expect(readBack(added.workbook)[0]?.notesHtml).toBe(`<div>نص</div>${html}`)
+  })
+
+  it('phase 5: writes the file names into the attachments cell, and clears it when none are left', () => {
+    const { workbook } = linkedWorkbook(['مهمة'])
+    const files = [
+      { id: 'a1', filename: 'خطة  الحملة.pdf', bcSgid: 's1', origin: 'local' as const },
+      { id: 'a2', filename: 'report.xlsx', bcSgid: null, origin: 'basecamp' as const },
+    ]
+    const result = apply(workbook, [{ type: 'update_row', uid: 'u-1', fields: { attachments: files } }])
+    expect(cell(result.workbook, S, 1, 'F')).toEqual({ v: 'خطة الحملة.pdf، report.xlsx', t: 1 })
+    const again = apply(result.workbook, [{ type: 'update_row', uid: 'u-1', fields: { attachments: files } }])
+    expect(again.changedCells).toEqual([])
+    const none = apply(result.workbook, [{ type: 'update_row', uid: 'u-1', fields: { attachments: [] } }])
+    expect(cell(none.workbook, S, 1, 'F')).toBeUndefined()
+  })
+
   it('moves a row to its new position like a sort: formulas in moved rows follow their row', () => {
     const { workbook } = linkedWorkbook(['أ', 'ب', 'ج'])
     putRow(workbook, S, 1, { F: { f: '=D2+1', v: 10 } })

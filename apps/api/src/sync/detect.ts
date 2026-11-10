@@ -29,7 +29,7 @@ import { diffTask } from '@naf-sheets/sync-engine'
 import type { BcOutboundMessage, Env } from '../env'
 import { localFingerprint } from './fingerprint'
 import { ROW_MESSAGES } from './messages'
-import { diffContextFor, loadWorkbookState, readSheet, syncedSheets } from './state'
+import { diffContextFor, diffLocal, loadWorkbookState, readSheet, syncedSheets } from './state'
 import type { WorkbookState } from './state'
 import {
   assigneeStatements,
@@ -357,7 +357,7 @@ function rowNeedsPush(state: WorkbookState, sheet: SheetRow, task: LocalTask, sh
   const base = baseOfRow(row)
   // Linked to a record but never read (a title match at linking): the consumer fetches it.
   if (base === null) return true
-  const outcome = diffTask(task, base, null, diffContextFor(state, sheet, task, sheetTasks))
+  const outcome = diffTask(diffLocal(state, sheet, task, base), base, null, diffContextFor(state, sheet, task, sheetTasks))
   return outcome.outbound.length > 0
 }
 

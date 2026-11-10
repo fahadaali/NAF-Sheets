@@ -67,6 +67,20 @@ export type ApiErrorCode =
   | 'basecamp_project_taken'
   | 'conflict_already_resolved'
   | 'sheet_write_refused'
+  // Phase 5: attachments and comments (apps/api/src/phase5/errors.ts, contract ./api-phase5.ts)
+  | 'task_not_found'
+  | 'task_not_in_basecamp'
+  | 'task_deleted_remotely'
+  | 'task_busy'
+  | 'attachment_not_found'
+  | 'attachment_length_required'
+  | 'attachment_too_large'
+  | 'attachment_empty'
+  | 'attachment_invalid_name'
+  | 'attachment_not_confirmed'
+  | 'attachment_not_retryable'
+  | 'comment_invalid'
+  | 'basecamp_access_denied'
 
 /** Every non-2xx JSON response. `message` is Arabic: what happened and what to do (spec §12.2). */
 export interface ApiError {

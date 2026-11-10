@@ -25,7 +25,7 @@ import { sheetLayout, systemColumnSet, type SheetLayout } from '../sync/layout'
 import { familyRows, newRowIdentity, planRemoval, planRowMove, progressByTodo, readTaskRows, systemCells, type RemovalPlan, type TaskRow } from '../sync/rows'
 import { rowIndicators, type RowIndicator } from '../sync/sync-state'
 import type { FWorkbook, FWorksheet } from './univer-host'
-import { CellMarksExtension, loadStateIcons, RowStateExtension, type GridTheme, type MarksBySheet, type SheetMarks } from './sync-render'
+import { CellMarksExtension, commentBadgeImage, loadStateIcons, RowStateExtension, type GridTheme, type MarksBySheet, type SheetMarks } from './sync-render'
 
 const KEY_TAB = 9
 const DIRECTION_LEFT = 3
@@ -104,6 +104,18 @@ export interface AssigneeTarget {
   multipleList: boolean
 }
 
+/** A task row whose files or details are opened (phase 5, spec §5.2, §10, §12.1 item 5). */
+export interface TaskTarget {
+  sheetId: string
+  row: number
+  /** Null until the row has an identity (a title typed, the editor gives it one). */
+  uid: TaskUid | null
+  level: 0 | 1 | null
+  title: string
+  /** Subtask: its to-do's title (comments live there, §8 table). */
+  parentTitle: string | null
+}
+
 export interface RowHover {
   x: number
   y: number
@@ -142,6 +154,8 @@ export interface SyncLayerOptions {
   confirmRemoval(request: RemovalRequest): Promise<boolean>
   onDeletionsConfirmed(uids: readonly TaskUid[]): void
   openAssignees(target: AssigneeTarget): void
+  /** Phase 5: a person started to edit an attachments cell (§5.2): the attachment editor opens instead. */
+  openAttachments(target: TaskTarget): void
   onRowHover(hover: RowHover | null): void
   /** The selection or the sheet's tasks changed: toolbar state is stale. */
   onActiveChange(): void
@@ -160,6 +174,8 @@ export class SyncLayer {
   private marks: MarksBySheet = new Map()
   private indicators = new Map<string, Map<number, RowIndicator>>()
   private icons: Awaited<ReturnType<typeof loadStateIcons>> | null = null
+  /** Phase 5: comment counter images by count (built once each, asynchronously). */
+  private readonly commentImages = new Map<number, HTMLImageElement | 'loading'>()
   private queue: Promise<void> = Promise.resolve()
   private pointer = { x: 0, y: 0 }
   private alert: { key: string; dispose: () => void } | null = null
@@ -313,7 +329,13 @@ export class SyncLayer {
       registerSheetMainExtension?: (unitId: string, ...ext: unknown[]) => { dispose(): void }
     }
     try {
-      const header = extended.registerSheetRowHeaderExtension?.(this.unitId, new RowStateExtension(() => this.marks, () => this.icons, this.options.theme))
+      const header = extended.registerSheetRowHeaderExtension?.(
+        this.unitId,
+        new RowStateExtension(() => this.marks, () => this.icons, this.options.theme, (count) => {
+          const image = this.commentImages.get(Math.min(count, 100))
+          return image && image !== 'loading' ? image : null
+        }),
+      )
       const main = extended.registerSheetMainExtension?.(this.unitId, new CellMarksExtension(() => this.marks, this.options.theme, t.rowSync.states.deleted))
       if (header) this.disposers.push(() => header.dispose())
       if (main) this.disposers.push(() => main.dispose())
@@ -564,11 +586,36 @@ export class SyncLayer {
     if (this.disposed || e.workbook.getId() !== this.unitId) return
     const sheetId = e.worksheet.getSheetId()
     const layout = this.layout(sheetId)
-    if (!layout || layout.fields.assignees !== e.column || e.row <= layout.header) return
+    if (!layout || e.row <= layout.header) return
+    const assignees = layout.fields.assignees === e.column
+    // Phase 5 (§5.2): the attachments cell shows file names; its editor manages the files.
+    const attachments = layout.fields.attachments === e.column
+    if (!assignees && !attachments) return
     if (!this.options.canWrite()) return
     e.cancel = true
+    if (attachments) {
+      this.options.openAttachments(this.taskTarget(sheetId, e.row))
+      return
+    }
     const target = this.assigneeTarget(sheetId, e.row)
     if (target) this.options.openAssignees(target)
+  }
+
+  /** The task on `row` of a synced sheet (uid null for a row without an identity yet). */
+  taskTarget(sheetId: string, row: number): TaskTarget {
+    const layout = this.layout(sheetId)
+    const reader = this.reader(sheetId)
+    const rows = this.rows(sheetId, layout)
+    const task = rows.find((r) => r.row === row) ?? null
+    const titleAt = (r: number) => (layout?.fields.title !== undefined && reader ? cellText(reader.cell(r, layout.fields.title)).trim() : '')
+    const parent = task?.level === 1 ? rows.find((r) => r.uid === task.parentUid) : undefined
+    return { sheetId, row, uid: task?.uid ?? null, level: task?.level ?? null, title: titleAt(row), parentTitle: parent ? titleAt(parent.row) : null }
+  }
+
+  /** The current indicator of a task (comment and file counts included), by uid. */
+  indicatorOf(uid: TaskUid): RowIndicator | null {
+    for (const byRow of this.indicators.values()) for (const ind of byRow.values()) if (ind.uid === uid) return ind
+    return null
   }
 
   assigneeTarget(sheetId: string, row: number): AssigneeTarget | null {
@@ -715,11 +762,12 @@ export class SyncLayer {
   }
 
   /** What the grid draws now, by sheet (also exposed to the e2e tests). */
-  marksSnapshot(): Record<string, { states: Record<number, string>; unsyncedRows: number[]; unsyncedColumns: number[]; conflicts: string[]; deleted: number[] }> {
+  marksSnapshot(): Record<string, { states: Record<number, string>; comments: Record<number, number>; unsyncedRows: number[]; unsyncedColumns: number[]; conflicts: string[]; deleted: number[] }> {
     const out: ReturnType<SyncLayer['marksSnapshot']> = {}
     for (const [sheetId, m] of this.marks) {
       out[sheetId] = {
         states: Object.fromEntries(m.states),
+        comments: Object.fromEntries(m.comments.counts),
         unsyncedRows: [...m.unsynced.rows].sort((a, b) => a - b),
         unsyncedColumns: [...m.unsynced.columns],
         conflicts: [...m.conflicts].sort(),
@@ -750,6 +798,10 @@ export class SyncLayer {
       const unsyncedColumns = (['starts_on', 'notes', 'attachments'] as const).map((f) => layout.fields[f]).filter((c): c is number => c !== undefined)
       const sheetMarks: SheetMarks = {
         states: new Map([...byRow].map(([row, ind]) => [row, ind.state])),
+        // Phase 5: the comment counter on the row (§9.3.5), in its row header.
+        comments: {
+          counts: new Map([...byRow].filter(([, ind]) => (ind.commentsCount ?? 0) > 0).map(([row, ind]) => [row, ind.commentsCount as number])),
+        },
         unsynced: { rows: new Set(rows.filter((r) => r.level === 1).map((r) => r.row)), columns: unsyncedColumns },
         conflicts: new Set(conflictCells(this.conflicts, rows, layout).map((c) => `${c.row}:${c.column}`)),
         deleted: {
@@ -762,8 +814,27 @@ export class SyncLayer {
     this.marks = marks
     this.indicators = indicators
     this.host.dataset.syncMarks = JSON.stringify(this.marksSnapshot())
+    this.loadCommentImages()
     this.refresh()
     this.options.onActiveChange()
+  }
+
+  /** Builds the counter images the marks need, then draws again. */
+  private loadCommentImages(): void {
+    const counts = new Set<number>()
+    for (const m of this.marks.values()) for (const n of m.comments.counts.values()) counts.add(Math.min(n, 100))
+    for (const n of counts) {
+      if (this.commentImages.has(n)) continue
+      this.commentImages.set(n, 'loading')
+      void commentBadgeImage(this.options.theme, n).then(
+        (image) => {
+          if (this.disposed) return
+          this.commentImages.set(n, image)
+          this.refresh()
+        },
+        () => this.commentImages.delete(n),
+      )
+    }
   }
 
   private refresh(): void {

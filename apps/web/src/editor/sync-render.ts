@@ -11,6 +11,9 @@
 //   (spec §8 note; Univer styles have no pattern fill), a corner marker on a
 //   cell with a field conflict (§9.1), and the badge «محذوفة في Basecamp»
 //   after the last column of a row deleted in Basecamp (§9.3.10).
+// - Phase 5: a to-do's comment counter (§9.3.5) in the row header, between the
+//   row number and the cells — a small bubble with the count, drawn as an
+//   image so the RTL layer flips it back whole and the number reads unmirrored.
 //
 // Colours and sizes come from theme.css (read once with getComputedStyle).
 
@@ -36,6 +39,9 @@ export interface GridTheme {
   badgeBackground: string
   badgeText: string
   font: string
+  commentBackground: string
+  commentText: string
+  commentHeight: number
 }
 
 const css = (style: CSSStyleDeclaration, name: string, fallback: string) => style.getPropertyValue(name).trim() || fallback
@@ -66,6 +72,9 @@ export function readGridTheme(): GridTheme {
     badgeBackground: css(style, '--color-neutral-soft', 'transparent'),
     badgeText: css(style, '--color-neutral', 'currentColor'),
     font: css(style, '--font-sans', 'sans-serif'),
+    commentBackground: css(style, '--comment-badge-background', 'transparent'),
+    commentText: css(style, '--comment-badge-text', 'currentColor'),
+    commentHeight: num(style, '--comment-badge-height', 13),
   }
 }
 
@@ -100,9 +109,35 @@ export async function loadStateIcons(theme: GridTheme): Promise<Record<RowState,
   return Object.fromEntries(entries) as Record<RowState, HTMLImageElement>
 }
 
+/** The comment counter of one row: a bubble with the count, as an image (2× its drawn size, for sharpness). */
+export async function commentBadgeImage(theme: GridTheme, count: number): Promise<HTMLImageElement> {
+  const scale = 2
+  const h = theme.commentHeight * scale
+  const label = count > 99 ? '99+' : String(count)
+  const font = Math.round(h * (label.length > 2 ? 0.48 : 0.62))
+  const w = Math.max(h + 4, Math.ceil(label.length * font * 0.62) + 10)
+  const body = h - 5
+  const escape = (v: string) => v.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;')
+  // A speech bubble (the comment shape of Lucide's MessageSquare) with a tail at the bottom.
+  const svg =
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">` +
+    `<path d="M3 1 H${w - 3} Q${w - 1} 1 ${w - 1} 3 V${body - 2} Q${w - 1} ${body} ${w - 3} ${body} H9 L4 ${h - 1} V${body} H3 Q1 ${body} 1 ${body - 2} V3 Q1 1 3 1 Z" ` +
+    `fill="${escape(theme.commentBackground)}" stroke="${escape(theme.commentText)}" stroke-width="2"/>` +
+    `<text x="${w / 2}" y="${body / 2 + 1}" text-anchor="middle" dominant-baseline="central" font-family="${escape(theme.font)}" font-size="${font}" font-weight="700" fill="${escape(theme.commentText)}">${label}</text>` +
+    `</svg>`
+  const image = new Image(w, h)
+  image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
+  return image.decode().then(
+    () => image,
+    () => image,
+  )
+}
+
 /** What one synced sheet shows in the grid, by 0-based row. */
 export interface SheetMarks {
   states: Map<number, RowState>
+  /** Phase 5: comment counters by row, drawn in the row header. */
+  comments: { counts: ReadonlyMap<number, number> }
   /** Subtask rows and the columns of theirs that do not sync. */
   unsynced: { rows: ReadonlySet<number>; columns: readonly number[] }
   /** Cells with a field conflict: `row:column`. */
@@ -141,6 +176,8 @@ export class RowStateExtension extends SheetExtension {
     private readonly marks: () => MarksBySheet,
     private readonly icons: () => Record<RowState, HTMLImageElement> | null,
     private readonly theme: GridTheme,
+    /** Phase 5: the counter image for a count, once it is ready (null before). */
+    private readonly commentBadge: (count: number) => HTMLImageElement | null = () => null,
   ) {
     super()
   }
@@ -152,14 +189,20 @@ export class RowStateExtension extends SheetExtension {
     const { startRow, endRow } = skeleton.rowColumnSegment
     const size = this.theme.indicatorSize
     for (let row = Math.max(0, startRow - 1); row <= endRow; row++) {
-      const state = sheet.states.get(row)
-      if (!state) continue
       const bounds = rowBounds(skeleton, row)
       if (!bounds) continue
       const [top, bottom] = bounds
+      const state = sheet.states.get(row)
       const height = Math.min(size, bottom - top - 2)
-      if (height < 6) continue
-      ctx.drawImage(icons[state], 3, top + (bottom - top - height) / 2, height, height)
+      if (state && height >= 6) ctx.drawImage(icons[state], 3, top + (bottom - top - height) / 2, height, height)
+      // The comment counter at the other edge of the row number (next to the cells).
+      const count = sheet.comments.counts.get(row)
+      const badge = count ? this.commentBadge(count) : null
+      if (!badge) continue
+      const h = Math.min(this.theme.commentHeight, bottom - top - 2)
+      if (h < 8) continue
+      const w = (badge.width / badge.height) * h
+      ctx.drawImage(badge, this.theme.rowMarginWidth - w - 2, top + (bottom - top - h) / 2, w, h)
     }
   }
 }
@@ -256,6 +299,7 @@ export class CellMarksExtension extends SheetExtension {
         ctx.fillText(this.badgeText, cb[0] + 10, y + h / 2)
       }
     }
+
     ctx.restore()
   }
 }

@@ -7,6 +7,11 @@ import type {
   ApiError,
   ApiErrorCode,
   AssigneeOptionsResponse,
+  AttachmentInfo,
+  AttachmentSettingsResponse,
+  CommentInfo,
+  TaskAttachmentsResponse,
+  TaskCommentsResponse,
   ConflictRecord,
   CreateExternalContactRequest,
   ExternalContact,
@@ -37,8 +42,8 @@ export interface Recorded {
   body: unknown
 }
 
-/** `body: undefined` answers with no body (e.g. 204). */
-type Reply = { status: number; body: unknown }
+/** `body: undefined` answers with no body (e.g. 204); `raw` answers bytes (downloads). */
+type Reply = { status: number; body: unknown; raw?: { contentType: string; data: Buffer; headers?: Record<string, string> } }
 type Override = (req: Recorded) => Reply | undefined
 
 const now = '2026-11-10T09:30:00Z'
@@ -118,6 +123,25 @@ export class MockApi {
   syncNowQueued = 2
   private externalCount = 0
 
+  // --- Phase 5 (packages/shared/src/api-phase5.ts) ---------------------------
+  attachmentSettings: AttachmentSettingsResponse = { maxBytes: 100 * 1024 * 1024, subtaskMode: 'local' }
+  /** Files per task uid (any workbook). */
+  attachments: Record<string, AttachmentInfo[]> = {}
+  /** Task levels for the attachments list (default 0). */
+  levels: Record<string, 0 | 1> = {}
+  /** `TaskAttachmentsResponse.notice` per task uid. */
+  attachmentNotices: Record<string, string> = {}
+  /** Bytes of each file, for downloads. */
+  readonly files = new Map<string, Buffer>()
+  /** The next upload answers this instead of storing the file. */
+  failNextUpload: Reply | null = null
+  /** Uploads are answered this much later (to see their progress). */
+  uploadDelayMs = 0
+  /** Comments per task uid (a subtask's entry is its parent's, with `onParent`). */
+  comments: Record<string, { comments: CommentInfo[]; onParent?: boolean; targetUid?: string }> = {}
+  private fileCount = 0
+  private commentCount = 0
+
   bodies(method: string, path: string): unknown[] {
     return this.requests.filter((r) => r.method === method && r.path === path).map((r) => r.body)
   }
@@ -164,15 +188,25 @@ export class MockApi {
     const request = route.request()
     const url = new URL(request.url())
     let body: unknown = null
-    try {
-      body = request.postDataJSON()
-    } catch {
-      body = request.postData()
+    if (request.method() === 'POST' && /\/tasks\/[^/]+\/attachments$/.test(url.pathname)) {
+      // A raw file body (not JSON): its size and type are what the mock keeps.
+      const data = request.postDataBuffer() ?? Buffer.alloc(0)
+      body = { size: data.length, contentType: request.headers()['content-type'] ?? null, data }
+    } else {
+      try {
+        body = request.postDataJSON()
+      } catch {
+        body = request.postData()
+      }
     }
     const recorded: Recorded = { method: request.method(), path: url.pathname + url.search, body }
     this.requests.push(recorded)
     const reply = this.override?.(recorded) ?? this.reply(recorded.method, url, body)
-    if (reply.body === undefined) await route.fulfill({ status: reply.status, body: '' })
+    if (this.uploadDelayMs > 0 && recorded.method === 'POST' && /\/tasks\/[^/]+\/attachments$/.test(url.pathname)) {
+      await new Promise((resolve) => setTimeout(resolve, this.uploadDelayMs))
+    }
+    if (reply.raw) await route.fulfill({ status: reply.status, contentType: reply.raw.contentType, body: reply.raw.data, headers: reply.raw.headers })
+    else if (reply.body === undefined) await route.fulfill({ status: reply.status, body: '' })
     else await route.fulfill({ status: reply.status, contentType: 'application/json; charset=utf-8', body: JSON.stringify(reply.body) })
   }
 
@@ -278,9 +312,106 @@ export class MockApi {
     return undefined
   }
 
+  /** The endpoints of packages/shared/src/api-phase5.ts; undefined when the path is not one of them. */
+  private phase5(method: string, url: URL, body: unknown): Reply | undefined {
+    const path = url.pathname
+    if (path === '/api/attachment-settings' && method === 'GET') return { status: 200, body: this.attachmentSettings }
+    const m = /^\/api\/workbooks\/([^/]+)\/(?:tasks\/([^/]+)\/(attachments|comments)|attachments\/([^/]+)\/(remove|retry|download))$/.exec(path)
+    if (!m?.[1]) return undefined
+    const id = decodeURIComponent(m[1])
+    const stored = this.workbooks.get(id)
+    if (!stored) return error(404, 'not_found', 'الملف غير موجود. عُد إلى قائمة الملفات واختر ملفاً آخر.')
+    const reader = stored.workbook.access === 'viewer' || this.me.user.role === 'viewer'
+    const forbidden = () => error(403, 'forbidden', 'لا تملك صلاحية التعديل على هذا الملف؛ يمكنك الاطلاع على المرفقات والتعليقات فقط.')
+    const listOf = (uid: string): TaskAttachmentsResponse => ({
+      taskUid: uid,
+      level: this.levels[uid] ?? 0,
+      attachments: this.attachments[uid] ?? [],
+      settings: this.attachmentSettings,
+      notice: this.attachmentNotices[uid] ?? null,
+      canEdit: !reader,
+    })
+    if (m[2]) {
+      const uid = decodeURIComponent(m[2])
+      if (m[3] === 'attachments' && method === 'GET') return { status: 200, body: listOf(uid) }
+      if (m[3] === 'attachments' && method === 'POST') {
+        if (reader) return forbidden()
+        if (this.failNextUpload) {
+          const reply = this.failNextUpload
+          this.failNextUpload = null
+          return reply
+        }
+        const upload = body as { size: number; contentType: string | null; data: Buffer }
+        if (upload.size > this.attachmentSettings.maxBytes) return error(413, 'attachment_too_large', 'حجم الملف أكبر من الحد المسموح، فلم يُرفع شيء.')
+        const name = url.searchParams.get('name') ?? ''
+        const fileId = `att-${++this.fileCount}`
+        const level = this.levels[uid] ?? 0
+        const info: AttachmentInfo = {
+          id: fileId,
+          taskUid: uid,
+          filename: name,
+          size: upload.size,
+          mime: upload.contentType,
+          origin: 'local',
+          state: level === 1 ? 'local_only' : 'attached',
+          message: null,
+          downloadPath: `/api/workbooks/${encodeURIComponent(id)}/attachments/${fileId}/download`,
+          createdAt: now,
+        }
+        this.files.set(fileId, upload.data)
+        this.attachments[uid] = [...(this.attachments[uid] ?? []), info]
+        return { status: 201, body: { attachment: info, attachments: this.attachments[uid] } }
+      }
+      if (m[3] === 'comments') {
+        const entry = this.comments[uid] ?? { comments: [] }
+        const thread = (): TaskCommentsResponse => ({
+          taskUid: uid,
+          targetUid: entry.targetUid ?? uid,
+          onParent: entry.onParent ?? false,
+          comments: entry.comments,
+          commentsCount: entry.comments.length,
+          bcUrl: `https://3.basecamp.com/5000001/buckets/4021/todos/${entry.targetUid ?? uid}`,
+          canComment: !reader,
+        })
+        if (method === 'GET') return { status: 200, body: thread() }
+        if (method === 'POST') {
+          if (reader) return forbidden()
+          const content = typeof (body as { content?: unknown })?.content === 'string' ? (body as { content: string }).content.trim() : ''
+          if (content === '') return error(400, 'comment_invalid', 'نص التعليق فارغ، فلم يُرسل شيء. اكتب تعليقاً ثم أعد الإرسال.')
+          const comment: CommentInfo = { id: 9000 + ++this.commentCount, text: content, creatorName: 'فهد العتيبي', creatorAvatarUrl: null, createdAt: now, appUrl: null, attachments: [] }
+          entry.comments = [...entry.comments, comment]
+          this.comments[uid] = entry
+          return { status: 201, body: { comment, commentsCount: entry.comments.length } }
+        }
+      }
+      return undefined
+    }
+    const fileId = decodeURIComponent(m[4] ?? '')
+    const owner = Object.keys(this.attachments).find((uid) => (this.attachments[uid] ?? []).some((a) => a.id === fileId))
+    const file = owner ? (this.attachments[owner] ?? []).find((a) => a.id === fileId) : undefined
+    if (!owner || !file) return error(404, 'attachment_not_found', 'لم يُعثر على هذا المرفق، فربما أُزيل من قبل.')
+    if (m[5] === 'download' && method === 'GET') {
+      return { status: 200, body: undefined, raw: { contentType: file.mime ?? 'application/octet-stream', data: this.files.get(fileId) ?? Buffer.from('file'), headers: { 'content-disposition': `attachment; filename*=UTF-8''${encodeURIComponent(file.filename)}` } } }
+    }
+    if (method !== 'POST') return undefined
+    if (reader) return forbidden()
+    if (m[5] === 'remove') {
+      if ((body as { confirmed?: unknown })?.confirmed !== true) return error(400, 'attachment_not_confirmed', 'لم تُؤكَّد إزالة المرفق، فلم يُزل شيء.')
+      this.attachments[owner] = (this.attachments[owner] ?? []).filter((a) => a.id !== fileId)
+      return { status: 200, body: listOf(owner) }
+    }
+    if (m[5] === 'retry') {
+      this.attachments[owner] = (this.attachments[owner] ?? []).map((a) => (a.id === fileId ? { ...a, state: 'attached', message: null } : a))
+      return { status: 200, body: { attachment: (this.attachments[owner] ?? []).find((a) => a.id === fileId), attachments: this.attachments[owner] } }
+    }
+    return undefined
+  }
+
   private reply(method: string, url: URL, body: unknown): Reply {
     const path = url.pathname
     if (method === 'GET' && path === '/api/me') return { status: 200, body: this.me }
+    const phase5 = this.phase5(method, url, body)
+    if (phase5) return phase5
     const wave2 = this.wave2(method, path, body)
     if (wave2) return wave2
     const wave3 = this.wave3(method, path, body)

@@ -109,6 +109,14 @@ describe('row sync indicators (spec §5.2)', () => {
     expect(rowIndicators(null, rows).size).toBe(0)
   })
 
+  it('phase 5: carries the comment and file counts (absent from older payloads: none known)', () => {
+    const counted: WorkbookSyncResponse = { ...info, tasks: [task('u-1', { commentsCount: 3, attachmentsCount: 2 }), task('u-2', { commentsCount: null })] }
+    const map = rowIndicators(counted, rows)
+    expect([map.get(1)?.commentsCount, map.get(1)?.attachmentsCount]).toEqual([3, 2])
+    expect([map.get(2)?.commentsCount, map.get(2)?.attachmentsCount]).toEqual([null, 0])
+    expect([map.get(5)?.commentsCount, map.get(5)?.attachmentsCount]).toEqual([null, 0])
+  })
+
   it('the poller runs at once, every interval after the last run, never twice at a time, and once more on a poke', async () => {
     const timers: Array<{ fn: () => void; ms: number }> = []
     const clock = { setTimeout: (fn: () => void, ms: number) => timers.push({ fn, ms }), clearTimeout: () => undefined, now: () => 0 }

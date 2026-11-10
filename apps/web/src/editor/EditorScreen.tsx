@@ -22,9 +22,11 @@ import { PendingDeletions, uidsInSnapshot } from '../sync/deletions'
 import { prepareSyncedSheets } from '../sync/prepare'
 import { Poller } from '../sync/sync-state'
 import { AssigneeEditor } from './AssigneeEditor'
+import { AttachmentEditor } from './AttachmentEditor'
+import { TaskDetailsPanel } from './TaskDetailsPanel'
 import { FileSettingsPanel } from './FileSettingsPanel'
 import { SyncLayer } from './sync-layer'
-import type { ActiveTask, AssigneeTarget, RemovalRequest, RowHover } from './sync-layer'
+import type { ActiveTask, AssigneeTarget, RemovalRequest, RowHover, TaskTarget } from './sync-layer'
 import { readGridTheme } from './sync-render'
 import { DeletionDialog, RowTooltip, SyncPanel, SyncToolbar } from './sync-ui'
 import type { AttentionRow, PanelConflict } from './sync-ui'
@@ -225,6 +227,10 @@ function WorkbookEditor({ data, target, onReload, session, collab, roomNotice, o
   const [refusal, setRefusal] = useState<string | null>(null)
   const [removal, setRemoval] = useState<Removal | null>(null)
   const [assigneeTarget, setAssigneeTarget] = useState<AssigneeTarget | null>(null)
+  // Phase 5: the attachment editor (§5.2) and the task details panel (§12.1 item 5).
+  const [attachmentTarget, setAttachmentTarget] = useState<TaskTarget | null>(null)
+  const [detailsTarget, setDetailsTarget] = useState<TaskTarget | null>(null)
+  const [detailsOpen, setDetailsOpen] = useState(false)
   const [rowHover, setRowHover] = useState<RowHover | null>(null)
   const [panelOpen, setPanelOpen] = useState(false)
   const [active, setActive] = useState<ActiveTask | null>(null)
@@ -318,6 +324,11 @@ function WorkbookEditor({ data, target, onReload, session, collab, roomNotice, o
                 if (cancelled) return
                 setRowHover(null)
                 setAssigneeTarget(t)
+              },
+              openAttachments: (target) => {
+                if (cancelled) return
+                setRowHover(null)
+                setAttachmentTarget(target)
               },
               onRowHover: (hover) => {
                 if (!cancelled) showRowHover(hover)
@@ -534,6 +545,18 @@ function WorkbookEditor({ data, target, onReload, session, collab, roomNotice, o
 
   const { workbook } = data
   const onSyncedSheet = engine === 'ready' && activeSheet !== null && synced.has(activeSheet)
+
+  // Phase 5: the selected row's files, and its to-do's comments (a subtask shows its parent's).
+  const activeTarget = (): TaskTarget | null => (active ? (layerRef.current?.taskTarget(active.sheetId, active.row) ?? null) : null)
+  const rowCounts = (() => {
+    const layer = layerRef.current
+    const task = active?.task
+    if (!layer || !task) return null
+    const own = layer.indicatorOf(task.uid)
+    const todo = task.level === 1 && task.parentUid ? layer.indicatorOf(task.parentUid) : own
+    return { attachments: own?.attachmentsCount ?? 0, comments: todo?.commentsCount ?? null }
+  })()
+  const detailsBcUrl = detailsTarget?.uid ? (layerRef.current?.indicatorOf(detailsTarget.uid)?.bcUrl ?? null) : null
   const panelData = useMemo(() => {
     const layer = layerRef.current
     if (!panelOpen || !layer) return { conflicts: [] as PanelConflict[], attention: [] as AttentionRow[] }
@@ -609,6 +632,18 @@ function WorkbookEditor({ data, target, onReload, session, collab, roomNotice, o
           onOpenPanel={() => {
             setRowHover(null)
             setPanelOpen(true)
+          }}
+          rowCounts={rowCounts}
+          onOpenAttachments={() => {
+            const target = activeTarget()
+            if (!target) return
+            setRowHover(null)
+            setAttachmentTarget(target)
+          }}
+          onOpenDetails={() => {
+            setRowHover(null)
+            setDetailsTarget(activeTarget())
+            setDetailsOpen(true)
           }}
         />
       ) : null}
@@ -815,6 +850,29 @@ function WorkbookEditor({ data, target, onReload, session, collab, roomNotice, o
           onClose={() => setAssigneeTarget(null)}
         />
       ) : null}
+      {attachmentTarget ? (
+        <AttachmentEditor
+          key={`${attachmentTarget.sheetId}:${attachmentTarget.uid ?? attachmentTarget.row}`}
+          target={attachmentTarget}
+          workbookId={workbook.id}
+          canWrite={editable}
+          onClose={() => setAttachmentTarget(null)}
+          onChanged={() => pollerRef.current?.poke()}
+        />
+      ) : null}
+      <TaskDetailsPanel
+        open={detailsOpen}
+        target={detailsTarget}
+        workbookId={workbook.id}
+        canWrite={editable}
+        bcUrl={detailsBcUrl}
+        onClose={() => setDetailsOpen(false)}
+        onManageAttachments={(target) => {
+          setDetailsOpen(false)
+          setAttachmentTarget(target)
+        }}
+        onChanged={() => pollerRef.current?.poke()}
+      />
       <SyncPanel
         open={panelOpen}
         info={syncInfo}

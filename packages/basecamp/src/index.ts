@@ -23,10 +23,12 @@ export {
   type WebhookUpdate,
 } from './client'
 export {
+  type BinarySource,
   type CacheEntry,
   type Conditional,
   type ConditionalCache,
   DEFAULT_RETRY_POLICY,
+  type DownloadResult,
   type FetchInit,
   type FetchLike,
   type FetchResponse,

@@ -34,16 +34,35 @@ import { makePaged, type Page, type Paged, parseNextLink, parseTotalCount } from
 export interface FetchInit {
   method: HttpMethod
   headers: Record<string, string>
-  body?: string | ArrayBuffer
+  /** A stream only for attachment uploads (`BinarySource`), with an explicit Content-Length. */
+  body?: string | ArrayBuffer | ReadableStream<Uint8Array>
   /** Never follow a redirect with the Authorization header attached. */
   redirect: 'manual'
 }
 
-/** The part of `Response` the client reads. */
+/** The part of `Response` the client reads. `body` only for downloads. */
 export interface FetchResponse {
   status: number
   headers: { get(name: string): string | null }
   text(): Promise<string>
+  body?: ReadableStream<Uint8Array> | null
+}
+
+/**
+ * A file read from storage for an upload (phase 5, attachments.md). A stream
+ * can be read once, so `open()` is called again for every attempt (a retried
+ * 429 / 5xx); `byteLength` is sent as Content-Length and must be exact.
+ */
+export interface BinarySource {
+  byteLength: number
+  open(): ReadableStream<Uint8Array> | Promise<ReadableStream<Uint8Array>>
+}
+
+/** A file streamed back from Basecamp (`download`). */
+export interface DownloadResult {
+  contentType: string | null
+  contentLength: number | null
+  body: ReadableStream<Uint8Array>
 }
 
 export type FetchLike = (url: string, init: FetchInit) => Promise<FetchResponse>
@@ -123,7 +142,7 @@ export interface SendSpec {
   /** JSON body (POST/PUT). */
   json?: unknown
   /** Raw body with its own content type (attachments only). */
-  binary?: { data: ArrayBuffer; contentType: string }
+  binary?: { data: ArrayBuffer | BinarySource; contentType: string }
   /** Conditional GET: cache key for this exact URL and caller scope. */
   cacheKey?: string
   /**
@@ -182,10 +201,12 @@ export class HttpCore {
       Authorization: `Bearer ${token}`,
     }
     let body: string | ArrayBuffer | undefined
+    let source: BinarySource | undefined
     if (spec.binary) {
       headers['Content-Type'] = spec.binary.contentType
       headers['Content-Length'] = String(spec.binary.data.byteLength)
-      body = spec.binary.data
+      if (isBinarySource(spec.binary.data)) source = spec.binary.data
+      else body = spec.binary.data
     } else if (method === 'POST' || method === 'PUT') {
       // Mandatory on every POST/PUT, even without a body (spec §9.2.10; 415 otherwise).
       headers['Content-Type'] = 'application/json; charset=utf-8'
@@ -219,6 +240,8 @@ export class HttpCore {
       await this.o.limiter.acquire()
       let res: FetchResponse
       try {
+        // A stored file is opened again for every attempt: a stream is read once.
+        if (source) init.body = await source.open()
         res = await this.o.fetch(url, init)
       } catch (cause) {
         // OPEN: network failures are not covered by the docs; not retried here (see OPEN_QUESTIONS.md).
@@ -281,6 +304,87 @@ export class HttpCore {
 
       throw mapError(res, errInit(status, attempts, await readDetails(res)))
     }
+  }
+
+  /**
+   * GET of a file Basecamp stores (`download_url` of an attachment, phase 5),
+   * streamed back. The URL must be inside this account: the API host or
+   * `storage.3.basecamp.com/{account}/`; anything else is refused before any
+   * request, so the token never leaves Basecamp. A redirect is followed (at
+   * most 3 hops, HTTPS only) WITHOUT the Authorization header.
+   * One attempt: a 429 or 5xx is thrown (`retryable`) for the caller to retry.
+   * OPEN: attachments.md / rich_text.md document `download_url` but not
+   * whether it needs the token or redirects (see OPEN_QUESTIONS.md #14).
+   */
+  async download(token: string, url: string): Promise<DownloadResult> {
+    assertToken(token)
+    const start = this.checkDownloadUrl(url)
+    const errAt = (status: number | null, details?: unknown, cause?: unknown): BasecampErrorInit => ({
+      status,
+      method: 'GET',
+      path: start.pathname,
+      attempts: 1,
+      details,
+      cause,
+    })
+    let target = start
+    let withToken = true
+    for (let hop = 0; hop <= 3; hop++) {
+      const headers: Record<string, string> = { 'User-Agent': this.o.userAgent }
+      if (withToken) headers['Authorization'] = `Bearer ${token}`
+      await this.o.limiter.acquire()
+      let res: FetchResponse
+      try {
+        res = await this.o.fetch(target.href, { method: 'GET', headers, redirect: 'manual' })
+      } catch (cause) {
+        throw new NetworkError(errAt(null, undefined, cause))
+      }
+      const status = res.status
+      if (status >= 200 && status < 300) {
+        if (!res.body) throw new UnexpectedResponseError(errAt(status), 'download has no body')
+        const length = Number(res.headers.get('Content-Length'))
+        return {
+          contentType: res.headers.get('Content-Type'),
+          contentLength: Number.isSafeInteger(length) && length >= 0 && res.headers.get('Content-Length') !== null ? length : null,
+          body: res.body,
+        }
+      }
+      if (status >= 300 && status < 400) {
+        await drain(res)
+        const location = res.headers.get('Location')
+        let next: URL | null = null
+        try {
+          next = location ? new URL(location, target) : null
+        } catch {
+          next = null
+        }
+        if (!next || next.protocol !== 'https:') throw new UnexpectedResponseError(errAt(status), 'redirect without an HTTPS location')
+        target = next
+        // Never send the token to wherever the redirect points.
+        withToken = false
+        continue
+      }
+      const details = await readDetails(res)
+      if (status === 429) throw new RateLimitedError(errAt(status, details), parseRetryAfter(res.headers.get('Retry-After'), this.o.now()))
+      if (RETRYABLE_SERVER_STATUSES.has(status)) throw new ServerError(errAt(status, details), true)
+      throw mapError(res, errAt(status, details))
+    }
+    throw new UnexpectedResponseError(errAt(null), 'too many redirects')
+  }
+
+  private checkDownloadUrl(url: string): URL {
+    let parsed: URL
+    try {
+      parsed = new URL(url)
+    } catch {
+      throw new TypeError('download URL is not a URL')
+    }
+    const account = this.baseUrl.slice(this.baseUrl.lastIndexOf('/') + 1)
+    const allowed = [`${this.baseUrl}/`, `https://storage.3.basecamp.com/${account}/`]
+    if (parsed.protocol !== 'https:' || parsed.username !== '' || parsed.password !== '' || !allowed.some((prefix) => parsed.href.startsWith(prefix))) {
+      throw new TypeError('download URL must be a file of this Basecamp account')
+    }
+    return parsed
   }
 
   /** A request whose 2xx answer must have a JSON body. */
@@ -451,6 +555,10 @@ async function readJson(res: FetchResponse, init: () => BasecampErrorInit): Prom
   } catch (cause) {
     throw new UnexpectedResponseError({ ...init(), cause }, 'body is not valid JSON')
   }
+}
+
+function isBinarySource(data: ArrayBuffer | BinarySource): data is BinarySource {
+  return typeof (data as Partial<BinarySource>).open === 'function'
 }
 
 async function readDetails(res: FetchResponse): Promise<unknown> {

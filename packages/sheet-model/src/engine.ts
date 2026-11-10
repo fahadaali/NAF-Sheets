@@ -10,6 +10,7 @@
 // same change.
 
 export {
+  attachmentElementsOf,
   ERROR_MESSAGES as ENGINE_ERROR_MESSAGES,
   htmlToComparableText,
   escapeHtml,
@@ -19,4 +20,5 @@ export {
   outdentRow as engineOutdentRow,
   renumber,
   type EngineErrorCode,
+  withoutAttachments,
 } from '@naf-sheets/sync-engine'

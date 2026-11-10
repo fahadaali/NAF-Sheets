@@ -134,4 +134,22 @@
   --chip-height: 1.5rem;
   --picker-list-height: 18rem;
   --tooltip-max-width: 20rem;
+
+  /*
+   * Phase 5: attachments (spec §5.2, §10) and comments (§12.1 item 5).
+   * The comment counter is drawn into the grid (read with getComputedStyle);
+   * its height is unitless for the canvas.
+   */
+  --comment-badge-background: var(--color-info-soft);
+  --comment-badge-text: var(--color-info);
+  --comment-badge-height: 13;
+  --dropzone-border: var(--color-border-strong);
+  --dropzone-active-border: var(--color-accent);
+  --dropzone-active-background: var(--color-accent-soft);
+  --progress-track: var(--color-surface-hover);
+  --progress-fill: var(--color-accent);
+  --attachment-list-height: 16rem;
+  --comment-list-height: 24rem;
+  --comment-input-height: 5rem;
+  --details-panel-width: 28rem;
 }

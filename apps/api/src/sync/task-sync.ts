@@ -24,8 +24,9 @@ import type { Assignee, FieldConflict, LocalTask, OutboundAction, RemoteSubtask,
 import { baseAfterSubtaskWrite, baseAfterTodoWrite, baseFromRemote, baseWith, diffTask, isEcho } from '@naf-sheets/sync-engine'
 import type { DiffContext, DiffResult, RemoteState } from '@naf-sheets/sync-engine'
 import type { Env } from '../env'
+import { syncAttachmentsFromTodo } from '../phase5/attachments-sync'
 import { SYSTEM_ACTOR } from './messages'
-import { applyToSheet, diffContextFor, readSheet, refusal } from './state'
+import { applyToSheet, diffContextFor, diffLocal, readSheet, refusal } from './state'
 import type { WorkbookState } from './state'
 import type { SheetRow } from './store'
 import {
@@ -96,6 +97,8 @@ export async function syncTask(step: TaskStep): Promise<StepResult> {
   let created = false
   let assigneesChanged = false
   let last: LocalTask | null = null
+  /** Phase 5: the files of a to-do record are read once per step. */
+  let filesRead = false
 
   for (let round = 0; round < 3; round++) {
     const row = state.taskRows.get(uid)
@@ -104,13 +107,14 @@ export async function syncTask(step: TaskStep): Promise<StepResult> {
     if (!sheet || !isSyncedSheet(sheet) || !state.plans.has(sheet.id)) return { status: 'absent' }
     const read = readSheet(state, sheet)
     if (!read.ok) return hold(db, uid, `sheet:${read.error.code}`, read.error.message)
-    const local = read.value.tasks.find((t) => t.uid === uid)
-    if (!local) return { status: 'absent' }
-    last = local
+    const found = read.value.tasks.find((t) => t.uid === uid)
+    if (!found) return { status: 'absent' }
+    last = found
     const issue = read.value.issues.find((i) => i.uid === uid)
     if (issue) return hold(db, uid, `sheet:${issue.code}`, issue.message)
 
     const base = baseOfRow(row)
+    const local = diffLocal(state, sheet, found, base)
     if (remote === undefined) remote = local.bcId !== null ? await fetchRemote(step, local) : null
     const ctx = diffContextFor(state, sheet, local, read.value.tasks)
     const result = diffTask(local, base, remote, ctx)
@@ -189,6 +193,11 @@ export async function syncTask(step: TaskStep): Promise<StepResult> {
         )
         row.bc_subtasks_count = remote.subtasksCount
         row.bc_subtasks_completed_count = remote.subtasksCompletedCount
+        // Phase 5: the comment counter (§9.3.5 `comment_created`, §9.4), when Basecamp sent it.
+        if (typeof remote.commentsCount === 'number') {
+          statements.push(db.prepare(`UPDATE tasks SET bc_comments_count = ?2, bc_comments_seen_at = ?3 WHERE task_uid = ?1`).bind(uid, remote.commentsCount, at))
+          row.bc_comments_count = remote.commentsCount
+        }
       }
     }
     statements.push(...conflictStatements(db, state, sheet.id, result.conflicts, at))
@@ -201,13 +210,25 @@ export async function syncTask(step: TaskStep): Promise<StepResult> {
     }
     await runBatches(db, statements)
 
+    // --- Phase 5: the files in the to-do's description become chips (§10, inbound).
+    if (!filesRead && remote !== null && remote.type === 'todo') {
+      filesRead = true
+      try {
+        await syncAttachmentsFromTodo(env, state, uid, remote, at)
+      } catch (error) {
+        // Files are not a synced field: they never hold the row's sync back.
+        console.error(`sync: attachments of a task in workbook ${state.wb.id} were not read (${error instanceof Error ? error.name : 'unknown'})`)
+      }
+    }
+
     // --- Platform → Basecamp.
     const outbound = orderOutbound(result.outbound)
     if (outbound.length === 0) break
     let writer: { token: string; actor: string } | null = null
     if (step.policy.kind === 'read_only') return { status: 'local_pending' }
     if (step.policy.kind === 'auto_only') {
-      if (!isAutoAssignmentOnly(local, current, remote, ctx)) return { status: 'local_pending' }
+      // Against the base just stored: an untracked notes part follows it (diffLocal).
+      if (!isAutoAssignmentOnly(diffLocal(state, sheet, found, current), current, remote, ctx)) return { status: 'local_pending' }
       writer = await step.policy.writer()
       if (writer === null) return { status: 'local_pending' }
     } else {

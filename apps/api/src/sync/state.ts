@@ -4,7 +4,7 @@
 // sheet goes through `applyInbound` inside `updateLatestSnapshot`, the only
 // way the server writes a snapshot.
 
-import type { Assignee, InboundAction, LocalTask, SheetPlan } from '@naf-sheets/shared'
+import type { Assignee, InboundAction, LocalTask, SheetPlan, SyncedBase } from '@naf-sheets/shared'
 import { applyInbound, readTasks } from '@naf-sheets/sheet-model'
 import type { ActionOutcome, ApplyInboundOptions, ReadTasksResult, Result, SheetError, SheetIssue, WorkbookSnapshot } from '@naf-sheets/sheet-model'
 import { DEFAULT_AUTO_ASSIGN_SETTINGS } from '@naf-sheets/sync-engine'
@@ -128,6 +128,22 @@ export function readSheet(
 }
 
 const TITLE_MISSING = 'لا يوجد في مطابقة الأعمدة عمود للعنوان، والمزامنة تحتاجه. اختر عمود «المهمة» في مطابقة الأعمدة ثم احفظها.'
+
+/**
+ * The row as the engine must diff it. A sheet whose mapping has no notes
+ * column does not hold the description's person part, so that part is not a
+ * local value at all: it follows Basecamp (the base). Without this the engine
+ * read "no notes" as a local edit and sent an empty description, wiping the
+ * text a person wrote in Basecamp and its files (found in phase 5; spec §8.2
+ * keeps that part verbatim, §16 scenario 8). OPEN (P2): confirm.
+ * Fingerprints keep reading the sheet itself (`readSheet`), unchanged.
+ */
+export function diffLocal(state: WorkbookState, sheet: SheetRow, task: LocalTask, base: SyncedBase | null): LocalTask {
+  if (task.level !== 0) return task
+  const plan = state.plans.get(sheet.id)
+  if (!plan || plan.columns.some((c) => c.field === 'notes')) return task
+  return { ...task, notesHtml: base?.notesHtml ?? null }
+}
 
 /** The engine's context for one row of a synced sheet. */
 export function diffContextFor(state: WorkbookState, sheet: SheetRow, task: LocalTask, sheetTasks: readonly LocalTask[]): DiffContext {
