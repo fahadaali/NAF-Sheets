@@ -9,6 +9,12 @@
 //   5. reconciliation     50 to-dos changed in Basecamp; the 15-minute run, then a run with no change
 //   6. internal API       GET /api/v1/stats over every workbook
 //
+// Basecamp's pace: the fake answers at once, so the production rate limiter
+// (`createBasecampLimiter`, spec §9.2.9) runs on a virtual clock: every wait it
+// asks for is added to `pace.waitedMs` instead of being slept. A phase's
+// "paced" time is its measured time plus the limiter's waits: what the same
+// requests take when Basecamp's limit is respected (docs/load-test.md §2).
+//
 // Timings are read inside workerd with Date.now(), which advances at I/O only
 // (CPU-only stretches between two I/O calls are not seen). The wall time of
 // each phase is the test duration vitest prints. Local Miniflare is not
@@ -18,6 +24,7 @@
 import { env } from 'cloudflare:workers'
 import { runDurableObjectAlarm } from 'cloudflare:test'
 import { beforeAll, describe, expect, it } from 'vitest'
+import { createBasecampLimiter } from '@naf-sheets/basecamp'
 import { DEFAULT_COLUMNS } from '@naf-sheets/shared'
 import type { LinkPlan, WorkbookResponse } from '@naf-sheets/shared'
 import { newTokenSecret, sha256Hex } from '../../src/phase7'
@@ -27,7 +34,7 @@ import { clientId, opId, openRoom, setValue } from '../room/ws-client'
 import type { TestSocket } from '../room/ws-client'
 import { defaultSheetPlan, drainOutbound, harness, linkService, linkUser, reconcile, seedProjectPeople } from '../sync/harness'
 import type { Harness } from '../sync/harness'
-import type { FakePerson } from '../sync/fake-basecamp'
+import type { FakePerson, RecordedCall } from '../sync/fake-basecamp'
 
 interface LoadConfig {
   workbooks: number
@@ -35,6 +42,8 @@ interface LoadConfig {
   rows: number
   syncWorkbooks: number
   roomOps: number
+  /** `max_batch_size` of the bc-outbound consumer in wrangler.toml. */
+  outboundBatch: number
 }
 
 const CONFIG = JSON.parse((env as unknown as { LOAD_CONFIG: string }).LOAD_CONFIG) as LoadConfig
@@ -56,6 +65,40 @@ async function timed<T>(work: () => Promise<T>): Promise<[T, number]> {
   const t0 = Date.now()
   const out = await work()
   return [out, Date.now() - t0]
+}
+
+/** The limiter's virtual clock: waits are counted, never slept; `idleMs` is time let pass between phases (not counted). */
+const pace = { waitedMs: 0, idleMs: 0 }
+const paceNow = () => Date.now() + pace.waitedMs + pace.idleMs
+/** Lets `ms` of virtual time pass with no request (the window empties), e.g. the 15 minutes between two cron runs. */
+const idle = (ms: number) => {
+  pace.idleMs += ms
+}
+const paceSleep = async (ms: number): Promise<void> => {
+  pace.waitedMs += Math.max(0, ms)
+}
+
+/** Basecamp requests by kind (method and route), conditional reads apart. */
+function requestKinds(calls: readonly RecordedCall[]): Record<string, number> {
+  const out: Record<string, number> = {}
+  for (const c of calls) {
+    const route = c.path
+      .replace(/\/\d+/g, '/:id')
+      .replace(/\.json$/, '')
+    const key = `${c.method} ${route}${c.query.get('completed') === 'true' ? '?completed' : ''}${c.headers['if-none-match'] ? ' (If-None-Match)' : ''}`
+    out[key] = (out[key] ?? 0) + 1
+  }
+  return Object.fromEntries(Object.entries(out).sort((a, b) => b[1] - a[1]))
+}
+
+/** Requests, their kinds and the limiter's waits during `work`. */
+async function measured<T>(work: () => Promise<T>): Promise<{ out: T; ms: number; requests: number; kinds: Record<string, number>; limiterWaitMs: number; pacedMs: number }> {
+  const calls0 = h.fake.calls.length
+  const waited0 = pace.waitedMs
+  const [out, ms] = await timed(work)
+  const calls = h.fake.calls.slice(calls0)
+  const limiterWaitMs = pace.waitedMs - waited0
+  return { out, ms, requests: calls.length, kinds: requestKinds(calls), limiterWaitMs, pacedMs: ms + limiterWaitMs }
 }
 
 const PEOPLE = ['سارة القحطاني', 'خالد العمري', 'نورة الشهري', 'فهد العتيبي']
@@ -99,7 +142,7 @@ const people: FakePerson[] = []
 const workbooks: LoadedWorkbook[] = []
 
 beforeAll(async () => {
-  h = harness()
+  h = harness({ limiter: createBasecampLimiter({ now: paceNow, sleep: paceSleep }) })
   admin = await seedMember('admin')
   editor = await seedMember('editor')
   await linkService(h, admin.id, h.fake.person('حساب الخدمة', { admin: true }))
@@ -223,12 +266,19 @@ describe(`load: ${CONFIG.workbooks} workbooks × ${CONFIG.sheets} sheets × ${CO
   })
 
   const synced = () => workbooks.slice(0, CONFIG.syncWorkbooks)
-  const outboundTotals = { tasks: 0, messages: 0, basecampCalls: 0, ms: 0 }
+  const outboundTotals = { tasks: 0, messages: 0, batches: 0, basecampCalls: 0, ms: 0, limiterWaitMs: 0, pacedMs: 0, kinds: {} as Record<string, number> }
+  const linkTotals = { requests: 0, limiterWaitMs: 0, kinds: {} as Record<string, number> }
+  const add = (into: Record<string, number>, from: Record<string, number>) => {
+    for (const [k, n] of Object.entries(from)) into[k] = (into[k] ?? 0) + n
+  }
 
   it('3. link and initial outbound sync', async () => {
+    idle(60_000)
     const linkMs: number[] = []
     const drainMs: number[] = []
+    const drainPacedMs: number[] = []
     const perTaskMs: number[] = []
+    const perTaskPacedMs: number[] = []
     for (const wb of synced()) {
       const project = h.fake.project(`مشروع ${wb.id.slice(0, 8)}`, [ownerPerson.id, ...people.map((p) => p.id)])
       await seedProjectPeople(project.id, [ownerPerson, ...people])
@@ -236,43 +286,65 @@ describe(`load: ${CONFIG.workbooks} workbooks × ${CONFIG.sheets} sheets × ${CO
         project: { mode: 'existing', projectId: project.id },
         sheets: wb.sheets.map((s, i) => defaultSheetPlan(s.id, { todolistId: h.fake.list(project.id, SHEET_NAMES[i % SHEET_NAMES.length]!).id })),
       }
-      const [linked, lMs] = await timed(() => call(h.app, 'POST', `/api/workbooks/${wb.id}/link`, { user: wb.owner, env: h.env, body: plan }))
-      if (linked.status !== 200) throw new Error(`link ${wb.id}: ${linked.status} ${await linked.text()}`)
-      linkMs.push(lMs)
+      const link = await measured(() => call(h.app, 'POST', `/api/workbooks/${wb.id}/link`, { user: wb.owner, env: h.env, body: plan }))
+      if (link.out.status !== 200) throw new Error(`link ${wb.id}: ${link.out.status} ${await link.out.text()}`)
+      linkMs.push(link.ms)
+      linkTotals.requests += link.requests
+      linkTotals.limiterWaitMs += link.limiterWaitMs
+      add(linkTotals.kinds, link.kinds)
       const messages = h.outbound.sent.length
-      const calls = h.fake.calls.length
       const todosBefore = h.fake.todos.size
-      const [, dMs] = await timed(() => drainOutbound(h, 20))
-      drainMs.push(dMs)
+      const drain = await measured(() => drainOutbound(h, 20, CONFIG.outboundBatch))
+      drainMs.push(drain.ms)
+      drainPacedMs.push(drain.pacedMs)
       const created = h.fake.todos.size - todosBefore
       expect(created).toBe(CONFIG.sheets * CONFIG.rows)
-      perTaskMs.push(dMs / Math.max(1, created))
+      perTaskMs.push(drain.ms / Math.max(1, created))
+      perTaskPacedMs.push(drain.pacedMs / Math.max(1, created))
       outboundTotals.tasks += created
       outboundTotals.messages += messages
-      outboundTotals.basecampCalls += h.fake.calls.length - calls
-      outboundTotals.ms += dMs
+      outboundTotals.batches += drain.out.length
+      outboundTotals.basecampCalls += drain.requests
+      outboundTotals.ms += drain.ms
+      outboundTotals.limiterWaitMs += drain.limiterWaitMs
+      outboundTotals.pacedMs += drain.pacedMs
+      add(outboundTotals.kinds, drain.kinds)
     }
     const states = await env.DB.prepare(
       `SELECT t.sync_state AS state, COUNT(*) AS n FROM tasks t JOIN sheets s ON s.id = t.sheet_id WHERE s.workbook_id IN (SELECT value FROM json_each(?1)) GROUP BY t.sync_state`,
     )
       .bind(JSON.stringify(synced().map((w) => w.id)))
       .all<{ state: string; n: number }>()
+    const duplicates = new Map<string, number>()
+    for (const t of h.fake.todos.values()) duplicates.set(`${t.listId}:${t.content}`, (duplicates.get(`${t.listId}:${t.content}`) ?? 0) + 1)
     report('link_and_outbound', {
       workbooks: synced().length,
+      outboundBatch: CONFIG.outboundBatch,
       linkMs: stats(linkMs),
+      link: linkTotals,
       drainMs: stats(drainMs),
+      drainPacedMs: stats(drainPacedMs),
       perTaskMs: stats(perTaskMs),
+      perTaskPacedMs: stats(perTaskPacedMs),
       totals: outboundTotals,
+      requestsPerTask: outboundTotals.tasks > 0 ? Math.round((outboundTotals.basecampCalls / outboundTotals.tasks) * 1000) / 1000 : null,
       tasksPerSecond: outboundTotals.ms > 0 ? Math.round((outboundTotals.tasks / outboundTotals.ms) * 1000 * 10) / 10 : null,
+      tasksPerSecondPaced: outboundTotals.pacedMs > 0 ? Math.round((outboundTotals.tasks / outboundTotals.pacedMs) * 1000 * 10) / 10 : null,
+      duplicateTodos: [...duplicates.values()].filter((n) => n > 1).length,
       syncStates: Object.fromEntries(states.results.map((r) => [r.state, r.n])),
     })
     expect(states.results.filter((r) => r.state !== 'synced')).toEqual([])
+    expect([...duplicates.values()].filter((n) => n > 1)).toEqual([])
   })
 
   it('4. outbound detection after an edit of 1% of the rows', async () => {
+    idle(60_000)
     const saveMs: number[] = []
     const enqueued: number[] = []
     const drainMs: number[] = []
+    const drainPacedMs: number[] = []
+    const kinds: Record<string, number> = {}
+    let requests = 0
     for (const wb of synced()) {
       const fresh = await json<WorkbookResponse>(await call(h.app, 'GET', `/api/workbooks/${wb.id}`, { user: wb.owner, env: h.env }))
       const snapshot = fresh.snapshot as Snap
@@ -290,10 +362,21 @@ describe(`load: ${CONFIG.workbooks} workbooks × ${CONFIG.sheets} sheets × ${CO
       expect(saved.status).toBe(200)
       saveMs.push(sMs)
       enqueued.push(h.outbound.sent.length - before)
-      const [, dMs] = await timed(() => drainOutbound(h, 20))
-      drainMs.push(dMs)
+      const drain = await measured(() => drainOutbound(h, 20, CONFIG.outboundBatch))
+      drainMs.push(drain.ms)
+      drainPacedMs.push(drain.pacedMs)
+      requests += drain.requests
+      add(kinds, drain.kinds)
     }
-    report('detection', { editedPerWorkbook: Math.max(1, Math.round(CONFIG.rows / 100)) * CONFIG.sheets, saveWithDetectionMs: stats(saveMs), enqueued: stats(enqueued), drainMs: stats(drainMs) })
+    report('detection', {
+      editedPerWorkbook: Math.max(1, Math.round(CONFIG.rows / 100)) * CONFIG.sheets,
+      saveWithDetectionMs: stats(saveMs),
+      enqueued: stats(enqueued),
+      drainMs: stats(drainMs),
+      drainPacedMs: stats(drainPacedMs),
+      requests,
+      kinds,
+    })
     for (const n of enqueued) expect(n).toBe(Math.max(1, Math.round(CONFIG.rows / 100)) * CONFIG.sheets)
   })
 
@@ -306,18 +389,37 @@ describe(`load: ${CONFIG.workbooks} workbooks × ${CONFIG.sheets} sheets × ${CO
       t.content = `${t.content} — من Basecamp`
       t.updatedAt = h.fake.tick()
     }
-    const calls0 = h.fake.calls.length
-    const [first, firstMs] = await timed(() => reconcile(h))
-    const calls1 = h.fake.calls.length
-    const [second, secondMs] = await timed(() => reconcile(h))
-    const calls2 = h.fake.calls.length
-    report('reconciliation', {
-      changedInBasecamp: changed.length,
-      firstRun: { ms: firstMs, basecampReads: calls1 - calls0, ...first },
-      unchangedRun: { ms: secondMs, basecampReads: calls2 - calls1, ...second },
-    })
-    expect(first.workbooks).toBe(ids.size)
-    expect(second.notModified).toBeGreaterThan(0)
+    // A run is cut into continuations when it reaches its time budget; each one is
+    // delivered here as the cron would (the next run picks up where it stopped).
+    const untilDone = async () => {
+      const runs: Array<Awaited<ReturnType<typeof reconcile>>> = []
+      for (let i = 0; i < 50; i++) {
+        // The budget is measured on the limiter's clock, as it would pass in production.
+        const r = await reconcile(h, { clock: paceNow })
+        runs.push(r)
+        if (!('continued' in r) || !r.continued) break
+      }
+      return runs
+    }
+    idle(15 * 60_000)
+    const first = await measured(untilDone)
+    // The next cron run, 15 minutes later.
+    idle(15 * 60_000)
+    const quiet = await measured(untilDone)
+    const applied = await env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM sync_log WHERE direction = 'in' AND action = 'update_row' AND status = 'ok' AND workbook_id IN (SELECT value FROM json_each(?1))`,
+    )
+      .bind(JSON.stringify([...ids]))
+      .first<{ n: number }>()
+    const summary = (m: typeof first) => ({ ms: m.ms, pacedMs: m.pacedMs, limiterWaitMs: m.limiterWaitMs, basecampReads: m.requests, kinds: m.kinds, runs: m.out })
+    report('reconciliation', { changedInBasecamp: changed.length, rowsUpdatedFromBasecamp: applied?.n ?? null, firstRun: summary(first), unchangedRun: summary(quiet) })
+    expect(first.out.reduce((n, r) => n + r.workbooks, 0)).toBeGreaterThanOrEqual(ids.size)
+    expect(quiet.out.reduce((n, r) => n + r.notModified, 0)).toBeGreaterThan(0)
+    // Every change made in Basecamp reached its row.
+    for (const t of changed) {
+      const row = await env.DB.prepare(`SELECT last_remote_change_at AS at FROM tasks WHERE bc_recording_id = ?1`).bind(t.id).first<{ at: string }>()
+      expect(row?.at).toBe(t.updatedAt)
+    }
   })
 
   it('6. internal API: /api/v1/stats over every workbook', async () => {

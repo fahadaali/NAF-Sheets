@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useState } from 'react'
 import { LoaderCircle } from 'lucide-react'
 import type { CurrentUser } from '@naf-sheets/shared'
 import { api } from './lib/api'
+import { applyPalette } from './lib/theme-colors'
 import { useRoute } from './lib/router'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { Notice } from './components/Notice'
@@ -13,6 +14,7 @@ import { SettingsScreen } from './screens/SettingsScreen'
 import { ApiTokensScreen } from './screens/ApiTokensScreen'
 import { SyncHealthScreen } from './screens/SyncHealthScreen'
 import { TemplatesScreen } from './screens/TemplatesScreen'
+import { AppearanceScreen } from './screens/AppearanceScreen'
 import { t } from './strings'
 
 // Univer (~2 MB gzip) is reachable only through this chunk.
@@ -71,18 +73,34 @@ function EditorChunkFailed({ message = t.editor.chunkFailed }: { message?: strin
   )
 }
 
+/** The admins' palette overrides («المظهر»), applied once at load; theme.css stays in force without them. */
+function useAppearance(enabled: boolean): void {
+  useEffect(() => {
+    if (!enabled) return
+    const controller = new AbortController()
+    api.getAppearance(controller.signal).then(
+      (res) => applyPalette(res.palette),
+      () => undefined,
+    )
+    return () => controller.abort()
+  }, [enabled])
+}
+
 export function App() {
   const route = useRoute()
   const { user, settled } = useCurrentUser(route.name !== 'denied')
+  useAppearance(route.name !== 'denied')
 
   switch (route.name) {
     case 'files':
       return <FilesScreen initialQuery={route.q} initialImport={route.importSource} user={user} />
     case 'editor':
+    case 'dashboard':
+      // One element for both views: switching between the grid and «اللوحة» keeps the mounted editor.
       return (
         <ErrorBoundary key={route.id} fallback={<EditorChunkFailed />}>
           <Suspense fallback={<EditorLoading />}>
-            <EditorScreen key={route.id} id={route.id} target={route.target} />
+            <EditorScreen key={route.id} id={route.id} target={route.name === 'editor' ? route.target : undefined} view={route.name === 'dashboard' ? 'dashboard' : 'sheets'} />
           </Suspense>
         </ErrorBoundary>
       )
@@ -106,6 +124,8 @@ export function App() {
       return <TemplatesScreen user={user} userSettled={settled} />
     case 'apiTokens':
       return <ApiTokensScreen user={user} userSettled={settled} />
+    case 'appearance':
+      return <AppearanceScreen user={user} userSettled={settled} />
     case 'denied':
       return <DeniedScreen reason={route.reason} />
     case 'notFound':

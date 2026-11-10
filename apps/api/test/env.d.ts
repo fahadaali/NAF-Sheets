@@ -8,7 +8,7 @@ declare global {
     }
     interface GlobalProps {
       mainModule: typeof import('../src/index')
-      durableNamespaces: 'WorkbookRoom'
+      durableNamespaces: 'WorkbookRoom' | 'BasecampRateGate'
     }
   }
 }

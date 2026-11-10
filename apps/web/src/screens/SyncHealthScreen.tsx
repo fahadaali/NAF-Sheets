@@ -2,8 +2,9 @@
 // الأخطاء، التعارضات، آخر نجاح، حالة الـ Webhooks», §15 phase 7).
 // GET /api/admin/sync-health, plus the latest backup run (GET /api/admin/backups, §14).
 
-import { useEffect, useState } from 'react'
-import { Archive, CircleCheck, CircleExclamationPoint, Clock, Inbox, LoaderCircle, RefreshCw, TriangleExclamationPoint, Unplug, Webhook } from 'lucide-react'
+import { useEffect, useId, useState } from 'react'
+import type { FormEvent } from 'react'
+import { Archive, CircleCheck, CircleExclamationPoint, Clock, Inbox, LoaderCircle, RefreshCw, Save, TriangleExclamationPoint, Unplug, Webhook } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { BackupRunsResponse, CurrentUser, SyncHealthResponse } from '@naf-sheets/shared'
 import { AdminPage } from '../components/AdminPage'
@@ -216,6 +217,110 @@ function BackupCard({ backups }: { backups: Backups }) {
           )}
         </div>
       </div>
+      {backups.kind === 'ready' ? <RetentionSection data={backups.data} /> : null}
     </section>
+  )
+}
+
+/** Backup retention (owner decision 2026-11-10): the policy, what it last removed, and its two numbers. */
+function RetentionSection({ data }: { data: BackupRunsResponse }) {
+  const ids = useId()
+  const [saved, setSaved] = useState(data.retention)
+  const [daily, setDaily] = useState(String(data.retention.keepDaily))
+  const [monthly, setMonthly] = useState(String(data.retention.keepMonthly))
+  const [state, setState] = useState<{ kind: 'idle' } | { kind: 'saving' } | { kind: 'saved' } | { kind: 'error'; message: string }>({ kind: 'idle' })
+  const last = data.lastPrune
+
+  async function save(event: FormEvent) {
+    event.preventDefault()
+    const keepDaily = Number(daily)
+    const keepMonthly = Number(monthly)
+    const valid = (n: number, min: number, max: number) => daily.trim() !== '' && monthly.trim() !== '' && Number.isInteger(n) && n >= min && n <= max
+    if (!valid(keepDaily, 1, 365) || !valid(keepMonthly, 0, 120)) {
+      setState({ kind: 'error', message: t.syncHealth.retentionInvalid })
+      return
+    }
+    setState({ kind: 'saving' })
+    try {
+      const result = await api.putBackupRetention({ keepDaily, keepMonthly })
+      setSaved(result.retention)
+      setState({ kind: 'saved' })
+    } catch (error) {
+      setState({ kind: 'error', message: errorMessage(error) })
+    }
+  }
+
+  return (
+    <div className="stack-tight" data-testid="backup-retention" data-keep-daily={saved.keepDaily} data-keep-monthly={saved.keepMonthly}>
+      <h3 id={`${ids}-title`}>{t.syncHealth.retentionTitle}</h3>
+      <p className="small" data-testid="retention-policy">
+        {t.syncHealth.retentionPolicy[0]} <bdi className="num">{formatCount(saved.keepDaily)}</bdi> {t.syncHealth.retentionPolicy[1]}{' '}
+        <bdi className="num">{formatCount(saved.keepMonthly)}</bdi> {t.syncHealth.retentionPolicy[2]}
+      </p>
+      <p className="muted small" data-testid="retention-last">
+        {last ? (
+          <>
+            {t.syncHealth.retentionLast[0]} <bdi dir="ltr" className="num">{formatDateTime(last.at) ?? last.at}</bdi>
+            {t.syncHealth.retentionLast[1]} <bdi className="num">{formatCount(last.runsRemoved)}</bdi> {t.syncHealth.retentionLast[2]}{' '}
+            <bdi className="num">{formatCount(last.runsKept)}</bdi> {t.syncHealth.retentionLast[3]}
+          </>
+        ) : (
+          t.syncHealth.retentionNone
+        )}
+      </p>
+      {last?.message ? <p className="small">{last.message}</p> : null}
+      <form className="stack-tight" onSubmit={save} noValidate aria-labelledby={`${ids}-title`}>
+        <div className="field field--inline">
+          <label htmlFor={`${ids}-daily`}>{t.syncHealth.retentionDaily}</label>
+          <input
+            id={`${ids}-daily`}
+            className="input-number"
+            type="number"
+            inputMode="numeric"
+            dir="ltr"
+            min={1}
+            max={365}
+            value={daily}
+            onChange={(e) => setDaily(e.target.value)}
+            aria-invalid={state.kind === 'error' ? true : undefined}
+            disabled={state.kind === 'saving'}
+            data-testid="retention-daily"
+          />
+        </div>
+        <div className="field field--inline">
+          <label htmlFor={`${ids}-monthly`}>{t.syncHealth.retentionMonthly}</label>
+          <input
+            id={`${ids}-monthly`}
+            className="input-number"
+            type="number"
+            inputMode="numeric"
+            dir="ltr"
+            min={0}
+            max={120}
+            value={monthly}
+            onChange={(e) => setMonthly(e.target.value)}
+            aria-invalid={state.kind === 'error' ? true : undefined}
+            disabled={state.kind === 'saving'}
+            data-testid="retention-monthly"
+          />
+        </div>
+        {state.kind === 'error' ? (
+          <p className="field-error" role="alert" data-testid="retention-error">
+            {state.message}
+          </p>
+        ) : null}
+        {state.kind === 'saved' ? (
+          <p className="small" role="status" data-testid="retention-saved">
+            {t.syncHealth.retentionSaved}
+          </p>
+        ) : null}
+        <div className="card__actions">
+          <button type="submit" className="button button--small" disabled={state.kind === 'saving'} data-testid="retention-save">
+            {state.kind === 'saving' ? <LoaderCircle className="icon spin" aria-hidden="true" /> : <Save className="icon" aria-hidden="true" />}
+            {state.kind === 'saving' ? t.syncHealth.retentionSaving : t.syncHealth.retentionSave}
+          </button>
+        </div>
+      </form>
+    </div>
   )
 }

@@ -11,6 +11,7 @@ import { encryptJson } from '../../src/crypto'
 import type { BcInboundQueueMessage, BcOutboundMessage, Env } from '../../src/env'
 import type { SyncDeps } from '../../src/sync/deps'
 import { handleInboundBatchWith, runReconciliationWith } from '../../src/sync/inbound'
+import type { ReconcileOptions } from '../../src/sync/inbound/reconcile'
 import { handleOutboundBatchWith, registerSyncRoutes } from '../../src/sync/outbound'
 import { registerPhase5Routes } from '../../src/phase5'
 import { call, createWorkbook, json, seedMember, testApp } from '../helpers'
@@ -50,7 +51,8 @@ export interface Harness {
   dlq: RecordingQueue<BcOutboundMessage>
 }
 
-export function harness(): Harness {
+/** `overrides`: the load test passes the production limiter on a virtual clock (docs/load-test.md). */
+export function harness(overrides: Partial<SyncDeps> = {}): Harness {
   const fake = new FakeBasecamp(uniqueId())
   const outbound = new RecordingQueue<BcOutboundMessage>()
   const inbound = new RecordingQueue<BcInboundQueueMessage>()
@@ -66,7 +68,7 @@ export function harness(): Harness {
     BC_INBOUND: inbound as unknown as Queue<BcInboundQueueMessage>,
     BC_OUTBOUND_DLQ: dlq as unknown as Queue<BcOutboundMessage>,
   } as Env
-  const deps: SyncDeps = { fetch: fake.fetch, now: () => Date.now(), limiter: { acquire: async () => {} }, sleep: async () => {} }
+  const deps: SyncDeps = { fetch: fake.fetch, now: () => Date.now(), limiter: { acquire: async () => {} }, sleep: async () => {}, ...overrides }
   const app = testApp()
   registerSyncRoutes(app, deps)
   registerPhase5Routes(app, deps)
@@ -356,13 +358,19 @@ export async function runOutbound(h: Harness, messages: Array<{ body: BcOutbound
   return result
 }
 
-/** Delivers every recorded outbound message (and the follow-ups they queue) once. */
-export async function drainOutbound(h: Harness, rounds = 10): Promise<BatchResult[]> {
+/**
+ * Delivers every recorded outbound message (and the follow-ups they queue)
+ * once. `batchSize`: deliver them in batches of at most that many, as the
+ * real queue does (`max_batch_size` in wrangler.toml); default: one batch.
+ */
+export async function drainOutbound(h: Harness, rounds = 10, batchSize = Number.POSITIVE_INFINITY): Promise<BatchResult[]> {
   const results: BatchResult[] = []
   for (let i = 0; i < rounds; i++) {
     const pending = h.outbound.take()
     if (pending.length === 0) break
-    results.push(await runOutbound(h, pending.map((p) => ({ body: p.body }))))
+    for (let at = 0; at < pending.length; at += Math.min(pending.length, batchSize)) {
+      results.push(await runOutbound(h, pending.slice(at, at + Math.min(pending.length, batchSize)).map((p) => ({ body: p.body }))))
+    }
   }
   return results
 }
@@ -391,8 +399,8 @@ export async function deliver(l: Linked, kind: string, recording: { id: number; 
   ], attempts)
 }
 
-export async function reconcile(h: Harness) {
-  return runReconciliationWith(h.env, h.deps)
+export async function reconcile(h: Harness, options?: ReconcileOptions) {
+  return runReconciliationWith(h.env, h.deps, options)
 }
 
 // ---------------------------------------------------------------------------

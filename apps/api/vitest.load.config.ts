@@ -11,6 +11,7 @@
 // Results: one `LOAD_RESULT {json}` line per phase on stdout, collected by
 // scripts/load-test.mjs into docs/load-test-results-<timestamp>.json.
 
+import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { cloudflareTest, readD1Migrations } from '@cloudflare/vitest-pool-workers'
 import { defineConfig } from 'vitest/config'
@@ -23,6 +24,15 @@ function intFromEnv(name: string, fallback: number): number {
   return Number.isInteger(n) && n > 0 ? n : fallback
 }
 
+/** `max_batch_size` of the bc-outbound consumer in wrangler.toml: the drain delivers batches of that size, like the real queue. */
+function outboundBatchSize(): number {
+  const toml = readFileSync(fileURLToPath(new URL('./wrangler.toml', import.meta.url)), 'utf8')
+  const block = /\[\[queues\.consumers\]\]\s*\nqueue = "bc-outbound"\n([\s\S]*?)(?:\n\[|$)/.exec(toml)
+  const size = block ? /max_batch_size\s*=\s*(\d+)/.exec(block[1] ?? '') : null
+  if (!size) throw new Error('wrangler.toml: no max_batch_size for the bc-outbound consumer')
+  return Number(size[1])
+}
+
 export default defineConfig(async () => {
   const migrations = await readD1Migrations(migrationsDir)
   const workbooks = intFromEnv('LOAD_WORKBOOKS', 10)
@@ -32,6 +42,7 @@ export default defineConfig(async () => {
     rows: intFromEnv('LOAD_ROWS', 500),
     syncWorkbooks: Math.min(workbooks, intFromEnv('LOAD_SYNC_WORKBOOKS', workbooks)),
     roomOps: intFromEnv('LOAD_ROOM_OPS', 100),
+    outboundBatch: outboundBatchSize(),
   }
   return {
     plugins: [

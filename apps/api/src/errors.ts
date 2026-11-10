@@ -40,6 +40,8 @@ export const MESSAGES = {
   api_token_required:
     'الطلب بلا رمز خدمة صالح، فلم يُنفَّذ. أرسل الرمز في الترويسة Authorization: Bearer، أو اطلب رمزاً جديداً من مسؤول المنصة إن كان رمزك قد أُلغي.',
   invalid_query: 'معايير البحث غير صالحة: status إحدى done أو open أو overdue، وdue_before تاريخ بصيغة YYYY-MM-DD. صحّحها ثم أعد المحاولة.',
+  invalid_backup_retention:
+    'قيم الاحتفاظ بالنسخ الاحتياطية غير صالحة: عدد النسخ اليومية عدد صحيح من 1 إلى 365، وعدد الأشهر عدد صحيح من 0 إلى 120. صحّحهما ثم أعد المحاولة.',
 } as const
 
 export type ErrorKey = keyof typeof MESSAGES
@@ -79,6 +81,7 @@ const CODES: Record<ErrorKey, ApiErrorCode> = {
   api_token_not_found: 'api_token_not_found',
   api_token_required: 'unauthorized',
   invalid_query: 'invalid_request',
+  invalid_backup_retention: 'invalid_request',
 }
 
 export type ErrorStatus = 400 | 401 | 403 | 404 | 409 | 426 | 500 | 503

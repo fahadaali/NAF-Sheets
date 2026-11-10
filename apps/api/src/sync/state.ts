@@ -14,7 +14,7 @@ import { readSnapshot } from '../snapshot'
 import { loadDirectory } from './directory'
 import type { SyncDirectory } from './directory'
 import { localFingerprint } from './fingerprint'
-import { assigneeStatements, assigneesOf, isSyncedSheet, mappingsOf, planOf, sheetsOf, tasksOfWorkbook } from './store'
+import { assigneeStatements, assigneesOf, isSyncedSheet, mappingsOf, planOf, sheetsOf, taskFamily, tasksOfWorkbook } from './store'
 import type { SheetRow, TaskRow, WorkbookSyncRow } from './store'
 import { updateLatestSnapshot } from './workbook-writer'
 
@@ -88,6 +88,41 @@ export async function refreshSnapshotIfStale(env: Env, state: WorkbookState): Pr
   if (snapshot === null || typeof snapshot !== 'object' || typeof snapshot.sheets !== 'object' || snapshot.sheets === null) return false
   state.snapshot = snapshot
   state.version = fresh.v
+  return true
+}
+
+/**
+ * Before one task's step on a state loaded earlier (the outbound consumer
+ * loads a workbook once per batch): what may have changed since, outside this
+ * step's own writes, is read again — the snapshot when a save moved it on,
+ * the sheets and their mappings (a re-link or a mapping change), and the
+ * task's family rows with their assignees. Steps already keep `state` in step
+ * with their own writes. False when the workbook or its snapshot is gone.
+ */
+export async function refreshForTask(env: Env, state: WorkbookState, uid: string): Promise<boolean> {
+  if (!(await refreshSnapshotIfStale(env, state))) return false
+  const sheets = await sheetsOf(env.DB, state.wb.id)
+  const mappings = await mappingsOf(
+    env.DB,
+    sheets.map((s) => s.id),
+  )
+  const plans = new Map<string, SheetPlan>()
+  for (const sheet of sheets) {
+    const m = mappings.get(sheet.id)
+    if (m && m.length > 0) plans.set(sheet.id, planOf(sheet, m))
+  }
+  state.sheets = sheets
+  state.sheetsById = new Map(sheets.map((s) => [s.id, s]))
+  state.plans = plans
+  const wb = await env.DB.prepare(`SELECT unclassified_sheet_id FROM workbooks WHERE id = ?1`).bind(state.wb.id).first<{ unclassified_sheet_id: string | null }>()
+  if (wb) state.wb.unclassified_sheet_id = wb.unclassified_sheet_id
+  const family = await taskFamily(env.DB, uid)
+  for (const row of family) state.taskRows.set(row.task_uid, row)
+  const assignees = await assigneesOf(
+    env.DB,
+    family.map((r) => r.task_uid),
+  )
+  for (const row of family) state.assignees.set(row.task_uid, assignees.get(row.task_uid) ?? [])
   return true
 }
 

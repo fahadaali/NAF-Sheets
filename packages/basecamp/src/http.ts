@@ -284,10 +284,11 @@ export class HttpCore {
           throw new LimitReachedError(errInit(status, attempts, details))
         }
         const wait = retryAfterMs ?? this.backoff(rateLimits)
+        // Everyone sharing the limiter holds for the server's delay, whether this call waits or throws.
+        this.o.limiter.pauseFor?.(wait)
         if (rateLimits >= this.o.retry.maxRateLimitAttempts || wait > this.o.retry.maxRetryAfterMs) {
           throw new RateLimitedError(errInit(status, attempts, details), retryAfterMs)
         }
-        this.o.limiter.pauseFor?.(wait)
         await this.o.sleep(wait)
         continue
       }

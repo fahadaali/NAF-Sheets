@@ -2,6 +2,7 @@
 // subtasks, one subtask, one list, a whole list (reconciliation).
 
 import { NotFoundError, normaliseTodo } from '@naf-sheets/basecamp'
+import { isEcho } from '@naf-sheets/sync-engine'
 import type { RawTodolist } from '@naf-sheets/basecamp'
 import { COMPLETED_VALUE_SUGGESTIONS } from '@naf-sheets/gsheets-import'
 import { DEFAULT_COLUMNS } from '@naf-sheets/shared'
@@ -10,7 +11,7 @@ import { columnLetters, ensureSystemColumns } from '@naf-sheets/sheet-model'
 import type { SheetSnapshot, WorkbookSnapshot } from '@naf-sheets/sheet-model'
 import { SYSTEM_ACTOR } from '../messages'
 import { applyToSheet, mappingStatements, readSheet, sheetForListId } from '../state'
-import { isSyncedSheet, mappingsOf, planOf, runBatches, sheetsOf, syncLogStatement } from '../store'
+import { baseOfRow, isSyncedSheet, mappingsOf, planOf, runBatches, sheetsOf, syncLogStatement } from '../store'
 import type { SheetRow, TaskRow } from '../store'
 import { updateLatestSnapshot } from '../workbook-writer'
 import { autoAssignParent, createRows, ensureNames, fetchSubtask, fetchTodo, inboundStep, rowByBcId, subtasksOf, TaskBusy } from './run'
@@ -213,13 +214,50 @@ async function createSheetForList(run: InboundRun, list: RawTodolist): Promise<v
   }
 }
 
+/** The counters the list shows and the row stored are the same (subtasks, and comments when sent). */
+function sameCounters(row: TaskRow, todo: RemoteTodo): boolean {
+  return (
+    row.bc_subtasks_count === todo.subtasksCount &&
+    row.bc_subtasks_completed_count === todo.subtasksCompletedCount &&
+    // Phase 5: a new comment may not move `updated_at`; the counter is compared too.
+    (typeof todo.commentsCount !== 'number' || row.bc_comments_count === todo.commentsCount)
+  )
+}
+
+/**
+ * A list entry whose `updated_at` moved but which holds nothing the row does
+ * not already have — typically the to-do's own completion or move sent from
+ * here, which Basecamp answers with 204 and no `updated_at` (L3: the first
+ * reconciliation after a link read every completed to-do again). Reading it
+ * one by one would only store the new `updated_at`.
+ *
+ * Only for a synced to-do without subtasks: a subtask's change may move its
+ * to-do's `updated_at` and only the to-do's own read brings it (`steps`).
+ * Everything the step would compare is compared here: the synced fields
+ * (echo hash, position included for pending to-dos), the list, the
+ * completion subscribers (kept in the base, sent back on every update), the
+ * subtask and comment counters.
+ * OPEN: relies on list entries carrying the same fields as `GET /todos/{id}`
+ * (todos.md's "Get to-dos" example shows them); confirm in the live test (L4).
+ */
+function confirmedByList(row: TaskRow, todo: RemoteTodo): boolean {
+  if (row.sync_state !== 'synced' || row.trashed_at !== null) return false
+  if (todo.subtasksCount !== 0 || (row.bc_subtasks_count ?? 0) !== 0) return false
+  const base = baseOfRow(row)
+  if (base === null || base.bcType !== 'todo' || base.listId !== todo.listId) return false
+  const subscribers = (ids: readonly number[]) => [...ids].sort((a, b) => a - b).join(',')
+  if (subscribers(base.completionSubscriberIds) !== subscribers(todo.completionSubscriberIds)) return false
+  return isEcho(todo, base)
+}
+
 /**
  * Reconciliation of one linked list (§9.4): the pending and the completed
  * to-dos, with `If-None-Match` and the stored ETag (a 304 on every page costs
- * nothing), following `Link: rel="next"`. Each to-do whose `updated_at` or
- * subtask counters changed is read in full with its subtasks and diffed.
- * Rows whose to-do is in neither list are read one by one (trashed, archived
- * or moved to another list).
+ * nothing), following `Link: rel="next"`. A to-do is read in full with its
+ * subtasks and diffed only when the list shows it changed: its `updated_at`
+ * or subtask counters moved and its list entry is not already what the row
+ * holds (`confirmedByList`). Rows whose to-do is in neither list are read one
+ * by one (trashed, archived or moved to another list).
  */
 export async function reconcileList(run: InboundRun, sheet: SheetRow, options: { force: boolean }): Promise<'not_modified' | 'reconciled'> {
   const { state, client, token } = run
@@ -252,22 +290,25 @@ export async function reconcileList(run: InboundRun, sheet: SheetRow, options: {
     todos.flatMap((t) => t.assigneeIds),
   )
   const seen = new Set<number>()
+  const confirmed: D1PreparedStatement[] = []
   for (const todo of todos) {
     seen.add(todo.id)
     const row = rowByBcId(state, todo.id)
-    if (
-      row &&
-      !options.force &&
-      row.sheet_id === sheet.id &&
-      row.remote_status === 'active' &&
-      row.last_remote_change_at === todo.updatedAt &&
-      row.bc_subtasks_count === todo.subtasksCount &&
-      row.bc_subtasks_completed_count === todo.subtasksCompletedCount &&
-      // Phase 5: a new comment may not move `updated_at`; the counter is compared too.
-      (typeof todo.commentsCount !== 'number' || row.bc_comments_count === todo.commentsCount)
-    ) {
-      continue
+    if (row && !options.force && row.sheet_id === sheet.id && row.remote_status === 'active' && sameCounters(row, todo)) {
+      if (row.last_remote_change_at === todo.updatedAt) continue
+      if (confirmedByList(row, todo)) {
+        // Only the new `updated_at` is stored, so the next run compares against it.
+        confirmed.push(
+          run.env.DB
+            .prepare(`UPDATE tasks SET last_remote_change_at = ?2 WHERE task_uid = ?1 AND sync_state = 'synced' AND last_remote_change_at IS ?3`)
+            .bind(row.task_uid, todo.updatedAt, row.last_remote_change_at),
+        )
+        row.last_remote_change_at = todo.updatedAt
+        if (run.budget) run.budget.todosConfirmedFromList += 1
+        continue
+      }
     }
+    if (run.budget) run.budget.todosRead += 1
     try {
       const raw = await client.todos.getRaw(token, todo.id)
       const full = { ...normaliseTodo(raw), position: todo.position }
@@ -282,6 +323,7 @@ export async function reconcileList(run: InboundRun, sheet: SheetRow, options: {
       throw error
     }
   }
+  await runBatches(run.env.DB, confirmed)
   for (const row of [...state.taskRows.values()]) {
     if (row.sheet_id !== sheet.id || row.level !== 0 || row.bc_recording_id === null) continue
     if (seen.has(row.bc_recording_id) || row.trashed_at !== null || row.remote_status !== 'active') continue

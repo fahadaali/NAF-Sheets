@@ -85,6 +85,12 @@ export type ApiErrorCode =
   | 'template_not_found'
   | 'template_source_unreadable'
   | 'api_token_not_found'
+  // Dashboard and appearance (apps/api/src/dashboard/errors.ts, contract ./api-dashboard.ts)
+  | 'widget_not_found'
+  | 'invalid_widget'
+  | 'widget_not_confirmed'
+  | 'widget_limit'
+  | 'invalid_palette'
 
 /** Every non-2xx JSON response. `message` is Arabic: what happened and what to do (spec §12.2). */
 export interface ApiError {

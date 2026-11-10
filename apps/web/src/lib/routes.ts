@@ -5,6 +5,7 @@
 //                                       Google Sheets option after Google's consent (§7.2)
 //   /workbooks/:id                      workbook editor (§12.1 item 2);
 //                                       `?sheet=<univer sheet id>&range=B4:C10` selects a place after load
+//   /workbooks/:id/dashboard            the workbook's dashboard («اللوحة»), inside the editor
 //   /workbooks/:id/import-report        import report (§7.2, §12.1 item 7)
 //   /workbooks/:id/link                 linking wizard (§7.3), full screen
 //   /settings                           the user's settings: Basecamp account (§3), admin entries
@@ -12,6 +13,7 @@
 //   /admin/sync-health                  sync health report, admins only (§9.4, phase 7)
 //   /admin/templates                    templates, admins only (§7.1, phase 7)
 //   /admin/api-tokens                   service tokens of the internal API, admins only (§13)
+//   /admin/appearance                   the palette («المظهر»), admins only
 //   /denied?r=<reason>                  naf-auth's refusal page for document navigations
 
 import { parseA1Range, rangeToA1 } from './cell-target'
@@ -20,6 +22,7 @@ import type { EditorTarget } from './cell-target'
 export type Route =
   | { name: 'files'; q: string; importSource?: string }
   | { name: 'editor'; id: string; target?: EditorTarget }
+  | { name: 'dashboard'; id: string }
   | { name: 'importReport'; id: string }
   | { name: 'linkWizard'; id: string }
   | { name: 'settings' }
@@ -27,10 +30,11 @@ export type Route =
   | { name: 'syncHealth' }
   | { name: 'templates' }
   | { name: 'apiTokens' }
+  | { name: 'appearance' }
   | { name: 'denied'; reason: string }
   | { name: 'notFound' }
 
-const WORKBOOK = /^\/workbooks\/([^/]+)(?:\/(import-report|link))?\/?$/
+const WORKBOOK = /^\/workbooks\/([^/]+)(?:\/(import-report|link|dashboard))?\/?$/
 const IMPORT_ID = /^[A-Za-z0-9_-]{1,128}$/
 
 function decodeId(segment: string): string | null {
@@ -65,12 +69,14 @@ export function parseRoute(pathname: string, search = ''): Route {
   if (pathname === '/admin/sync-health' || pathname === '/admin/sync-health/') return { name: 'syncHealth' }
   if (pathname === '/admin/templates' || pathname === '/admin/templates/') return { name: 'templates' }
   if (pathname === '/admin/api-tokens' || pathname === '/admin/api-tokens/') return { name: 'apiTokens' }
+  if (pathname === '/admin/appearance' || pathname === '/admin/appearance/') return { name: 'appearance' }
   const match = WORKBOOK.exec(pathname)
   if (match?.[1]) {
     const id = decodeId(match[1])
     if (id === null) return { name: 'notFound' }
     if (match[2] === 'import-report') return { name: 'importReport', id }
     if (match[2] === 'link') return { name: 'linkWizard', id }
+    if (match[2] === 'dashboard') return { name: 'dashboard', id }
     const target = parseTarget(params)
     return target ? { name: 'editor', id, target } : { name: 'editor', id }
   }
@@ -94,6 +100,8 @@ export function pathFor(route: Route): string {
       if (route.target.range) params.set('range', rangeToA1(route.target.range))
       return `${base}?${params.toString()}`
     }
+    case 'dashboard':
+      return `/workbooks/${encodeURIComponent(route.id)}/dashboard`
     case 'importReport':
       return `/workbooks/${encodeURIComponent(route.id)}/import-report`
     case 'linkWizard':
@@ -108,6 +116,8 @@ export function pathFor(route: Route): string {
       return '/admin/templates'
     case 'apiTokens':
       return '/admin/api-tokens'
+    case 'appearance':
+      return '/admin/appearance'
     case 'denied':
       return route.reason ? `/denied?${new URLSearchParams({ r: route.reason }).toString()}` : '/denied'
     case 'notFound':

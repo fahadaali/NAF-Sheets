@@ -1,10 +1,10 @@
 // The user's settings: their own Basecamp account (spec §3, «اربط حسابك في
 // Basecamp»), and for platform admins the entries of §12.1 item 8 that exist
 // so far: people matching (§3), sync health (§9.4), templates (§7.1) and the
-// internal API's service tokens (§13).
+// internal API's service tokens (§13), and the palette («المظهر»).
 
 import type { ReactNode } from 'react'
-import { Activity, KeyRound, LayoutTemplate, Users } from 'lucide-react'
+import { Activity, KeyRound, LayoutTemplate, Palette, Users } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { CurrentUser } from '@naf-sheets/shared'
 import { AppBar } from '../components/AppBar'
@@ -50,6 +50,11 @@ export function SettingsScreen({ user }: { user: CurrentUser | null }) {
               <AdminEntry Icon={KeyRound} title={t.settings.apiTokensTitle} body={t.settings.apiTokensBody}>
                 <Link className="button button--small" href={pathFor({ name: 'apiTokens' })} data-testid="open-api-tokens">
                   {t.settings.apiTokensOpen}
+                </Link>
+              </AdminEntry>
+              <AdminEntry Icon={Palette} title={t.appearance.settingsTitle} body={t.appearance.settingsBody}>
+                <Link className="button button--small" href={pathFor({ name: 'appearance' })} data-testid="open-appearance">
+                  {t.appearance.settingsOpen}
                 </Link>
               </AdminEntry>
             </section>

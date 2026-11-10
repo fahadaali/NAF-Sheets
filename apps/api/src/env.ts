@@ -1,5 +1,6 @@
 // Bindings of the API Worker (apps/api/wrangler.toml).
 
+import type { BasecampRateGate } from './basecamp-rate-gate'
 import type { WorkbookRoom } from './room'
 
 /**
@@ -72,6 +73,12 @@ export interface Env {
    */
   BC_OUTBOUND_DLQ?: Queue<BcOutboundMessage>
   WORKBOOK_ROOM: DurableObjectNamespace<WorkbookRoom>
+  /**
+   * The platform-wide Basecamp rate limit (src/basecamp-rate-gate.ts): every
+   * Basecamp request takes its slot here, 45 in any 10 s. Optional: without
+   * it each isolate keeps its own window (tests).
+   */
+  BASECAMP_RATE_GATE?: DurableObjectNamespace<BasecampRateGate>
   AUTH_ISSUER: string
   PLATFORM_ID: string
   /**

@@ -6,3 +6,4 @@ export { adminTemplateRoutes, createWorkbookFromTemplate, templateKey, templateR
 export { apiTokenRoutes, newTokenSecret, sha256Hex, tokenFromRequest, TOKEN_PREFIX } from './api-tokens'
 export { dayOf, internalApiRoutes, statusOf, workbookTasks } from './internal-api'
 export { backupRoutes, runBackup, BACKUP_PAGE_ROWS, type BackupResult } from './backup'
+export { backupRetention, isValidRetention, planRetention, pruneBackups, saveBackupRetention, SNAPSHOT_LIST_FILE, type PruneOutcome, type RunFacts } from './retention'

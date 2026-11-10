@@ -180,6 +180,27 @@ export async function getTask(db: D1Database, uid: string): Promise<TaskRow | nu
   return db.prepare(`SELECT ${TASK_COLUMNS} FROM tasks t WHERE t.task_uid = ?1`).bind(uid).first<TaskRow>()
 }
 
+/**
+ * A task's family as D1 has it now: the task, its parent, its subtasks and its
+ * siblings — every row one step of that task reads besides its own (the
+ * parent's Basecamp id, the subtasks of §8.1's automatic assignment, the
+ * children a deletion or a creation touches).
+ */
+export async function taskFamily(db: D1Database, uid: string): Promise<TaskRow[]> {
+  const { results } = await db
+    .prepare(
+      `WITH me AS (SELECT task_uid, parent_uid FROM tasks WHERE task_uid = ?1)
+       SELECT ${TASK_COLUMNS} FROM tasks t
+       WHERE t.task_uid = ?1
+          OR t.task_uid = (SELECT parent_uid FROM me)
+          OR t.parent_uid = ?1
+          OR (t.parent_uid IS NOT NULL AND t.parent_uid = (SELECT parent_uid FROM me))`,
+    )
+    .bind(uid)
+    .all<TaskRow>()
+  return results
+}
+
 /** The workbook a task belongs to (through its sheet). */
 export async function workbookIdOfTask(db: D1Database, uid: string): Promise<string | null> {
   const row = await db

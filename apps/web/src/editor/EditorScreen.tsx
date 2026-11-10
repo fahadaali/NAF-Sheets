@@ -3,7 +3,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
-import { ArrowRight, CloudCheck, CloudOff, CloudUpload, Eye, FileSpreadsheet, LoaderCircle, Settings2, TriangleExclamationPoint } from 'lucide-react'
+import { ArrowRight, CloudCheck, CloudOff, CloudUpload, Eye, FileSpreadsheet, LayoutDashboard, LoaderCircle, Settings2, Table2, TriangleExclamationPoint } from 'lucide-react'
 import type { AssigneeOptionsResponse, ConflictRecord, SaveSnapshotRequest, WorkbookResponse, WorkbookSyncResponse } from '@naf-sheets/shared'
 import { api, classifySaveError, errorMessage, isAbortError } from '../lib/api'
 import { Autosave } from '../lib/autosave'
@@ -38,6 +38,7 @@ import { PresenceBar } from '../collab/PresenceBar'
 import { CollabSession } from '../collab/session'
 import type { CollabNoticeKind, CollabView } from '../collab/session'
 import { collabText } from '../collab/strings'
+import { DashboardView } from '../dashboard/DashboardView'
 
 type Load = { kind: 'loading' } | { kind: 'error'; message: string } | { kind: 'ready'; data: WorkbookResponse }
 
@@ -50,7 +51,10 @@ export interface RoomNotice {
 
 const CONNECTING_VIEW: CollabView = { mode: 'connecting', readOnly: false, pending: 0, peers: [], locks: [] }
 
-export default function EditorScreen({ id, target }: { id: string; target?: EditorTarget | undefined }) {
+/** What the editor shows: the grid, or the workbook's dashboard («اللوحة», /workbooks/:id/dashboard). */
+export type EditorView = 'sheets' | 'dashboard'
+
+export default function EditorScreen({ id, target, view = 'sheets' }: { id: string; target?: EditorTarget | undefined; view?: EditorView }) {
   const [attempt, setAttempt] = useState(0)
   const [load, setLoad] = useState<Load>({ kind: 'loading' })
   // What the editor mounts: the loaded workbook, then the room's snapshot after a resync.
@@ -108,6 +112,7 @@ export default function EditorScreen({ id, target }: { id: string; target?: Edit
         key={`${attempt}-${mount.key}`}
         data={mount.data}
         target={target}
+        view={view}
         onReload={reload}
         session={session}
         collab={collab}
@@ -182,6 +187,7 @@ type Removal = { request: RemovalRequest; resolve: (confirmed: boolean) => void 
 interface WorkbookEditorProps {
   data: WorkbookResponse
   target?: EditorTarget | undefined
+  view: EditorView
   onReload: () => void
   /** Null until the session started (first render). */
   session: CollabSession | null
@@ -190,7 +196,7 @@ interface WorkbookEditorProps {
   onRoomNotice: (notice: RoomNotice | null) => void
 }
 
-function WorkbookEditor({ data, target, onReload, session, collab, roomNotice, onRoomNotice }: WorkbookEditorProps) {
+function WorkbookEditor({ data, target, view, onReload, session, collab, roomNotice, onRoomNotice }: WorkbookEditorProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const autosaveRef = useRef<Autosave | null>(null)
   const mountedRef = useRef<MountedWorkbook | null>(null)
@@ -418,6 +424,16 @@ function WorkbookEditor({ data, target, onReload, session, collab, roomNotice, o
     }
   }, [engine, session])
 
+  // While the dashboard covers the grid, the grid takes no focus or keys.
+  const showDashboard = view === 'dashboard'
+  useEffect(() => {
+    const host = hostRef.current
+    if (!host) return
+    host.inert = showDashboard
+    if (showDashboard) host.setAttribute('aria-hidden', 'true')
+    else host.removeAttribute('aria-hidden')
+  }, [showDashboard])
+
   // One place decides whether the grid takes edits: role, room, conflict, synced-sheet lock.
   useEffect(() => {
     if (engine === 'ready') mountedRef.current?.setEditable(editable)
@@ -544,6 +560,8 @@ function WorkbookEditor({ data, target, onReload, session, collab, roomNotice, o
   }, [])
 
   const { workbook } = data
+  const [dashboardOpened, setDashboardOpened] = useState(showDashboard)
+  if (showDashboard && !dashboardOpened) setDashboardOpened(true)
   const onSyncedSheet = engine === 'ready' && activeSheet !== null && synced.has(activeSheet)
 
   // Phase 5: the selected row's files, and its to-do's comments (a subtask shows its parent's).
@@ -590,6 +608,7 @@ function WorkbookEditor({ data, target, onReload, session, collab, roomNotice, o
       data-room-locks={JSON.stringify(collab.locks.map((l) => ({ userId: l.userId, ...l.cell })))}
     >
       <EditorBar title={workbook.title}>
+        <ViewTabs id={workbook.id} view={view} />
         {!canEdit ? (
           <span className="badge badge--neutral">
             <Eye className="icon" aria-hidden="true" />
@@ -621,7 +640,7 @@ function WorkbookEditor({ data, target, onReload, session, collab, roomNotice, o
         onSyncNow={linked && canEdit && synced.size > 0 ? syncNow : undefined}
       />
 
-      {onSyncedSheet ? (
+      {onSyncedSheet && !showDashboard ? (
         <SyncToolbar
           active={active}
           canWrite={editable}
@@ -789,6 +808,7 @@ function WorkbookEditor({ data, target, onReload, session, collab, roomNotice, o
         ) : null}
       </div>
 
+      <div className="editor-body">
       {resolved.ok ? (
         <div className="editor-stage">
           <div
@@ -810,6 +830,13 @@ function WorkbookEditor({ data, target, onReload, session, collab, roomNotice, o
           ) : null}
         </div>
       ) : null}
+      {/* Mounted once opened, so going back and forth keeps it; it refreshes on every commit. */}
+      {dashboardOpened ? (
+        <div className="editor-dashboard" hidden={!showDashboard} id="workbook-dashboard" role="region" aria-label={t.dashboard.tab}>
+          <DashboardView workbookId={workbook.id} visible={showDashboard} refreshKey={`${collab.version ?? ''}:${save.version}`} />
+        </div>
+      ) : null}
+      </div>
 
       {rowHover ? (
         <div
@@ -886,6 +913,29 @@ function WorkbookEditor({ data, target, onReload, session, collab, roomNotice, o
         onDismiss={resolveConflict((id, cid) => api.dismissConflict(id, cid))}
       />
     </div>
+  )
+}
+
+/**
+ * «الجدول» / «اللوحة»: the grid or the dashboard of this workbook. Links, so
+ * each view has its address (/workbooks/:id, /workbooks/:id/dashboard).
+ * OPEN (apps/web/OPEN_QUESTIONS.md #66): in the editor bar rather than in
+ * Univer's own sheet tab bar, which has no public slot for it.
+ */
+function ViewTabs({ id, view }: { id: string; view: EditorView }) {
+  const tabs = [
+    { key: 'sheets' as const, href: pathFor({ name: 'editor', id }), label: t.dashboard.sheetsTab, Icon: Table2 },
+    { key: 'dashboard' as const, href: pathFor({ name: 'dashboard', id }), label: t.dashboard.tab, Icon: LayoutDashboard },
+  ]
+  return (
+    <nav className="view-tabs" aria-label={t.dashboard.viewSwitch}>
+      {tabs.map(({ key, href, label, Icon }) => (
+        <Link key={key} href={href} className={view === key ? 'view-tabs__tab view-tabs__tab--active' : 'view-tabs__tab'} aria-current={view === key ? 'page' : undefined} data-testid={`view-tab-${key}`}>
+          <Icon className="icon" aria-hidden="true" />
+          {label}
+        </Link>
+      ))}
+    </nav>
   )
 }
 

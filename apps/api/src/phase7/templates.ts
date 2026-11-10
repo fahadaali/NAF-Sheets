@@ -11,6 +11,7 @@
 // in R2 (`templates/{id}/snapshot.json`, create-only, never overwritten). The
 // source workbook is only read. A workbook made from a template gets a copy of
 // that snapshot under its own id; all its sheets start local (§7.3 links them).
+// Frozen at creation time: decided by the owner 2026-11-10 (OPEN_QUESTIONS.md T1).
 
 import { Hono } from 'hono'
 import type {

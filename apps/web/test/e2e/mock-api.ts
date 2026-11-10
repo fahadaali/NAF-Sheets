@@ -3,7 +3,13 @@
 
 import type { Page, Route, WebSocketRoute } from 'playwright'
 import { DEFAULT_COLUMNS } from '@naf-sheets/shared'
+import { contrastWarnings, normalizePalette } from '@naf-sheets/shared'
 import type {
+  AppearancePalette,
+  DashboardResponse,
+  DashboardWidget,
+  DashboardWidgetConfig,
+  WidgetResult,
   ApiTokenSummary,
   BackupRunsResponse,
   SyncHealthResponse,
@@ -151,10 +157,20 @@ export class MockApi {
   /** The snapshot a workbook made from each template starts with. */
   templateSnapshots: Record<string, unknown> = {}
   syncHealth: SyncHealthResponse = { workbooks: [], deadLetters: 0 }
-  backups: BackupRunsResponse = { configured: true, runs: [] }
+  backups: BackupRunsResponse = { configured: true, runs: [], retention: { keepDaily: 30, keepMonthly: 12 }, lastPrune: null }
   apiTokens: ApiTokenSummary[] = []
   private tokenCount = 0
   private templateCount = 0
+
+  // --- Dashboard and appearance (packages/shared/src/api-dashboard.ts) -------
+  /** GET …/dashboard per workbook: the automatic figures; widgets and results come from below. */
+  dashboards: Record<string, DashboardResponse> = {}
+  /** Live widgets per workbook. */
+  widgets: Record<string, DashboardWidget[]> = {}
+  /** What a configuration computes to (preview, and every widget's result). */
+  widgetResult: (config: DashboardWidgetConfig) => WidgetResult = () => ({ widgetId: null, ok: true, value: 0, cells: 0, skipped: 0, uncomputed: 0, groups: null, otherGroups: 0, groupLimit: 50, link: null })
+  palette: AppearancePalette = {}
+  private widgetCount = 0
 
   bodies(method: string, path: string): unknown[] {
     return this.requests.filter((r) => r.method === method && r.path === path).map((r) => r.body)
@@ -428,6 +444,14 @@ export class MockApi {
     if (path === '/api/templates' && method === 'GET') return { status: 200, body: { templates: this.templates } }
     if (path === '/api/admin/sync-health' && method === 'GET') return isAdmin ? { status: 200, body: this.syncHealth } : adminOnly()
     if (path === '/api/admin/backups' && method === 'GET') return isAdmin ? { status: 200, body: this.backups } : adminOnly()
+    if (path === '/api/admin/backups/retention' && method === 'PUT') {
+      if (!isAdmin) return adminOnly()
+      const req = body as { keepDaily?: unknown; keepMonthly?: unknown }
+      const ok = (n: unknown, min: number, max: number) => typeof n === 'number' && Number.isInteger(n) && n >= min && n <= max
+      if (!ok(req.keepDaily, 1, 365) || !ok(req.keepMonthly, 0, 120)) return error(400, 'invalid_request', 'قيم الاحتفاظ بالنسخ الاحتياطية غير صالحة.')
+      this.backups = { ...this.backups, retention: { keepDaily: req.keepDaily as number, keepMonthly: req.keepMonthly as number } }
+      return { status: 200, body: { retention: this.backups.retention } }
+    }
     if (path === '/api/admin/templates' && method === 'POST') {
       if (!isAdmin) return adminOnly()
       const req = body as { workbookId?: string; title?: string; description?: string | null }
@@ -486,9 +510,64 @@ export class MockApi {
     return undefined
   }
 
+  /** The endpoints of packages/shared/src/api-dashboard.ts; undefined when the path is not one of them. */
+  private dashboard(method: string, path: string, body: unknown): Reply | undefined {
+    if (path === '/api/appearance' && method === 'GET') return { status: 200, body: { palette: this.palette, updatedAt: null, warnings: contrastWarnings(this.palette) } }
+    if (path === '/api/admin/appearance' && method === 'PUT') {
+      if (this.me.user.role !== 'admin') return error(403, 'forbidden', 'تعديل مظهر المنصة مقصور على مسؤول المنصة.')
+      const palette = normalizePalette((body as { palette?: unknown } | null)?.palette)
+      if (!palette) return error(400, 'invalid_palette', 'ألوان المظهر غير صالحة، فلم يُحفظ شيء.')
+      this.palette = palette
+      return { status: 200, body: { palette, updatedAt: now, warnings: contrastWarnings(palette) } }
+    }
+    const m = /^\/api\/workbooks\/([^/]+)\/dashboard(?:\/(preview|widgets)(?:\/([^/]+)(?:\/(remove))?)?)?$/.exec(path)
+    if (!m?.[1]) return undefined
+    const id = decodeURIComponent(m[1])
+    const stored = this.workbooks.get(id)
+    const base = this.dashboards[id]
+    if (!stored || !base) return error(404, 'not_found', 'لم يُعثر على الملف، أو ليس لك وصول إليه.')
+    const reader = stored.workbook.access === 'viewer' || this.me.user.role === 'viewer'
+    const forbidden = () => error(403, 'forbidden', 'لا تملك صلاحية تعديل لوحة هذا الملف؛ يمكنك الاطلاع عليها فقط.')
+    const list = (this.widgets[id] ??= [])
+    const result = (w: DashboardWidgetConfig, widgetId: string | null) => ({ ...this.widgetResult(w), widgetId })
+    if (!m[2] && method === 'GET') {
+      return { status: 200, body: { ...base, canEdit: !reader, widgets: list.map((w, i) => ({ ...w, position: i })), results: list.map((w) => result(w, w.id)) } }
+    }
+    if (m[2] === 'preview' && method === 'POST') return { status: 200, body: result(body as DashboardWidgetConfig, null) }
+    if (m[2] !== 'widgets') return undefined
+    if (reader) return forbidden()
+    const config = body as DashboardWidgetConfig
+    if (!m[3] && method === 'POST') {
+      const widget: DashboardWidget = { ...config, id: `w-${++this.widgetCount}`, position: list.length, updatedAt: now }
+      list.push(widget)
+      return { status: 201, body: { widget, result: result(widget, widget.id) } }
+    }
+    if (m[3] === 'order' && method === 'PUT') {
+      const ids = (body as { ids: string[] }).ids
+      this.widgets[id] = ids.map((wid) => list.find((w) => w.id === wid)).filter((w): w is DashboardWidget => w !== undefined)
+      return { status: 200, body: { widgets: this.widgets[id].map((w, i) => ({ ...w, position: i })) } }
+    }
+    const wid = decodeURIComponent(m[3] ?? '')
+    const index = list.findIndex((w) => w.id === wid)
+    if (index === -1) return error(404, 'widget_not_found', 'لم يُعثر على هذا العنصر في اللوحة.')
+    if (!m[4] && method === 'PUT') {
+      const widget = { ...(list[index] as DashboardWidget), ...config, updatedAt: now }
+      list[index] = widget
+      return { status: 200, body: { widget, result: result(widget, widget.id) } }
+    }
+    if (m[4] === 'remove' && method === 'POST') {
+      if ((body as { confirmed?: unknown })?.confirmed !== true) return error(400, 'widget_not_confirmed', 'لم تُؤكَّد إزالة العنصر.')
+      list.splice(index, 1)
+      return { status: 200, body: { widgets: list.map((w, i) => ({ ...w, position: i })) } }
+    }
+    return undefined
+  }
+
   private reply(method: string, url: URL, body: unknown): Reply {
     const path = url.pathname
     if (method === 'GET' && path === '/api/me') return { status: 200, body: this.me }
+    const dashboard = this.dashboard(method, path, body)
+    if (dashboard) return dashboard
     const phase7 = this.phase7(method, path, body)
     if (phase7) return phase7
     const phase5 = this.phase5(method, url, body)

@@ -9,9 +9,13 @@
 // Bindings it reads on top of `Env`: `BasecampLinkBindings` (./env.ts).
 
 import type { Hono } from 'hono'
-import { createTokenBucketLimiter } from '@naf-sheets/basecamp'
+import { env as workerEnv } from 'cloudflare:workers'
+import { createBasecampLimiter } from '@naf-sheets/basecamp'
 import type { RateLimiter } from '@naf-sheets/basecamp'
 import type { AppEnv } from '../auth'
+import { gateLimiter } from '../basecamp-rate-gate'
+import type { GateNamespace } from '../basecamp-rate-gate'
+import type { Env } from '../env'
 import type { BasecampLinkDeps, BasecampLinkEnv, HttpFetch, LinkContext } from './env'
 import { linkConfig } from './env'
 import { basecampApiRoutes, basecampAuthRoutes, peopleMatchRoutes } from './routes'
@@ -27,7 +31,7 @@ export interface BasecampLinkOptions {
   fetch?: HttpFetch
   /** Default: `Date.now`. */
   now?: () => number
-  /** Default: one token bucket per isolate (`isolateLimiter`). */
+  /** Default: one limiter per isolate (`isolateLimiter`: 45 requests in any 10 s). */
   limiter?: RateLimiter
   /** Backoff sleep of the Basecamp client. */
   sleep?: (ms: number) => Promise<void>
@@ -36,11 +40,17 @@ export interface BasecampLinkOptions {
 let sharedLimiter: RateLimiter | null = null
 
 /**
- * The isolate's Basecamp rate limiter (spec §9.2.9). Anything else in this
+ * The Basecamp rate limiter (spec §9.2.9): 45 requests in any 10 s. With the
+ * `BASECAMP_RATE_GATE` Durable Object bound (wrangler.toml), every slot comes
+ * from that one gate, so all isolates together stay under the limit; without
+ * it (a test env), from this isolate's own window. Anything else in this
  * Worker that calls Basecamp should take this same instance.
  */
 export function isolateLimiter(): RateLimiter {
-  sharedLimiter ??= createTokenBucketLimiter()
+  if (sharedLimiter) return sharedLimiter
+  const local = createBasecampLimiter()
+  const gate = (workerEnv as Partial<Env>).BASECAMP_RATE_GATE
+  sharedLimiter = gate ? gateLimiter(gate as unknown as GateNamespace, { fallback: local }) : local
   return sharedLimiter
 }
 

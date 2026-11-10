@@ -61,6 +61,16 @@ does the narrowest safe thing and the question stays here until someone decides.
    not bounded together; a global limit needs a Durable Object behind the
    `RateLimiter` interface. (`src/limiter.ts`)
 
+   **Decided 2026-11-10 (owner):** a limit matched to the documented window
+   with a margin: at most **45 requests in any 10 s** (`createBasecampLimiter`,
+   `createWindowLimiter`), bursts allowed, `429` + `Retry-After` still pauses
+   everyone. The window's bookkeeping (`reserveSlot`, `pauseWindow`) is pure,
+   so the API Worker keeps it in one Durable Object (`BasecampRateGate`,
+   `apps/api/src/basecamp-rate-gate.ts`) that every isolate takes its slots
+   from; without that binding (tests) each isolate keeps its own window.
+   Still open: a gate reset while requests flow (a deploy) starts an empty
+   window (apps/api/OPEN_QUESTIONS.md L6).
+
 8. **Cache scope for conditional GET.**
    Responses depend on whose token asked (emails are redacted for non-admins),
    so conditional GET is opt-in per call with a `cacheScope` chosen by the

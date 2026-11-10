@@ -118,7 +118,12 @@ describe('sync health (§9.4, admin)', () => {
         { workbookId: 'wb-c', title: 'تقارير الإعلام', bcProjectId: 4023, counts: { error: 0, conflict: 0, pending: 1 }, lastSuccessAt: '2026-11-09T21:00:00Z', webhook: 'missing' },
       ],
     }
-    api.backups = { configured: true, runs: [{ id: 'run-1', startedAt: '2026-11-10T00:23:00Z', finishedAt: '2026-11-10T00:24:10Z', status: 'succeeded', tables: 24, rows: 18250, snapshots: 12, message: null }] }
+    api.backups = {
+      configured: true,
+      runs: [{ id: 'run-1', startedAt: '2026-11-10T00:23:00Z', finishedAt: '2026-11-10T00:24:10Z', status: 'succeeded', tables: 24, rows: 18250, snapshots: 12, message: null, prunedAt: null }],
+      retention: { keepDaily: 30, keepMonthly: 12 },
+      lastPrune: { at: '2026-11-10T00:24:30Z', byRunId: 'run-1', runsRemoved: 1, objectsRemoved: 31, snapshotCopiesRemoved: 0, runsKept: 41, message: null },
+    }
     return api
   }
 
@@ -158,6 +163,34 @@ describe('sync health (§9.4, admin)', () => {
 
     await page.getByTestId('sync-health-refresh').click()
     await expect.poll(() => api.count('GET', '/api/admin/sync-health')).toBe(2)
+    await context.close()
+  })
+
+  it('shows the backup retention policy and lets an admin change its two numbers (validated)', async () => {
+    const api = healthApi()
+    const { context, page } = await openPage(api, '/admin/sync-health')
+    const section = page.getByTestId('backup-retention')
+    await section.waitFor()
+    expect(await page.getByTestId('retention-policy').innerText()).toContain('آخر 30 نسخة مكتملة')
+    expect(await page.getByTestId('retention-policy').innerText()).toContain('لآخر 12 شهراً')
+    // Riyadh time; one old run removed, 41 kept.
+    expect(await page.getByTestId('retention-last').innerText()).toContain('2026-11-10 03:24')
+    expect(await page.getByTestId('retention-last').innerText()).toContain('41')
+
+    // Out of range: refused before any request.
+    await page.getByTestId('retention-daily').fill('0')
+    await page.getByTestId('retention-save').click()
+    expect(await page.getByTestId('retention-error').innerText()).toContain('من 1 إلى 365')
+    expect(api.count('PUT', '/api/admin/backups/retention')).toBe(0)
+
+    await page.getByTestId('retention-daily').fill('14')
+    await page.getByTestId('retention-monthly').fill('6')
+    await page.getByTestId('retention-save').click()
+    await page.getByTestId('retention-saved').waitFor()
+    expect(api.backups.retention).toEqual({ keepDaily: 14, keepMonthly: 6 })
+    expect(await section.getAttribute('data-keep-daily')).toBe('14')
+    expect(await page.getByTestId('retention-policy').innerText()).toContain('آخر 14 نسخة')
+    await shot(page, 'phase7-backup-retention')
     await context.close()
   })
 

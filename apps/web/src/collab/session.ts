@@ -34,6 +34,8 @@ export interface CollabView {
   peers: RoomPeer[]
   /** Cells other people are editing. */
   locks: RoomLock[]
+  /** The last snapshot version the room reported committed (its `saved` messages); the dashboard refreshes on it. */
+  version?: number | null
 }
 
 /** What the session needs from a mounted editor (src/editor/univer-host.ts `MountedWorkbook`). */
@@ -187,7 +189,7 @@ export class CollabSession {
     }
     // Never joined: the room is not there. Fall back instead of waiting read-only.
     if (!this.everLive && (state.status === 'offline' || state.status === 'failed')) return this.giveUp()
-    this.set({ mode: state.status, readOnly: state.readOnly, pending: state.pending, peers: state.peers, locks: state.locks })
+    this.set({ mode: state.status, readOnly: state.readOnly, pending: state.pending, peers: state.peers, locks: state.locks, version: state.version })
   }
 
   private giveUp(): void {

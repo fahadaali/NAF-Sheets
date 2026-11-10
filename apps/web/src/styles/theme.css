@@ -7,9 +7,16 @@
  *
  * OPEN: the platform's visual identity — what replaces naf-ui for colours and
  * components — is an open decision of the owner. Until it is made this is a
- * neutral light theme modelled on Google Sheets, so the frame around Univer
- * looks familiar. Changing the identity means changing the values below and
- * nothing else. (apps/web/OPEN_QUESTIONS.md)
+ * calm light theme (soft neutrals, one muted teal accent; dashboard proposal,
+ * apps/web/OPEN_QUESTIONS.md #66). Changing the identity means changing the
+ * values below and nothing else.
+ *
+ * Admins may override the accent, the neutrals and the chart series from
+ * «الإعدادات» → «المظهر» (src/screens/AppearanceScreen.tsx). The overrides
+ * are applied at load as inline custom properties on <html>
+ * (src/lib/theme-colors.ts); the values here stay the defaults. Tokens that
+ * derive from an editable one (hover, soft, focus) use color-mix so they
+ * follow an override.
  */
 
 :root {
@@ -29,23 +36,20 @@
   --line-height: 1.6;
   --line-height-tight: 1.35;
 
-  /* Surfaces and text */
-  --color-page: #f8f9fa;
+  /* Surfaces and text (editable: page, surface, surface-muted, border, text, text-muted).
+     Contrast on every surface: text ≥ 12.9:1, muted text ≥ 5.4:1. */
+  --color-page: #f6f7f5;
   --color-surface: #ffffff;
-  --color-surface-muted: #f1f3f4;
-  --color-surface-hover: #e8eaed;
-  --color-border: #dadce0;
-  --color-border-strong: #bdc1c6;
-  --color-text: #202124;
-  --color-text-muted: #5f6368;
-  --color-backdrop: rgb(32 33 36 / 0.45);
+  --color-surface-muted: #eef1ee;
+  --color-border: #d9ddd8;
+  --color-text: #1f2a2e;
+  --color-text-muted: #56636a;
+  --color-backdrop: rgb(31 42 46 / 0.45);
 
-  /* Accent: links, the primary action, focus */
-  --color-accent: #1a73e8;
-  --color-accent-hover: #1765cc;
+  /* Accent: links, the primary action, focus (editable: accent, accent-contrast).
+     A muted teal: 5.8:1 on the surface, white on it 5.8:1. */
+  --color-accent: #2f6f73;
   --color-accent-contrast: #ffffff;
-  --color-accent-soft: #e8f0fe;
-  --color-focus: #1a73e8;
 
   /* Status: text and icon colour, and its soft background (each pair ≥ 4.5:1) */
   --color-success: #137333;
@@ -76,7 +80,6 @@
   --border-width: 1px;
   --shadow-sm: 0 1px 2px rgb(60 64 67 / 0.3), 0 1px 3px 1px rgb(60 64 67 / 0.15);
   --shadow-lg: 0 4px 8px 3px rgb(60 64 67 / 0.15), 0 1px 3px rgb(60 64 67 / 0.3);
-  --focus-ring: 0 0 0 2px var(--color-surface), 0 0 0 4px var(--color-focus);
 
   /* Sizes */
   --control-height: 2.25rem;
@@ -152,4 +155,56 @@
   --comment-list-height: 24rem;
   --comment-input-height: 5rem;
   --details-panel-width: 28rem;
+
+  /*
+   * Charts and the dashboard («اللوحة», src/dashboard/). Recharts draws SVG
+   * with literal colours, so the charts read these with getComputedStyle
+   * (src/lib/theme-colors.ts); nothing else holds a colour.
+   *
+   * Series (editable): eight calm hues, each ≥ 3:1 on the surface (WCAG 1.4.11
+   * for graphical objects; 4.2–5.8:1 on white), in an order that keeps
+   * neighbours apart. A series colour never carries meaning alone: every
+   * chart has a legend and an accessible list with labels and numbers.
+   */
+  --chart-1: #2f6f73;
+  --chart-2: #4f6d9a;
+  --chart-3: #5d8655;
+  --chart-4: #a0702c;
+  --chart-5: #87597f;
+  --chart-6: #b05f45;
+  --chart-7: #5e7382;
+  --chart-8: #7a7b36;
+  /* Task states in charts: always with the state's icon and label. */
+  --chart-done: var(--color-success);
+  --chart-open: var(--chart-2);
+  --chart-overdue: var(--color-danger);
+  --chart-grid: var(--color-border);
+  --chart-axis: var(--color-text-muted);
+  --chart-cursor: var(--color-surface-muted);
+  --chart-height: 16rem;
+  --chart-height-sm: 12rem;
+  --chart-bar-size: 14;
+  --chart-radius: 4;
+  --kpi-value-size: 2rem;
+  --kpi-min-width: 11rem;
+  --dashboard-card-min-width: 20rem;
+  --dashboard-list-height: 18rem;
+  --swatch-size: 2.25rem;
+  --swatch-size-sm: 0.75rem;
+  --appearance-preview-width: 26rem;
+}
+
+/*
+ * Tokens derived from editable ones. Declared on :root and again on every
+ * `.theme-scope` (the «المظهر» preview), so an element that overrides an
+ * editable token gets matching derived values too.
+ */
+:root,
+.theme-scope {
+  --color-surface-hover: color-mix(in srgb, var(--color-surface-muted) 82%, var(--color-text));
+  --color-border-strong: color-mix(in srgb, var(--color-border) 70%, var(--color-text));
+  --color-accent-hover: color-mix(in srgb, var(--color-accent) 85%, var(--color-text));
+  --color-accent-soft: color-mix(in srgb, var(--color-accent) 10%, var(--color-surface));
+  --color-focus: var(--color-accent);
+  --focus-ring: 0 0 0 2px var(--color-surface), 0 0 0 4px var(--color-focus);
 }

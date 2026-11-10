@@ -1,0 +1,322 @@
+{
+  "startedAt": "2026-11-10T17:22:24.367Z",
+  "node": "v22.23.4",
+  "env": {},
+  "parts": [
+    {
+      "part": "api",
+      "exitCode": 0,
+      "wallMs": 4145842,
+      "testWallMs": {
+        "1. save and read": 1412,
+        "2. room: join and apply": 17254,
+        "3. link and initial outbound sync": 3944883,
+        "4. outbound detection after an edit of 1% of the rows": 47653,
+        "5. reconciliation against the fake Basecamp": 127936,
+        "6. internal API: /api/v1/stats over every workbook": 1337
+      },
+      "results": [
+        {
+          "phase": "save_and_read",
+          "config": {
+            "workbooks": 10,
+            "sheets": 7,
+            "rows": 500,
+            "syncWorkbooks": 10,
+            "roomOps": 100,
+            "outboundBatch": 10
+          },
+          "snapshotBytes": {
+            "n": 10,
+            "min": 756187,
+            "median": 756187,
+            "p95": 756188,
+            "max": 756188,
+            "total": 7561871
+          },
+          "createMs": {
+            "n": 10,
+            "min": 5,
+            "median": 6,
+            "p95": 28,
+            "max": 28,
+            "total": 85
+          },
+          "saveMs": {
+            "n": 10,
+            "min": 37,
+            "median": 43,
+            "p95": 53,
+            "max": 53,
+            "total": 448
+          },
+          "readMs": {
+            "n": 30,
+            "min": 13,
+            "median": 19,
+            "p95": 25,
+            "max": 27,
+            "total": 579
+          },
+          "listMs": 5
+        },
+        {
+          "phase": "room",
+          "config": {
+            "workbooks": 10,
+            "sheets": 7,
+            "rows": 500,
+            "syncWorkbooks": 10,
+            "roomOps": 100,
+            "outboundBatch": 10
+          },
+          "opsPerWorkbook": 100,
+          "joinColdMs": {
+            "n": 10,
+            "min": 80,
+            "median": 96,
+            "p95": 11123,
+            "max": 11123,
+            "total": 11989
+          },
+          "joinWarmMs": {
+            "n": 10,
+            "min": 25,
+            "median": 30,
+            "p95": 46,
+            "max": 46,
+            "total": 339
+          },
+          "ackMs": {
+            "n": 1000,
+            "min": 2,
+            "median": 4,
+            "p95": 6,
+            "max": 26,
+            "total": 4154
+          },
+          "broadcastMs": {
+            "n": 1000,
+            "min": 0,
+            "median": 0,
+            "p95": 1,
+            "max": 5,
+            "total": 101
+          },
+          "persistMs": {
+            "n": 10,
+            "min": 52,
+            "median": 60,
+            "p95": 75,
+            "max": 75,
+            "total": 619
+          },
+          "rejected": 0
+        },
+        {
+          "phase": "link_and_outbound",
+          "config": {
+            "workbooks": 10,
+            "sheets": 7,
+            "rows": 500,
+            "syncWorkbooks": 10,
+            "roomOps": 100,
+            "outboundBatch": 10
+          },
+          "workbooks": 10,
+          "outboundBatch": 10,
+          "linkMs": {
+            "n": 10,
+            "min": 1142,
+            "median": 1529,
+            "p95": 1925,
+            "max": 1925,
+            "total": 15501
+          },
+          "link": {
+            "requests": 90,
+            "limiterWaitMs": 17445,
+            "kinds": {
+              "GET /todolists/:id": 70,
+              "GET /projects/:id": 10,
+              "POST /buckets/:id/webhooks": 10
+            }
+          },
+          "drainMs": {
+            "n": 10,
+            "min": 348857,
+            "median": 393696,
+            "p95": 419535,
+            "max": 419535,
+            "total": 3928747
+          },
+          "drainPacedMs": {
+            "n": 10,
+            "min": 1049245,
+            "median": 1049251,
+            "p95": 1049256,
+            "max": 1049256,
+            "total": 10492506
+          },
+          "perTaskMs": {
+            "n": 10,
+            "min": 99.67342857142857,
+            "median": 112.48457142857143,
+            "p95": 119.86714285714285,
+            "max": 119.86714285714285,
+            "total": 1122.4991428571427
+          },
+          "perTaskPacedMs": {
+            "n": 10,
+            "min": 299.7842857142857,
+            "median": 299.786,
+            "p95": 299.78742857142856,
+            "max": 299.78742857142856,
+            "total": 2997.8588571428572
+          },
+          "totals": {
+            "tasks": 35000,
+            "messages": 35000,
+            "batches": 3500,
+            "basecampCalls": 42000,
+            "ms": 3928747,
+            "limiterWaitMs": 6563759,
+            "pacedMs": 10492506,
+            "kinds": {
+              "POST /todolists/:id/todos": 35000,
+              "POST /todos/:id/completion": 7000
+            }
+          },
+          "requestsPerTask": 1.2,
+          "tasksPerSecond": 8.9,
+          "tasksPerSecondPaced": 3.3,
+          "duplicateTodos": 0,
+          "syncStates": {
+            "synced": 35000
+          }
+        },
+        {
+          "phase": "detection",
+          "config": {
+            "workbooks": 10,
+            "sheets": 7,
+            "rows": 500,
+            "syncWorkbooks": 10,
+            "roomOps": 100,
+            "outboundBatch": 10
+          },
+          "editedPerWorkbook": 35,
+          "saveWithDetectionMs": {
+            "n": 10,
+            "min": 403,
+            "median": 450,
+            "p95": 987,
+            "max": 987,
+            "total": 4949
+          },
+          "enqueued": {
+            "n": 10,
+            "min": 35,
+            "median": 35,
+            "p95": 35,
+            "max": 35,
+            "total": 350
+          },
+          "drainMs": {
+            "n": 10,
+            "min": 3898,
+            "median": 4108,
+            "p95": 4760,
+            "max": 4760,
+            "total": 42329
+          },
+          "drainPacedMs": {
+            "n": 10,
+            "min": 16651,
+            "median": 17011,
+            "p95": 17060,
+            "max": 17060,
+            "total": 169858
+          },
+          "requests": 700,
+          "kinds": {
+            "GET /todos/:id": 350,
+            "PUT /todos/:id": 350
+          }
+        },
+        {
+          "phase": "reconciliation",
+          "config": {
+            "workbooks": 10,
+            "sheets": 7,
+            "rows": 500,
+            "syncWorkbooks": 10,
+            "roomOps": 100,
+            "outboundBatch": 10
+          },
+          "changedInBasecamp": 50,
+          "rowsUpdatedFromBasecamp": 50,
+          "firstRun": {
+            "ms": 123895,
+            "pacedMs": 1925264,
+            "limiterWaitMs": 1801369,
+            "basecampReads": 7701,
+            "kinds": {
+              "GET /todos/:id": 6980,
+              "GET /todolists/:id/todos": 560,
+              "GET /todolists/:id/todos?completed": 140,
+              "GET /webhooks/:id": 10,
+              "GET /projects/:id/people": 10,
+              "GET /people": 1
+            },
+            "runs": [
+              {
+                "workbooks": 10,
+                "lists": 70,
+                "notModified": 0,
+                "requeued": 0,
+                "stopped": null
+              }
+            ]
+          },
+          "unchangedRun": {
+            "ms": 3925,
+            "pacedMs": 180222,
+            "limiterWaitMs": 176297,
+            "basecampReads": 721,
+            "kinds": {
+              "GET /todolists/:id/todos (If-None-Match)": 560,
+              "GET /todolists/:id/todos?completed (If-None-Match)": 140,
+              "GET /webhooks/:id": 10,
+              "GET /projects/:id/people": 10,
+              "GET /people": 1
+            },
+            "runs": [
+              {
+                "workbooks": 10,
+                "lists": 70,
+                "notModified": 70,
+                "requeued": 0,
+                "stopped": null
+              }
+            ]
+          }
+        },
+        {
+          "phase": "internal_api_stats",
+          "config": {
+            "workbooks": 10,
+            "sheets": 7,
+            "rows": 500,
+            "syncWorkbooks": 10,
+            "roomOps": 100,
+            "outboundBatch": 10
+          },
+          "ms": 1333,
+          "tasks": 35000
+        }
+      ]
+    }
+  ],
+  "finishedAt": "2026-11-10T18:31:30.210Z"
+}

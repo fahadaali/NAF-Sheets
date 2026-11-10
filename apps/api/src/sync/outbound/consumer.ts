@@ -1,6 +1,17 @@
 // `bc-outbound` consumer (spec §9.2.3–9): one message = one task to bring to
 // Basecamp, with the acting person's own token (§3).
 //
+// A batch is grouped by workbook (docs/load-test.md, finding L2): each
+// workbook's state (snapshot, sheets, plans, rows, names) is loaded once for
+// the batch, and before each task only what may have changed since is read
+// again (`refreshForTask`: the snapshot if a save moved it on, the sheets and
+// mappings, the task's family rows). Everything per message is unchanged:
+// its own task lease, its own actor's token, its own outcome (ack, retry with
+// its own attempts, dead letter). A message for the same task and the same
+// actor as one already sent earlier in the batch is acknowledged without a
+// second step: the step sends the row's state as it is, which already holds
+// that message's change.
+//
 // Retries are the queue's, never a sleep in the Worker (the client is built
 // without in-process retries):
 //   429                 → message.retry({ delaySeconds: Retry-After })
@@ -32,7 +43,7 @@ import type { SyncDeps } from '../deps'
 import { enqueueTasks } from '../detect'
 import { AUTO_RULE_ACTOR, ROW_MESSAGES } from '../messages'
 import type { RowMessageKey } from '../messages'
-import { loadWorkbookState } from '../state'
+import { loadWorkbookState, refreshForTask } from '../state'
 import type { WorkbookState } from '../state'
 import {
   accountInactive,
@@ -47,6 +58,7 @@ import {
   syncLogStatement,
   workbookIdOfTask,
 } from '../store'
+import type { WorkbookSyncRow } from '../store'
 import { RecordUnreachable, syncTask } from '../task-sync'
 import type { StepResult } from '../task-sync'
 import { runDeletion, runUndo } from './deletion'
@@ -81,25 +93,102 @@ function isOutboundMessage(body: unknown): body is BcOutboundMessage {
   )
 }
 
-export async function handleOutboundBatchWith(batch: MessageBatch<BcOutboundMessage>, env: Env, deps: SyncDeps): Promise<void> {
-  for (const message of batch.messages) {
-    let outcome: Outcome
-    try {
-      outcome = await processOutbound(env, deps, message.body)
-    } catch (error) {
-      outcome = transient(error, message.attempts)
+/**
+ * One workbook's share of a batch: its state is loaded on the first task that
+ * needs it and kept for the next ones, which only refresh what may have
+ * changed (`refreshForTask`). Dropped after an unexpected error, so the next
+ * task starts from a fresh load.
+ */
+export class WorkbookBatch {
+  private state: WorkbookState | null = null
+  /** Full loads of the workbook (tests and the load test read it). */
+  loads = 0
+
+  constructor(
+    private readonly env: Env,
+    readonly workbookId: string,
+  ) {}
+
+  /** The state for `uid`'s step; null when the workbook or its snapshot cannot be read. */
+  async stateFor(wb: WorkbookSyncRow, uid: string): Promise<WorkbookState | null> {
+    if (this.state === null) {
+      this.loads += 1
+      this.state = await loadWorkbookState(this.env, wb)
+      return this.state
     }
-    if (outcome.kind === 'ack') {
-      message.ack()
-      continue
+    Object.assign(this.state.wb, wb)
+    if (!(await refreshForTask(this.env, this.state, uid))) {
+      this.state = null
+      return null
     }
-    if (message.attempts >= MAX_ATTEMPTS) {
-      await deadLetter(env, deps, message, outcome.code)
-      message.ack()
-      continue
-    }
-    message.retry({ delaySeconds: outcome.delaySeconds })
+    return this.state
   }
+
+  /** After a step that threw: its in-memory changes may not all be in D1. */
+  discard(): void {
+    this.state = null
+  }
+}
+
+/** Workbook batches of the last `handleOutboundBatchWith` call (for tests). */
+export let lastBatchLoads: Array<{ workbookId: string; messages: number; loads: number }> = []
+
+export async function handleOutboundBatchWith(batch: MessageBatch<BcOutboundMessage>, env: Env, deps: SyncDeps): Promise<void> {
+  const groups = new Map<string, Array<Message<BcOutboundMessage>>>()
+  for (const message of batch.messages) {
+    if (!isOutboundMessage(message.body)) {
+      message.ack()
+      continue
+    }
+    const list = groups.get(message.body.workbookId) ?? []
+    list.push(message)
+    groups.set(message.body.workbookId, list)
+  }
+  lastBatchLoads = []
+  /** After a 429: Basecamp's Retry-After, as a time; the rest of the batch is retried then, without a request. */
+  let heldUntil = 0
+  for (const [workbookId, messages] of groups) {
+    const session = new WorkbookBatch(env, workbookId)
+    /** `task + actor` already brought to Basecamp in this batch. */
+    const sent = new Set<string>()
+    for (const message of messages) {
+      const key = `${message.body.taskUid}\u0000${message.body.actorUserId}`
+      let outcome: Outcome
+      const held = heldUntil - deps.now()
+      if (sent.has(key)) {
+        outcome = ACK
+      } else if (held > 0 && message.attempts < MAX_ATTEMPTS) {
+        // Honour Retry-After without waiting in the Worker: the queue delivers it again then.
+        // (A message at its last attempt still gets that attempt.)
+        outcome = { kind: 'retry', delaySeconds: Math.max(1, Math.ceil(held / 1000)), code: 'rate_limited' }
+      } else {
+        try {
+          outcome = await processOutbound(env, deps, message.body, session)
+        } catch (error) {
+          session.discard()
+          outcome = transient(error, message.attempts)
+        }
+        if (outcome.kind === 'ack') sent.add(key)
+        if (outcome.kind === 'retry' && outcome.code === 'rate_limited') heldUntil = deps.now() + outcome.delaySeconds * 1000
+      }
+      await settle(env, deps, message, outcome)
+    }
+    lastBatchLoads.push({ workbookId, messages: messages.length, loads: session.loads })
+  }
+}
+
+/** One message's own outcome: ack, retry with its own attempts, or the dead-letter queue (§9.2.8). */
+async function settle(env: Env, deps: SyncDeps, message: Message<BcOutboundMessage>, outcome: Outcome): Promise<void> {
+  if (outcome.kind === 'ack') {
+    message.ack()
+    return
+  }
+  if (message.attempts >= MAX_ATTEMPTS) {
+    await deadLetter(env, deps, message, outcome.code)
+    message.ack()
+    return
+  }
+  message.retry({ delaySeconds: outcome.delaySeconds })
 }
 
 /** What to do with an error nobody handled: a retry later, with the server's delay when it gave one. */
@@ -148,8 +237,9 @@ async function deadLetter(env: Env, deps: SyncDeps, message: Message<BcOutboundM
  * row before it syncs, the full state goes out with the token of the message
  * being processed (S2).
  */
-export async function processOutbound(env: Env, deps: SyncDeps, body: unknown): Promise<Outcome> {
+export async function processOutbound(env: Env, deps: SyncDeps, body: unknown, session?: WorkbookBatch): Promise<Outcome> {
   if (!isOutboundMessage(body)) return ACK
+  const batch = session ?? new WorkbookBatch(env, body.workbookId)
   const db = env.DB
   const uid = body.taskUid
   if ((await workbookIdOfTask(db, uid)) !== body.workbookId) return ACK
@@ -170,7 +260,7 @@ export async function processOutbound(env: Env, deps: SyncDeps, body: unknown): 
   const leaseId = crypto.randomUUID()
   if (!(await acquireLease(db, uid, leaseId, deps.now()))) return { kind: 'retry', delaySeconds: BUSY_DELAY_SECONDS, code: 'busy' }
   try {
-    const state = await loadWorkbookState(env, wb)
+    const state = await batch.stateFor(wb, uid)
     if (!state) return { kind: 'retry', delaySeconds: backoffSeconds(1), code: 'snapshot_unavailable' }
     try {
       return await withUserToken(ctx, body.actorUserId, (token) => forActor(env, deps, ctx, state, body, token))

@@ -35,7 +35,22 @@ export {
   parseRetryAfter,
   type RetryPolicy,
 } from './http'
-export { createTokenBucketLimiter, DEFAULT_RATE_PER_SECOND, type RateLimiter, type TokenBucketOptions } from './limiter'
+export {
+  BASECAMP_DOCUMENTED_LIMIT,
+  BASECAMP_SAFE_LIMIT,
+  createBasecampLimiter,
+  createTokenBucketLimiter,
+  createWindowLimiter,
+  DEFAULT_RATE_PER_SECOND,
+  defaultSleep,
+  newWindowState,
+  pauseWindow,
+  reserveSlot,
+  type RateLimiter,
+  type TokenBucketOptions,
+  type WindowLimiterOptions,
+  type WindowState,
+} from './limiter'
 export { NormaliseError, normaliseSubtask, normaliseTodo } from './normalise'
 export { type Page, type Paged, parseNextLink, parseTotalCount } from './pagination'
 export * from './errors'

@@ -803,9 +803,10 @@ P21. **Accepted files.** Any media type is accepted (no allow-list); the type
 ## Phase 7: templates, internal API, backups, load test
 
 Code: `src/phase7/`, `migrations/0005_phase7.sql`, contract `packages/shared/src/api-phase7.ts`.
-Tests: `test/phase7/` (15). Load test: `test/load/api-load.load.ts` (docs/load-test.md).
+Tests: `test/phase7/` (23). Load test: `test/load/api-load.load.ts` (docs/load-test.md).
 
-T1. **A template is a frozen copy** of the source workbook's latest saved
+T1. **Decided 2026-11-10 (owner): a template is a frozen copy taken at
+    creation time** — the behaviour already built. Original note: **A template is a frozen copy** of the source workbook's latest saved
     snapshot (R2 `templates/{id}/snapshot.json`, create-only), not a live link
     to the workbook. Spec §7.1 says «أي ملف يُحوَّل إلى قالب»; whether a later
     edit of the source should update the template (or offer «تحديث القالب»)
@@ -868,11 +869,22 @@ B1. **Official D1 backup mechanism**: Cloudflare offers D1 Time Travel and
     snapshot. Restore is a documented manual procedure (docs/backups.md), no
     script. Which mechanism is authoritative is a product decision.
 
-B2. **Retention**: nothing is ever deleted, so the bucket grows daily. A
-    lifecycle rule on R2 (or a pruning job) needs the owner's approval.
+B2. **Decided 2026-11-10 (owner): retention.** Keep the newest 30 complete
+    runs plus the first complete run of each of the last 12 calendar months;
+    both numbers are settings (`PUT /api/admin/backups/retention`, KV
+    `settings:backup-retention`, shown and edited on «صحة المزامنة»). Built in
+    `src/phase7/retention.ts`, applied at the end of a run that succeeded,
+    after its manifest is read back: an incomplete run (failed, running, no
+    manifest) is never a keeper; only the BACKUPS bucket is touched, only
+    under `d1/{pruned run}/` and snapshot copies no remaining run lists; each
+    removal is written to `audit_log` (`backup.prune`,
+    `backup.prune.snapshot_copies`) before it happens, and the run's row keeps
+    `pruned_at` / `pruned_objects` / `pruned_by_run` (migration 0006). No D1
+    row is ever deleted. Tests: `test/phase7/retention.test.ts`.
+    Original note: nothing is ever deleted, so the bucket grows daily.
 
-B3. **Where backups live**: same Cloudflare account, bucket
-    `naf-sheets-backups`. Another account/region is a product decision.
+B3. **Decided 2026-11-10 (owner): backups stay in the same Cloudflare
+    account**, bucket `naf-sheets-backups`.
 
 B4. **Not backed up**: the ATTACHMENTS bucket and KV (sessions, settings).
     §14 names R2 snapshots and D1 only.
@@ -881,20 +893,97 @@ B5. **Snapshots copied**: the latest version of each live workbook and each
     live template, daily; older versions stay in SNAPSHOTS (never deleted) and
     are listed in the run's inventory.
 
+B6. **Reading of the retention rule** (to confirm): "the last 30 daily runs"
+    is read as the 30 newest *complete* runs (one a day under the daily cron;
+    an extra run on the same day takes a slot); calendar months are UTC (a
+    run at 00:23 UTC has the same date in Riyadh). A run still `running` more
+    than 24 hours before the newest one is treated as dead and its partial
+    files removed; a `skipped` run wrote nothing and is left alone.
+
+B7. **Snapshot copies made before the per-run lists existed.** Since this
+    change each run writes `d1/{run}/snapshot-copies.ndjson` (the copies it
+    relies on), and a copy is removed only when no remaining run lists it.
+    While any complete run without such a list remains, no snapshot copy is
+    removed at all (`snapshotCopies: 'kept_legacy_runs'`). Copies made only
+    by those older runs are listed by no run, so they are never removed
+    automatically; removing them would be a separate, approved cleanup.
+
 L1. **Load test scope** (docs/load-test.md): local Miniflare and an
     in-process fake Basecamp; not Cloudflare, not Basecamp. Timings inside
     workerd come from `Date.now()`, which advances at I/O only. The spec gives
     no target numbers for phase 7, so nothing is judged pass/fail on speed;
     the assertions are correctness (every task created once, all `synced`).
 
-L2. **Each outbound message loads the whole workbook** (snapshot from R2 +
-    every row read) to build one task: measured 115 ms per task locally for a
-    3,500-row workbook against 34 ms for a 100-row one (docs/load-test.md
-    §2.3). Not changed here (no tuning toward the numbers). Batch a
-    workbook's messages in one step? The real ceiling stays Basecamp's
-    4 requests/second: about 17.5 min for a first link of 3,500 tasks.
+L2. **Done 2026-11-10 (owner request): one workbook load per batch.** The
+    `bc-outbound` consumer groups a batch by workbook, loads its state once
+    and, before each task, re-reads only what may have changed since
+    (`refreshForTask`: the snapshot when a save moved it on, the sheets and
+    mappings, the task's family rows and their assignees). Per message,
+    unchanged: its task lease, its actor's token, its own retry / dead
+    letter. A repeat of the same task by the same actor in one batch is
+    acknowledged without a second step (the step sends the row as it is).
+    `max_batch_size` 10 → 50. The names directory (people caches) is read
+    once per batch. Before/after in docs/load-test.md. Original note: each
+    outbound message loaded the whole workbook (115 ms per task locally for a
+    3,500-row workbook against 34 ms for a 100-row one).
 
-L3. **The first reconciliation after linking ten large workbooks** read 7,701
-    times (no stored ETag yet): about 32 min at 4 requests/second, longer than
-    the 15-minute cron. Is an overlap guard (or spreading lists over runs)
-    wanted? A quiet run read 721 times (70/70 lists answered 304).
+L3. **Done 2026-11-10 (owner request).** The cron run holds a lease
+    (`sync_jobs`, migration 0006: a run that finds it held does nothing) and a
+    12-minute budget: it stops between two lists and stores where; the next
+    run continues from there. A to-do is read one by one only when its list
+    entry shows a change: `updated_at` or a counter moved *and* the entry is
+    not already what the row holds (`confirmedByList`, for synced to-dos
+    without subtasks). That removed the reads the old first run spent on
+    every completed to-do (a completion answers 204 without `updated_at`).
+    Rate limit: 45 requests in any 10 s, platform-wide (`BasecampRateGate`).
+    Before/after in docs/load-test.md. Original note: the first
+    reconciliation after linking ten large workbooks read 7,701 times (about
+    32 min at 4 requests/second, longer than the 15-minute cron).
+
+L4. **Live test: list entries carry every field of a single to-do.**
+    `confirmedByList` trusts the entry of `GET /todolists/{id}/todos.json`
+    (todos.md's "Get to-dos" example shows description, assignees,
+    completion subscribers, counters, steps). If real entries lacked a field,
+    a change to it alone would wait for the next change that moves the
+    to-do's own content. A to-do with subtasks is always read when its
+    `updated_at` moves, because a subtask's change may show only there.
+
+L5. **No ETag is stored at linking.** The wizard reads a list's to-dos only
+    for `match_by_title`, with the linking person's token (the ETag cache is
+    scoped to the service token: entries differ by token, e.g. redacted
+    emails), and the creation of the rows that follows changes every list
+    and so every ETag. What the first reconciliation needs from linking and
+    creation is the per-row state (`updated_at` from each create, subtask
+    and comment counters), which is stored; the list pages themselves are
+    read once (700 pages for 10 × 7 × 500 at the fake's 50 per page), then
+    answer 304. Store the wizard's reads anyway?
+
+L6. **The rate gate's window is in memory.** `BasecampRateGate` keeps the
+    last 45 grants in memory; it is evicted only after being idle (by then
+    the 10 s window is empty), but a reset while requests flow (a deploy)
+    starts an empty window, so one extra burst of up to 45 is possible at that
+    moment. Keep it in the object's storage instead (one write per request)?
+    If the gate does not answer, an isolate falls back to its own window.
+
+L7. **Queue concurrency.** `max_batch_size` is 50; `max_concurrency` is left
+    at Cloudflare's default. Concurrent consumer invocations share the rate
+    gate, so they cannot exceed the limit together, but they do compete for
+    it. Limit `bc-outbound` to one invocation at a time?
+
+## Dashboard and appearance (src/dashboard)
+
+D1. **What the figures count.** Completion counts to-dos (level 0) still active in Basecamp, like the files list (#6). Overdue, this week, the timeline and the per-assignee counts count every row (to-dos and subtasks); a to-do whose assignees are the automatic union of its subtasks' (§8.1, `assign_mode = auto` with subtasks) is not counted again for those people. Names in the assignee cell that match nobody are counted under their text (`unmatched`). Rows deleted in Basecamp are left out. Confirm.
+
+D2. **"This week"** is Sunday to Saturday in Asia/Riyadh time (`dayOf` of the internal API, I4); «مستحقة هذا الأسبوع» is from today to Saturday, not completed. The timeline groups due dates by the same weeks and shows at most 16 around this week.
+
+D3. **One range per link.** A figure over rows that are not adjacent (a person's tasks, a group of a widget) links to the bounding range of those cells in the sheet holding most of them, so rows between them are selected too. A multi-range deep link would need the editor's `?range=` to take a list.
+
+D4. **Widgets.** `count` counts non-empty cells (text included); `sum`, `average`, `min`, `max` read numbers only (numeric text such as «1,250» or Arabic-Indic digits counts as a number). A formula cell counts with its stored computed value (`v`); one with none yet is reported as uncomputed, never evaluated on the server. Groups keep first-appearance order, at most 50. A range is refused above 200,000 cells. At most 40 widgets per workbook. A removed widget keeps its row (`removed_at`); nothing is deleted. Widgets are not copied into templates.
+
+D5. **Activity** shows the 20 newest `sync_log` rows of the workbook, leaving out webhook deliveries the platform ignored (`status = 'ignored'`).
+
+D6. **Cost.** GET …/dashboard reads the latest snapshot and every row on each call (the dashboard polls every 30 s while shown, and after each commit). Fine at the platform's size (docs/load-test.md); a cache keyed by snapshot version if it grows.
+
+D7. **Migration number.** `0007_dashboard.sql` was the next free number on 2026-11-10; if another branch adds a 0007 the later one must be renumbered before merging.
+
+D8. **Appearance** is stored in KV `SETTINGS` under `settings:appearance` (palette overrides only, `#rrggbb`); every change is in `audit_log` (`settings.appearance`). Reading it needs a signed-in member; changing it needs a platform admin.

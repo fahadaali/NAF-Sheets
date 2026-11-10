@@ -7,9 +7,18 @@
 // `onUnauthorized` with the login URL; the app sends the browser there.
 
 import type {
+  AppearancePalette,
+  AppearanceResponse,
+  DashboardResponse,
+  DashboardWidgetConfig,
+  WidgetListResponse,
+  WidgetResponse,
+  WidgetResult,
   ApiTokenListResponse,
   ApiTokenSummary,
   ArchiveTemplateResponse,
+  BackupRetention,
+  BackupRetentionResponse,
   BackupRunsResponse,
   CreateApiTokenResponse,
   CreateTemplateRequest,
@@ -300,12 +309,36 @@ export function createApiClient(options: ApiClientOptions = {}) {
     getSyncHealth: (signal?: AbortSignal) => request<SyncHealthResponse>('GET', '/api/admin/sync-health', undefined, signal),
     /** GET /api/admin/backups (admins, §14). */
     getBackups: (signal?: AbortSignal) => request<BackupRunsResponse>('GET', '/api/admin/backups', undefined, signal),
+    /** PUT /api/admin/backups/retention (admins): applied after the next successful backup. */
+    putBackupRetention: (body: BackupRetention) => request<BackupRetentionResponse>('PUT', '/api/admin/backups/retention', body),
     /** GET /api/admin/api-tokens (admins, §13). */
     listApiTokens: (signal?: AbortSignal) => request<ApiTokenListResponse>('GET', '/api/admin/api-tokens', undefined, signal),
     /** POST /api/admin/api-tokens → 201; the secret is in this answer only. */
     createApiToken: (name: string) => request<CreateApiTokenResponse>('POST', '/api/admin/api-tokens', { name }),
     /** POST /api/admin/api-tokens/:id/revoke */
     revokeApiToken: (id: string) => request<ApiTokenSummary>('POST', `/api/admin/api-tokens/${encodeURIComponent(id)}/revoke`),
+
+    // --- Dashboard and appearance: packages/shared/src/api-dashboard.ts ---
+
+    /** GET /api/workbooks/:id/dashboard — figures computed from the latest committed snapshot. */
+    getDashboard: (id: string, signal?: AbortSignal) => request<DashboardResponse>('GET', `${workbookPath(id)}/dashboard`, undefined, signal),
+    /** POST /api/workbooks/:id/dashboard/preview — a configuration computed, not stored. */
+    previewWidget: (id: string, config: DashboardWidgetConfig, signal?: AbortSignal) =>
+      request<WidgetResult>('POST', `${workbookPath(id)}/dashboard/preview`, config, signal),
+    /** POST /api/workbooks/:id/dashboard/widgets → 201 (owner, editors, admins). */
+    createWidget: (id: string, config: DashboardWidgetConfig) => request<WidgetResponse>('POST', `${workbookPath(id)}/dashboard/widgets`, config),
+    /** PUT /api/workbooks/:id/dashboard/widgets/:widgetId */
+    updateWidget: (id: string, widgetId: string, config: DashboardWidgetConfig) =>
+      request<WidgetResponse>('PUT', `${workbookPath(id)}/dashboard/widgets/${encodeURIComponent(widgetId)}`, config),
+    /** POST …/widgets/:widgetId/remove — after the person confirmed; nothing is deleted on the server. */
+    removeWidget: (id: string, widgetId: string) =>
+      request<WidgetListResponse>('POST', `${workbookPath(id)}/dashboard/widgets/${encodeURIComponent(widgetId)}/remove`, { confirmed: true }),
+    /** PUT …/widgets/order — every live widget id once. */
+    reorderWidgets: (id: string, ids: string[]) => request<WidgetListResponse>('PUT', `${workbookPath(id)}/dashboard/widgets/order`, { ids }),
+    /** GET /api/appearance — palette overrides (everyone signed in). */
+    getAppearance: (signal?: AbortSignal) => request<AppearanceResponse>('GET', '/api/appearance', undefined, signal),
+    /** PUT /api/admin/appearance (admins); `{}` restores the defaults. */
+    putAppearance: (palette: AppearancePalette) => request<AppearanceResponse>('PUT', '/api/admin/appearance', { palette }),
   }
 }
 

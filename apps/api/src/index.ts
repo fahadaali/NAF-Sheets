@@ -4,6 +4,7 @@ import { createApp } from './app'
 import { handleQueue, handleScheduled } from './background'
 import type { QueueMessageBody } from './background'
 import { registerBasecampLinkRoutes } from './basecamp-link'
+import { registerDashboardRoutes } from './dashboard'
 import type { Env } from './env'
 import { registerGoogleImportRoutes } from './google-import'
 import { registerPhase5Routes } from './phase5'
@@ -19,6 +20,8 @@ registerBasecampLinkRoutes(app)
 registerGoogleImportRoutes(app)
 registerSyncRoutes(app)
 registerPhase5Routes(app)
+// The workbook dashboard and the appearance palette (src/dashboard). Reads only, no remote call.
+registerDashboardRoutes(app)
 // After each room commit, changed task rows go to Basecamp with the token of
 // the person who changed them (spec §3, §9.2; src/sync/room-commit.ts).
 setOutboundDetection(detectAfterRoomCommit)
@@ -30,3 +33,4 @@ export default {
 } satisfies ExportedHandler<Env, QueueMessageBody>
 
 export { WorkbookRoom } from './room'
+export { BasecampRateGate } from './basecamp-rate-gate'

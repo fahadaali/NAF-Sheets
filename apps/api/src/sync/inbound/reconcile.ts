@@ -3,6 +3,12 @@
 // recreating the project's webhook. Refreshes bc_people_cache and
 // bc_account_people_cache, and queues again the rows whose outbound message
 // may have been lost (still `pending` after 10 minutes).
+//
+// The cron run (docs/load-test.md, finding L3) holds a lease (`sync_jobs`
+// row `reconciliation`), so two runs never overlap, and has a time budget
+// (12 minutes, under the 15-minute interval): it stops between two lists when
+// the budget is spent and stores where it stopped; the next run continues
+// from there to the end, then starts over from the first workbook.
 
 import { AccountInactiveError } from '@naf-sheets/basecamp'
 import { LinkFailure, refreshAccountPeople, withServiceToken } from '../../basecamp-link'
@@ -29,11 +35,83 @@ export interface ReconcileReport {
   lists: number
   notModified: number
   requeued: number
-  stopped: 'not_configured' | 'account_inactive' | null
+  /** To-dos read one by one because the list showed them changed. */
+  todosRead: number
+  /** To-dos whose list entry moved `updated_at` but held nothing new (no read; see `reconcileList`). */
+  todosConfirmedFromList: number
+  /** Stopped at the time budget; the next run continues where this one stopped. */
+  continued: boolean
+  /** Where this run started, when it continued an earlier one. */
+  resumedFrom: { workbookId: string; sheetId: string | null } | null
+  stopped: 'not_configured' | 'account_inactive' | 'already_running' | null
 }
 
-export async function runReconciliationWith(env: Env, deps: SyncDeps): Promise<ReconcileReport> {
-  const report: ReconcileReport = { workbooks: 0, lists: 0, notModified: 0, requeued: 0, stopped: null }
+export const RECONCILE_JOB = 'reconciliation'
+/** Under the 15-minute cron interval, with room for the run's last list and its bookkeeping. */
+export const RECONCILE_BUDGET_MS = 12 * 60_000
+/** The lease outlives the budget by this much: a list that runs past the budget is still covered. */
+const LEASE_MARGIN_MS = 3 * 60_000
+
+export interface ReconcileOptions {
+  /** Default 12 minutes. */
+  budgetMs?: number
+  /** The clock the budget is measured on (default `deps.now`; the load test passes the rate limiter's clock). */
+  clock?: () => number
+}
+
+/** Shared by the lists of one run: when to stop, and how much was read. */
+export interface RunBudget {
+  deadline: number
+  clock: () => number
+  listsDone: number
+  todosRead: number
+  todosConfirmedFromList: number
+}
+
+type Cursor = { workbookId: string; sheetId: string | null }
+
+async function acquireJob(db: D1Database, leaseId: string, nowMs: number, untilMs: number): Promise<{ acquired: false } | { acquired: true; cursor: Cursor | null }> {
+  const now = new Date(nowMs).toISOString()
+  await db.prepare(`INSERT INTO sync_jobs (name, updated_at) VALUES (?1, ?2) ON CONFLICT (name) DO NOTHING`).bind(RECONCILE_JOB, now).run()
+  const taken = await db
+    .prepare(
+      `UPDATE sync_jobs SET lease_id = ?2, lease_until = ?3, started_at = ?4, updated_at = ?4
+       WHERE name = ?1 AND (lease_id IS NULL OR lease_until IS NULL OR lease_until < ?4)`,
+    )
+    .bind(RECONCILE_JOB, leaseId, new Date(untilMs).toISOString(), now)
+    .run()
+  if (taken.meta.changes !== 1) return { acquired: false }
+  const row = await db.prepare(`SELECT cursor_json FROM sync_jobs WHERE name = ?1`).bind(RECONCILE_JOB).first<{ cursor_json: string | null }>()
+  let cursor: Cursor | null = null
+  try {
+    const parsed = row?.cursor_json ? (JSON.parse(row.cursor_json) as Partial<Cursor>) : null
+    if (parsed && typeof parsed.workbookId === 'string') cursor = { workbookId: parsed.workbookId, sheetId: typeof parsed.sheetId === 'string' ? parsed.sheetId : null }
+  } catch {
+    // An unreadable cursor: start from the first workbook.
+  }
+  return { acquired: true, cursor }
+}
+
+async function releaseJob(db: D1Database, leaseId: string, cursor: Cursor | null, nowMs: number): Promise<void> {
+  const now = new Date(nowMs).toISOString()
+  await db
+    .prepare(`UPDATE sync_jobs SET lease_id = NULL, lease_until = NULL, cursor_json = ?3, finished_at = ?4, updated_at = ?4 WHERE name = ?1 AND lease_id = ?2`)
+    .bind(RECONCILE_JOB, leaseId, cursor ? JSON.stringify(cursor) : null, now)
+    .run()
+}
+
+export async function runReconciliationWith(env: Env, deps: SyncDeps, options: ReconcileOptions = {}): Promise<ReconcileReport> {
+  const report: ReconcileReport = {
+    workbooks: 0,
+    lists: 0,
+    notModified: 0,
+    requeued: 0,
+    todosRead: 0,
+    todosConfirmedFromList: 0,
+    continued: false,
+    resumedFrom: null,
+    stopped: null,
+  }
   let ctx: LinkContext
   try {
     ctx = syncContext(env, deps)
@@ -42,32 +120,67 @@ export async function runReconciliationWith(env: Env, deps: SyncDeps): Promise<R
     throw error
   }
   if (await accountInactive(env.DB, ctx.config.accountId)) return { ...report, stopped: 'account_inactive' }
-  try {
-    await refreshAccountPeople(ctx)
-  } catch (error) {
-    if (error instanceof AccountInactiveError) {
-      await markAccountInactive(env.DB, ctx.config.accountId, new Date(deps.now()).toISOString())
-      return { ...report, stopped: 'account_inactive' }
-    }
-    console.warn(`sync: account people refresh failed (${error instanceof Error ? error.name : 'unknown'})`)
+
+  const clock = options.clock ?? deps.now
+  const budgetMs = options.budgetMs ?? RECONCILE_BUDGET_MS
+  const started = clock()
+  const leaseId = crypto.randomUUID()
+  // The lease is kept on the real clock (deps.now), like every other lease.
+  const acquired = await acquireJob(env.DB, leaseId, deps.now(), deps.now() + budgetMs + LEASE_MARGIN_MS)
+  if (!acquired.acquired) {
+    console.warn('sync: reconciliation skipped, the previous run still holds the lease')
+    return { ...report, stopped: 'already_running' }
   }
-  for (const wb of await linkedWorkbooks(env.DB)) {
+  const resume = acquired.cursor
+  report.resumedFrom = resume
+  let cursor: Cursor | null = null
+  const budget: RunBudget = { deadline: started + budgetMs, clock, listsDone: 0, todosRead: 0, todosConfirmedFromList: 0 }
+  try {
     try {
-      const one = await reconcileWorkbook(env, deps, ctx, wb, { force: false })
-      report.workbooks += 1
-      report.lists += one.lists
-      report.notModified += one.notModified
-      report.requeued += one.requeued
+      await refreshAccountPeople(ctx)
     } catch (error) {
       if (error instanceof AccountInactiveError) {
         await markAccountInactive(env.DB, ctx.config.accountId, new Date(deps.now()).toISOString())
         return { ...report, stopped: 'account_inactive' }
       }
-      // One workbook's failure never stops the others.
-      console.error(`sync: reconciliation of workbook ${wb.id} failed (${error instanceof Error ? error.name : 'unknown'})`)
+      console.warn(`sync: account people refresh failed (${error instanceof Error ? error.name : 'unknown'})`)
     }
+    let workbooks = await linkedWorkbooks(env.DB)
+    // Continue where the last run stopped (workbooks are ordered by id).
+    if (resume) workbooks = workbooks.filter((wb) => wb.id >= resume.workbookId)
+    for (const wb of workbooks) {
+      // Always some progress: the budget is checked once at least one list was done.
+      if (budget.listsDone > 0 && budget.clock() >= budget.deadline) {
+        cursor = { workbookId: wb.id, sheetId: null }
+        break
+      }
+      try {
+        const fromSheetId = resume && resume.workbookId === wb.id ? resume.sheetId : null
+        const one = await reconcileWorkbook(env, deps, ctx, wb, { force: false, budget, fromSheetId })
+        report.workbooks += 1
+        report.lists += one.lists
+        report.notModified += one.notModified
+        report.requeued += one.requeued
+        if (one.stoppedAtSheetId !== null) {
+          cursor = { workbookId: wb.id, sheetId: one.stoppedAtSheetId }
+          break
+        }
+      } catch (error) {
+        if (error instanceof AccountInactiveError) {
+          await markAccountInactive(env.DB, ctx.config.accountId, new Date(deps.now()).toISOString())
+          return { ...report, stopped: 'account_inactive' }
+        }
+        // One workbook's failure never stops the others.
+        console.error(`sync: reconciliation of workbook ${wb.id} failed (${error instanceof Error ? error.name : 'unknown'})`)
+      }
+    }
+    report.continued = cursor !== null
+    return report
+  } finally {
+    report.todosRead = budget.todosRead
+    report.todosConfirmedFromList = budget.todosConfirmedFromList
+    await releaseJob(env.DB, leaseId, cursor, deps.now())
   }
-  return report
 }
 
 export async function reconcileWorkbook(
@@ -75,9 +188,9 @@ export async function reconcileWorkbook(
   deps: SyncDeps,
   ctx: LinkContext,
   wb: WorkbookSyncRow,
-  options: { force: boolean },
-): Promise<{ lists: number; notModified: number; requeued: number; webhook: WebhookStatus | null }> {
-  const out = { lists: 0, notModified: 0, requeued: 0, webhook: null as WebhookStatus | null }
+  options: { force: boolean; budget?: RunBudget; fromSheetId?: string | null },
+): Promise<{ lists: number; notModified: number; requeued: number; webhook: WebhookStatus | null; stoppedAtSheetId: string | null }> {
+  const out = { lists: 0, notModified: 0, requeued: 0, webhook: null as WebhookStatus | null, stoppedAtSheetId: null as string | null }
   const projectId = wb.bc_project_id
   if (projectId === null) return out
   out.webhook = await ensureProjectWebhook(env, { workbookId: wb.id, bcProjectId: projectId }, deps, ctx)
@@ -93,15 +206,26 @@ export async function reconcileWorkbook(
       }
       const state = await loadWorkbookState(env, wb)
       if (!state) return
-      const run: InboundRun = { env, deps, ctx, token, client, state, now: () => new Date(deps.now()).toISOString(), namesRefreshed: true }
-      for (const sheet of syncedSheets(state)) {
+      const run: InboundRun = { env, deps, ctx, token, client, state, now: () => new Date(deps.now()).toISOString(), namesRefreshed: true, budget: options.budget }
+      let sheets = syncedSheets(state)
+      // Continuing an earlier run: from the list it stopped before (all of them if that list is gone).
+      const from = options.fromSheetId ? sheets.findIndex((s) => s.id === options.fromSheetId) : -1
+      if (from > 0) sheets = sheets.slice(from)
+      for (const sheet of sheets) {
+        const budget = options.budget
+        if (budget && budget.listsDone > 0 && budget.clock() >= budget.deadline) {
+          out.stoppedAtSheetId = sheet.id
+          break
+        }
         try {
-          const result = await reconcileList(run, sheet, options)
+          const result = await reconcileList(run, sheet, { force: options.force })
           out.lists += 1
           if (result === 'not_modified') out.notModified += 1
         } catch (error) {
           if (error instanceof TaskBusy) continue
           throw error
+        } finally {
+          if (budget) budget.listsDone += 1
         }
       }
     })

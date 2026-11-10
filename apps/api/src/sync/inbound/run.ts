@@ -24,6 +24,7 @@ import { acquireLease, assigneeStatements, getTask, releaseLease, runBatches, sy
 import type { SheetRow, TaskRow } from '../store'
 import { BLOCKING_ISSUES, syncTask } from '../task-sync'
 import type { StepResult } from '../task-sync'
+import type { RunBudget } from './reconcile'
 
 export interface InboundRun {
   env: Env
@@ -36,6 +37,8 @@ export interface InboundRun {
   now: () => string
   /** People caches are refreshed at most once per run. */
   namesRefreshed: boolean
+  /** The cron run's budget and counters (reconciliation only). */
+  budget?: RunBudget
 }
 
 /** Another step holds the task: the webhook message is retried, reconciliation moves on. */

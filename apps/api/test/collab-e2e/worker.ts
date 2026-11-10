@@ -19,6 +19,8 @@ import { setOutboundDetection } from '../../src/room/outbound-seam'
 import { detectAfterRoomCommit } from '../../src/sync/room-commit'
 
 export { WorkbookRoom } from '../../src/room'
+// Bound in wrangler.toml (the Basecamp rate gate): every bound class must be exported.
+export { BasecampRateGate } from '../../src/basecamp-rate-gate'
 
 const testAuth: AuthMiddleware = async (c, next) => {
   const userId = c.req.header('x-test-user') ?? new URL(c.req.url).searchParams.get('test-user')
