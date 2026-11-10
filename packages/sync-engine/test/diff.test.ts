@@ -1,0 +1,367 @@
+import { describe, expect, it } from 'vitest'
+import type { OutboundAction } from '@naf-sheets/shared'
+import { baseFromRemote, diffTask, inboundCreateRow, lastWriter, MANAGED_BLOCK_TITLE, splitDescription } from '../src'
+import {
+  AHMED,
+  BADR,
+  DANA,
+  directory,
+  external,
+  FAHAD,
+  follower,
+  HUMAN_NOTES,
+  JUMANA,
+  LIST,
+  localSubtask,
+  localTodo,
+  OTHER_LIST,
+  person,
+  remoteSubtask,
+  remoteTodo,
+  SARA,
+  SUBTASK_ID,
+  subtaskCtx,
+  T0,
+  T1,
+  T2,
+  T3,
+  TODO_ID,
+  todoCtx,
+} from './fixtures'
+
+const remote0 = remoteTodo()
+const base0 = baseFromRemote('uid-todo', remote0)
+const sub0 = remoteSubtask()
+const subBase0 = baseFromRemote('uid-sub', sub0)
+
+function only<T extends OutboundAction['type']>(actions: OutboundAction[], type: T): Extract<OutboundAction, { type: T }> {
+  expect(actions.map((a) => a.type)).toEqual([type])
+  return actions[0] as Extract<OutboundAction, { type: T }>
+}
+
+describe('lastWriter', () => {
+  it('compares instants, not strings, and gives ties and unknowns to Basecamp', () => {
+    expect(lastWriter('2026-11-10T12:00:00+03:00', '2026-11-10T08:30:00Z')).toBe('local')
+    expect(lastWriter('2026-11-10T11:00:00+03:00', '2026-11-10T08:30:00Z')).toBe('remote')
+    expect(lastWriter(T2, T2)).toBe('remote')
+    expect(lastWriter(null, T0)).toBe('remote')
+    expect(lastWriter('not a date', T0)).toBe('remote')
+  })
+})
+
+describe('diffTask — steady state and echo', () => {
+  it('a row in sync with its base and record produces nothing', () => {
+    expect(diffTask(localTodo(), base0, remote0, todoCtx())).toEqual({
+      outbound: [],
+      inbound: [],
+      conflicts: [],
+      assignMode: null,
+      warnings: [],
+    })
+  })
+
+  it('a record equal to the base but with a newer updated_at is our echo: no inbound action', () => {
+    const r = diffTask(localTodo({ localChangedAt: T0 }), base0, { ...remote0, updatedAt: T3 }, todoCtx())
+    expect(r.inbound).toEqual([])
+    expect(r.outbound).toEqual([])
+  })
+})
+
+describe('diffTask — create and idempotency', () => {
+  it('creates a to-do with the complete state', () => {
+    const local = localTodo({ assignees: [person(AHMED), external(SARA)], position: 4 })
+    const r = diffTask(local, null, null, todoCtx())
+    const create = only(r.outbound, 'create_todo')
+    expect(create.listId).toBe(LIST)
+    expect(create.position).toBe(4)
+    expect(create.write).toEqual({
+      content: 'إطلاق الحملة',
+      descriptionHtml: `${HUMAN_NOTES}<hr><div><strong>${MANAGED_BLOCK_TITLE}</strong><br>مسؤولون خارجيون: سارة المطيري (وكالة الإعلام)</div>`,
+      assigneeIds: [AHMED],
+      completionSubscriberIds: [],
+      dueOn: '2026-12-01',
+      startsOn: '2026-11-15',
+      notify: true,
+    })
+  })
+
+  it('never creates when a Basecamp id is already saved', () => {
+    const r = diffTask(localTodo(), null, null, todoCtx({ bcId: TODO_ID }))
+    expect(r.outbound).toEqual([])
+    expect(r.warnings.map((w) => w.code)).toEqual(['remote_required'])
+  })
+
+  it('never creates once a base or a record exists', () => {
+    const fromBase = diffTask(localTodo({ dueOn: '2027-01-01' }), base0, remote0, todoCtx())
+    expect(fromBase.outbound.map((a) => a.type)).toEqual(['update_todo'])
+    const fromRemote = diffTask(localTodo(), null, remote0, todoCtx())
+    expect(fromRemote.outbound.some((a) => a.type === 'create_todo')).toBe(false)
+  })
+
+  it('does nothing for a row of a local (unsynced) sheet', () => {
+    expect(diffTask(localTodo(), null, null, todoCtx({ listId: null })).outbound).toEqual([])
+  })
+
+  it('creates a subtask under its synced to-do, or waits for it', () => {
+    const created = only(diffTask(localSubtask({ position: 2 }), null, null, subtaskCtx()).outbound, 'create_subtask')
+    expect(created).toEqual({
+      type: 'create_subtask',
+      uid: 'uid-sub',
+      parentTodoId: TODO_ID,
+      create: { title: 'تصميم الإعلان', dueOn: '2026-11-20', assigneeIds: [BADR] },
+      position: 2,
+    })
+    const waiting = diffTask(localSubtask(), null, null, subtaskCtx({ parentTodoId: null }))
+    expect(waiting.outbound).toEqual([])
+    expect(waiting.warnings.map((w) => w.code)).toEqual(['parent_not_synced'])
+  })
+})
+
+describe('diffTask — conflicts, field by field, last writer wins', () => {
+  it('both sides changed the title: the later local change wins and is reported', () => {
+    const r = diffTask(localTodo({ title: 'محلي', localChangedAt: T3 }), base0, remoteTodo({ content: 'بعيد', updatedAt: T2 }), todoCtx())
+    expect(only(r.outbound, 'update_todo').write.content).toBe('محلي')
+    expect(r.inbound).toEqual([])
+    expect(r.conflicts).toEqual([
+      { uid: 'uid-todo', field: 'title', localValue: 'محلي', remoteValue: 'بعيد', winner: 'local', localChangedAt: T3, remoteUpdatedAt: T2 },
+    ])
+  })
+
+  it('both sides changed the title: the later Basecamp change wins and is reported', () => {
+    const r = diffTask(localTodo({ title: 'محلي', localChangedAt: T1 }), base0, remoteTodo({ content: 'بعيد', updatedAt: T2 }), todoCtx())
+    expect(r.outbound).toEqual([])
+    expect(r.inbound).toEqual([{ type: 'update_row', uid: 'uid-todo', fields: { title: 'بعيد' } }])
+    expect(r.conflicts[0]?.winner).toBe('remote')
+  })
+
+  it('the conflict unit is the field: other fields merge from both sides', () => {
+    const r = diffTask(
+      localTodo({ dueOn: '2027-01-01', localChangedAt: T1 }),
+      base0,
+      remoteTodo({ content: 'عنوان من Basecamp', updatedAt: T2 }),
+      todoCtx(),
+    )
+    expect(r.conflicts).toEqual([])
+    expect(r.inbound).toEqual([{ type: 'update_row', uid: 'uid-todo', fields: { title: 'عنوان من Basecamp' } }])
+    const write = only(r.outbound, 'update_todo').write
+    expect(write.dueOn).toBe('2027-01-01')
+    expect(write.content).toBe('عنوان من Basecamp')
+  })
+
+  it('both sides made the same change: no conflict and nothing to do', () => {
+    const r = diffTask(localTodo({ dueOn: '2027-01-01' }), base0, remoteTodo({ dueOn: '2027-01-01', updatedAt: T2 }), todoCtx())
+    expect(r).toMatchObject({ outbound: [], inbound: [], conflicts: [] })
+  })
+
+  it('without a base (first link) every difference is a conflict', () => {
+    const r = diffTask(localTodo({ dueOn: '2027-01-01', localChangedAt: T3 }), null, remoteTodo({ updatedAt: T2 }), todoCtx())
+    expect(r.conflicts.map((c) => [c.field, c.winner])).toEqual([['dueOn', 'local']])
+    expect(only(r.outbound, 'update_todo').todoId).toBe(TODO_ID)
+  })
+})
+
+describe('diffTask — to-do updates are complete, completion and order are separate', () => {
+  it('a to-do update carries every field and keeps completion subscribers', () => {
+    const write = only(diffTask(localTodo({ title: 'جديد' }), base0, remote0, todoCtx()).outbound, 'update_todo').write
+    expect(Object.keys(write).sort()).toEqual(
+      ['assigneeIds', 'completionSubscriberIds', 'content', 'descriptionHtml', 'dueOn', 'notify', 'startsOn'].sort(),
+    )
+    expect(write.completionSubscriberIds).toEqual([DANA])
+    expect(write.assigneeIds).toEqual([AHMED])
+    expect(write.descriptionHtml).toBe(HUMAN_NOTES)
+  })
+
+  it('completion goes out as set_completion only', () => {
+    const r = diffTask(localTodo({ completed: true }), base0, remote0, todoCtx())
+    expect(r.outbound).toEqual([{ type: 'set_completion', uid: 'uid-todo', bcType: 'todo', bcId: TODO_ID, completed: true }])
+  })
+
+  it('completion in Basecamp comes in as a field update', () => {
+    const r = diffTask(localTodo(), base0, remoteTodo({ completed: true, updatedAt: T2 }), todoCtx())
+    expect(r.inbound).toEqual([{ type: 'update_row', uid: 'uid-todo', fields: { completed: true } }])
+  })
+
+  it('order goes out as a 1-based reposition; Basecamp order comes in as position', () => {
+    expect(diffTask(localTodo({ position: 3 }), base0, remote0, todoCtx()).outbound).toEqual([
+      { type: 'reposition', uid: 'uid-todo', bcType: 'todo', bcId: TODO_ID, position: 3 },
+    ])
+    expect(diffTask(localTodo(), base0, remoteTodo({ position: 2 }), todoCtx()).inbound).toEqual([
+      { type: 'update_row', uid: 'uid-todo', fields: { position: 2 } },
+    ])
+  })
+
+  it('order changed on both sides: latest wins, reported as a warning', () => {
+    const r = diffTask(localTodo({ position: 3, localChangedAt: T3 }), base0, remoteTodo({ position: 2, updatedAt: T2 }), todoCtx())
+    expect(r.outbound).toEqual([{ type: 'reposition', uid: 'uid-todo', bcType: 'todo', bcId: TODO_ID, position: 3 }])
+    expect(r.warnings.map((w) => w.code)).toEqual(['order_conflict'])
+  })
+
+  it('a row moved to another sheet moves the to-do to that list', () => {
+    const r = diffTask(localTodo({ position: 2 }), base0, remote0, todoCtx({ listId: OTHER_LIST, baseListId: LIST }))
+    expect(r.outbound).toEqual([{ type: 'reposition', uid: 'uid-todo', bcType: 'todo', bcId: TODO_ID, position: 2, listId: OTHER_LIST }])
+  })
+
+  it('a to-do moved to another list in Basecamp moves the row (§9.3.11)', () => {
+    const r = diffTask(localTodo(), base0, remoteTodo({ listId: OTHER_LIST, position: 5, updatedAt: T2 }), todoCtx())
+    expect(r.inbound).toEqual([{ type: 'move_row', uid: 'uid-todo', toListId: OTHER_LIST, position: 5 }])
+    expect(r.outbound).toEqual([])
+  })
+
+  it('without the fetched record a to-do update is held, completion still goes out', () => {
+    const r = diffTask(localTodo({ dueOn: '2027-01-01', completed: true }), base0, null, todoCtx())
+    expect(r.outbound).toEqual([{ type: 'set_completion', uid: 'uid-todo', bcType: 'todo', bcId: TODO_ID, completed: true }])
+    expect(r.warnings.map((w) => w.code)).toEqual(['remote_required'])
+  })
+
+  it('notify is set only when a person newly assigns someone', () => {
+    const added = only(diffTask(localTodo({ assignees: [person(AHMED), person(BADR)] }), base0, remote0, todoCtx()).outbound, 'update_todo')
+    expect(added.write.notify).toBe(true)
+    const removed = only(diffTask(localTodo({ assignees: [] }), base0, remote0, todoCtx()).outbound, 'update_todo')
+    expect(removed.write.notify).toBe(false)
+    expect(removed.write.assigneeIds).toEqual([])
+  })
+})
+
+describe('diffTask — subtasks', () => {
+  it('sends only the changed fields', () => {
+    const r = diffTask(localSubtask({ title: 'تصميم نهائي' }), subBase0, sub0, subtaskCtx())
+    expect(r.outbound).toEqual([{ type: 'update_subtask', uid: 'uid-sub', subtaskId: SUBTASK_ID, patch: { title: 'تصميم نهائي' } }])
+  })
+
+  it('clears a date with null and assignees with []', () => {
+    const r = diffTask(localSubtask({ dueOn: null, assignees: [] }), subBase0, sub0, subtaskCtx())
+    expect(only(r.outbound, 'update_subtask').patch).toEqual({ dueOn: null, assigneeIds: [] })
+  })
+
+  it('keeps start date, notes and attachments local', () => {
+    const r = diffTask(
+      localSubtask({
+        startsOn: '2026-11-01',
+        notesHtml: '<div>ملاحظة</div>',
+        attachments: [{ id: 'a', filename: 'x.pdf', bcSgid: null, origin: 'local' }],
+      }),
+      subBase0,
+      sub0,
+      subtaskCtx(),
+    )
+    expect(r.outbound).toEqual([])
+    expect(r.inbound).toEqual([])
+  })
+
+  it('a partial update needs no fetched record', () => {
+    const r = diffTask(localSubtask({ dueOn: '2026-11-25' }), subBase0, null, subtaskCtx())
+    expect(r.outbound).toEqual([{ type: 'update_subtask', uid: 'uid-sub', subtaskId: SUBTASK_ID, patch: { dueOn: '2026-11-25' } }])
+  })
+
+  it('completion and order go to their own endpoints', () => {
+    const r = diffTask(localSubtask({ completed: true, position: 2 }), subBase0, sub0, subtaskCtx())
+    expect(r.outbound).toEqual([
+      { type: 'set_completion', uid: 'uid-sub', bcType: 'subtask', bcId: SUBTASK_ID, completed: true },
+      { type: 'reposition', uid: 'uid-sub', bcType: 'subtask', bcId: SUBTASK_ID, position: 2 },
+    ])
+  })
+})
+
+describe('diffTask — inbound', () => {
+  it('a Basecamp assignment change keeps externals and the follower role', () => {
+    const local = localTodo({ assignees: [external(SARA), follower(FAHAD), person(AHMED)] })
+    const base = baseFromRemote('uid-todo', remoteTodo({ assigneeIds: [AHMED, FAHAD] }))
+    const r = diffTask(local, base, remoteTodo({ assigneeIds: [FAHAD, JUMANA], updatedAt: T2 }), todoCtx())
+    expect(r.inbound).toEqual([
+      { type: 'update_row', uid: 'uid-todo', fields: { assignees: [external(SARA), follower(FAHAD), person(JUMANA)] } },
+    ])
+  })
+
+  it('warns when Basecamp removes the only internal follower of an external assignee', () => {
+    const local = localSubtask({ assignees: [external(SARA), follower(FAHAD)] })
+    const base = baseFromRemote('uid-sub', remoteSubtask({ assigneeIds: [FAHAD] }))
+    const r = diffTask(local, base, remoteSubtask({ assigneeIds: [], updatedAt: T2 }), subtaskCtx())
+    expect(r.inbound).toEqual([{ type: 'update_row', uid: 'uid-sub', fields: { assignees: [external(SARA)] } }])
+    expect(r.warnings.map((w) => w.code)).toEqual(['follower_removed_remotely'])
+  })
+
+  it('a description edited in Basecamp updates the notes; a later write keeps Basecamp’s bytes', () => {
+    const edited = '<div>نص عدّله شخص في Basecamp</div>'
+    const remote = remoteTodo({ descriptionHtml: edited, updatedAt: T2 })
+    const r = diffTask(localTodo({ dueOn: '2027-01-01' }), base0, remote, todoCtx())
+    expect(r.inbound).toEqual([{ type: 'update_row', uid: 'uid-todo', fields: { notesHtml: edited } }])
+    expect(only(r.outbound, 'update_todo').write.descriptionHtml).toBe(edited)
+  })
+
+  it('whitespace reflowed by Basecamp is not a change', () => {
+    const reflowed = HUMAN_NOTES.replace('</div><div>', '</div>\n  <div>')
+    const r = diffTask(localTodo(), base0, remoteTodo({ descriptionHtml: reflowed, updatedAt: T2 }), todoCtx())
+    expect(r).toMatchObject({ outbound: [], inbound: [], conflicts: [] })
+  })
+
+  it('archived, trashed or deleted marks the row and keeps it (§9.3.10)', () => {
+    expect(diffTask(localTodo(), base0, remoteTodo({ status: 'trashed' }), todoCtx()).inbound).toEqual([
+      { type: 'mark_deleted_remotely', uid: 'uid-todo', status: 'trashed' },
+    ])
+    expect(diffTask(localTodo(), base0, remoteTodo({ status: 'archived' }), todoCtx()).inbound).toEqual([
+      { type: 'mark_deleted_remotely', uid: 'uid-todo', status: 'archived' },
+    ])
+    expect(diffTask(localSubtask(), subBase0, { type: 'deleted' }, subtaskCtx()).inbound).toEqual([
+      { type: 'mark_deleted_remotely', uid: 'uid-sub', status: 'deleted' },
+    ])
+    const local = diffTask(localTodo({ title: 'تعديل' }), base0, remoteTodo({ status: 'trashed' }), todoCtx())
+    expect(local.outbound).toEqual([])
+  })
+
+  it('marks once, and restores the row when the record is back', () => {
+    expect(diffTask(localTodo(), base0, remoteTodo({ status: 'trashed' }), todoCtx({ deletedRemotely: true }))).toMatchObject({
+      inbound: [],
+      outbound: [],
+    })
+    const back = diffTask(localTodo(), base0, remoteTodo({ content: 'مستعاد', updatedAt: T2 }), todoCtx({ deletedRemotely: true }))
+    expect(back.inbound).toEqual([
+      { type: 'restore_row', uid: 'uid-todo' },
+      { type: 'update_row', uid: 'uid-todo', fields: { title: 'مستعاد' } },
+    ])
+  })
+
+  it('creates rows for records made in Basecamp', () => {
+    const todo = remoteTodo({ assigneeIds: [], descriptionHtml: `<div>أ</div><hr><div><strong>${MANAGED_BLOCK_TITLE}</strong><br>س</div>` })
+    const row = inboundCreateRow(todo, { uid: 'new-1', sheetId: 'sheet-1', parentUid: null })
+    expect(row.type === 'create_row' && row.task).toMatchObject({ uid: 'new-1', level: 0, notesHtml: '<div>أ</div>', assignMode: 'auto', assignees: [] })
+    const sub = inboundCreateRow(remoteSubtask({ assigneeIds: [BADR, BADR] }), { uid: 'new-2', sheetId: 'sheet-1', parentUid: 'new-1' })
+    expect(sub.type === 'create_row' && sub.task).toMatchObject({ level: 1, parentUid: 'new-1', assignees: [person(BADR)], startsOn: null })
+    expect(() => inboundCreateRow(remoteSubtask(), { uid: 'x', sheetId: 's', parentUid: null })).toThrow()
+  })
+})
+
+describe('diffTask — guarded cases', () => {
+  it('a row whose level or parent no longer matches Basecamp is not synced', () => {
+    const r = diffTask(localSubtask({ uid: 'uid-todo', parentUid: 'p' }), base0, remote0, subtaskCtx())
+    expect(r).toMatchObject({ outbound: [], inbound: [] })
+    expect(r.warnings.map((w) => w.code)).toEqual(['hierarchy_change_unsupported'])
+    const moved = diffTask(localSubtask(), subBase0, sub0, subtaskCtx({ parentTodoId: TODO_ID + 1 }))
+    expect(moved.warnings.map((w) => w.code)).toEqual(['hierarchy_change_unsupported'])
+  })
+
+  it('an external-only assignment without follower holds every write but still applies inbound', () => {
+    const r = diffTask(
+      localTodo({ assignees: [external(SARA)], title: 'تعديل' }),
+      base0,
+      remoteTodo({ dueOn: '2027-02-02', updatedAt: T2 }),
+      todoCtx(),
+    )
+    expect(r.outbound).toEqual([])
+    expect(r.inbound).toEqual([{ type: 'update_row', uid: 'uid-todo', fields: { dueOn: '2027-02-02' } }])
+    expect(r.warnings.map((w) => w.code)).toEqual(['invalid_local_assignees'])
+  })
+
+  it('never writes a block with names the directory lacks', () => {
+    const block = `<hr><div><strong>${MANAGED_BLOCK_TITLE}</strong><br>مسؤولون خارجيون: قديم</div>`
+    const remote = remoteTodo({ descriptionHtml: HUMAN_NOTES + block })
+    const base = baseFromRemote('uid-todo', remote)
+    const r = diffTask(
+      localTodo({ assignees: [person(AHMED), external('ext-unknown')], title: 'جديد' }),
+      base,
+      remote,
+      { ...todoCtx(), directory: { ...directory, externalContacts: new Map() } },
+    )
+    expect(splitDescription(only(r.outbound, 'update_todo').write.descriptionHtml).block).toBe(block)
+    expect(r.warnings.map((w) => w.code)).toEqual(['directory_incomplete'])
+  })
+})
