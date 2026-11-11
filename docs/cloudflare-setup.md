@@ -29,7 +29,7 @@
 
 ## 3. المتغيرات والأسرار: في لوحة Cloudflare
 
-تُضاف بعد أول نشر، من **Workers & Pages ← naf-sheets-api ← Settings ← Variables and Secrets**. `keep_vars = true` في `wrangler.toml` يمنع النشرات اللاحقة من حذفها.
+تُضاف بعد أول نشر، من **Workers & Pages ← naf-sheets ← Settings ← Variables and Secrets**. `keep_vars = true` في `wrangler.toml` يمنع النشرات اللاحقة من حذفها.
 
 | الاسم | النوع | القيمة |
 |---|---|---|
@@ -52,7 +52,7 @@
 
 | الإعداد | القيمة |
 |---|---|
-| Project name | `naf-sheets-api` (يجب أن يطابق `name` في `wrangler.toml`) |
+| Project name | `naf-sheets` (يجب أن يطابق `name` في `wrangler.toml`) |
 | Production branch | `main` |
 | Root directory | `/` (جذر المستودع: الخادم يحتاج حزم `packages/*`) |
 | Build command | فارغ (الخادم لا يحتاج بناء الواجهة) |
@@ -70,7 +70,7 @@
 
 | الإعداد | القيمة |
 |---|---|
-| Project name | `naf-sheets` |
+| Project name | `naf-sheets-web` (اسم مختلف عن مشروع الخادم `naf-sheets`) |
 | Production branch | `main` |
 | Framework preset | None |
 | Root directory | `/` |
