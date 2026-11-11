@@ -16,7 +16,7 @@
 ## 1. قبل البدء
 
 1. يجب أن يكون النطاق `naflaw.sa` مُداراً في حساب Cloudflare نفسه (لازم لربط الواجهة والخادم على عنوان واحد، §5).
-2. اختيار النطاق الفرعي للمنصة، مثل `sheets.naflaw.sa`، وهو غير مقرر بعد (المواصفات §17-4). في هذا الملف يُكتب `<HOST>` مكانه.
+2. النطاق الفرعي للمنصة: `sheets.naflaw.sa` (قرار المالك 2026-11-11، المواصفات §17-4). خطة الحساب مدفوعة (Workers Paid).
 3. على جهازك: Node 22، ثم `npm ci` في جذر المستودع، ثم `npx wrangler login`.
 
 ## 2. إنشاء الموارد (مرة واحدة)
@@ -45,7 +45,6 @@ npx wrangler queues create bc-inbound-dlq
 | `PLATFORM_ID` | اسم المنصة كما سُجّل في لوحة naf-id، حرفاً بحرف (حساس لحالة الأحرف) |
 | `BASECAMP_ACCOUNT_ID` | رقم حساب ناف في Basecamp |
 | `GOOGLE_CLIENT_ID` | معرّف تطبيق Google OAuth (ليس سرّاً) |
-| `PUBLIC_API_ORIGIN` | `https://<HOST>` |
 
 هذه القيم ليست أسراراً، فتُرفع في المستودع. ارفعها إلى `main` بطلب دمج: النشر التلقائي يفشل ما دام فيها `REPLACE_WITH_*`.
 
@@ -103,17 +102,17 @@ cd apps/api && npx wrangler d1 migrations apply naf-sheets --remote
 
 ## 6. عنوان واحد للواجهة والخادم
 
-الواجهة تنادي `/api` و`/auth` بمسارات نسبية، وجلسة الدخول ملف تعريف ارتباط على العنوان نفسه. لذلك يعمل الاثنان على `<HOST>` واحد:
+الواجهة تنادي `/api` و`/auth` بمسارات نسبية، وجلسة الدخول ملف تعريف ارتباط على العنوان نفسه. لذلك يعمل الاثنان على العنوان نفسه `sheets.naflaw.sa`:
 
-1. **Pages ← Custom domains** ← أضف `<HOST>`.
-2. في `apps/api/wrangler.toml` فعّل كتلة `routes` المعلّقة وضع `<HOST>` مكان `REPLACE_WITH_HOST`. ارفعها إلى `main` فيُعاد النشر:
+1. **Pages ← Custom domains** ← أضف `sheets.naflaw.sa`.
+2. مسارات الخادم مفعّلة في `apps/api/wrangler.toml`، ومعها `PUBLIC_API_ORIGIN = "https://sheets.naflaw.sa"`:
 
 ```toml
 routes = [
-  { pattern = "<HOST>/api/*", zone_name = "naflaw.sa" },
-  { pattern = "<HOST>/auth/*", zone_name = "naflaw.sa" },
-  { pattern = "<HOST>/webhooks/*", zone_name = "naflaw.sa" },
-  { pattern = "<HOST>/health", zone_name = "naflaw.sa" },
+  { pattern = "sheets.naflaw.sa/api/*", zone_name = "naflaw.sa" },
+  { pattern = "sheets.naflaw.sa/auth/*", zone_name = "naflaw.sa" },
+  { pattern = "sheets.naflaw.sa/webhooks/*", zone_name = "naflaw.sa" },
+  { pattern = "sheets.naflaw.sa/health", zone_name = "naflaw.sa" },
 ]
 ```
 
@@ -123,14 +122,14 @@ routes = [
 
 | النظام | ما يُسجّل |
 |---|---|
-| naf-id (لوحة الإدارة) | المنصة باسم `PLATFORM_ID`، وعنوان العودة `https://<HOST>/auth/callback`، وعنوان الخروج الخلفي `https://<HOST>/auth/backchannel-logout` |
-| تطبيق Basecamp (launchpad.37signals.com/integrations) | Redirect URI: `https://<HOST>/auth/basecamp/callback` |
-| Google Cloud (OAuth client من نوع Web) | Authorized redirect URI: `https://<HOST>/auth/google/callback`؛ ونطاق القراءة `spreadsheets.readonly` |
+| naf-id (لوحة الإدارة) | المنصة باسم `PLATFORM_ID`، وعنوان العودة `https://sheets.naflaw.sa/auth/callback`، وعنوان الخروج الخلفي `https://sheets.naflaw.sa/auth/backchannel-logout` |
+| تطبيق Basecamp (launchpad.37signals.com/integrations) | Redirect URI: `https://sheets.naflaw.sa/auth/basecamp/callback` |
+| Google Cloud (OAuth client من نوع Web) | Authorized redirect URI: `https://sheets.naflaw.sa/auth/google/callback`؛ ونطاق القراءة `spreadsheets.readonly` |
 
 ## 8. التحقق بعد أول نشر
 
-1. `https://<HOST>/health` يعيد `{"ok":true}`.
-2. فتح `https://<HOST>/` يحوّل إلى تسجيل الدخول في naf-id، ثم يعود إلى شاشة الملفات.
+1. `https://sheets.naflaw.sa/health` يعيد `{"ok":true}`.
+2. فتح `https://sheets.naflaw.sa/` يحوّل إلى تسجيل الدخول في naf-id، ثم يعود إلى شاشة الملفات.
 3. كل من يدخل أول مرة يُضاف عضواً بدور `viewer`، ولا شاشة في المنصة ترقّي أول مسؤول. بعد أول دخول لك نفّذ مرة واحدة (`apps/api/OPEN_QUESTIONS.md` البند 17):
 
    ```bash
@@ -147,5 +146,5 @@ routes = [
 - **`naf-auth`** يُجلب أثناء التثبيت من GitHub بالوسم `v3.4.0`، والمستودع عام. `package-lock.json` يسجّل عنوانه بصيغة `git+ssh`. إن فشل التثبيت على Cloudflare بسبب SSH فهذه هي العلة، وتُعالج في المستودع لا في اللوحة.
 - **معاينات Pages** للفروع الأخرى (عناوين `*.pages.dev`) لا يصلها الخادم، فتظهر الواجهة فقط.
 - **الجدولة:** المطابقة كل 15 دقيقة والنسخ الاحتياطي اليومي (`[triggers]` في `wrangler.toml`) يعملان تلقائياً بعد النشر.
-- **الخطة:** الخادم يستخدم Queues وDurable Objects وCron. تأكد أن خطة الحساب تسمح بها كلها، وخطة Workers Paid تشملها.
+- **الخطة:** الخادم يستخدم Queues وDurable Objects وCron، وخطة الحساب المدفوعة (Workers Paid) تشملها.
 - **حجم الخادم:** حوالي 2.4 ميغابايت مضغوطاً (`wrangler deploy --dry-run`). حد الخطة المجانية 3 ميغابايت وحد المدفوعة 10.

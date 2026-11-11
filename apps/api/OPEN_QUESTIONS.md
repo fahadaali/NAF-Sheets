@@ -25,7 +25,9 @@ behaviour chosen in the absence of a rule and need only a confirmation.
    `/webhooks/basecamp/*` — `/denied` is not among them and the Worker does not
    serve it. If the Worker answers for the whole origin, a refused navigation
    would loop; if Pages serves `/denied` on the same origin, nothing is needed.
-   Tied to spec §17-4 (subdomain).
+   Tied to spec §17-4 (subdomain). **Decided 2026-11-11:** Pages serves the
+   origin `sheets.naflaw.sa` and the Worker only `/api/*`, `/auth/*`, `/webhooks/*`
+   and `/health`, so Pages serves `/denied`.
 
 4. **`PUT /api/workbooks/:id/members` has no response type.** It answers with
    `WorkbookMembersResponse` (the list after the change), like `GET`.
@@ -424,10 +426,11 @@ S9. **A Basecamp value the sheet cannot take** (a formula in the mapped cell,
     row waits until the cell is fixed or the caches learn the name (refreshed
     once per inbound run when an unknown id appears).
 
-S10. **`PUBLIC_API_ORIGIN`** (a `[vars]` placeholder) is the HTTPS origin in
-    the webhook `payload_url` (spec §17-4, not decided). Until it is set, no
-    webhook is registered, the workbook shows the «webhook pending» notice and
-    reconciliation carries the inbound sync alone.
+S10. **Decided 2026-11-11 (owner): `PUBLIC_API_ORIGIN = "https://sheets.naflaw.sa"`**
+    (spec §17-4), the HTTPS origin in the webhook `payload_url`. The web app
+    (Pages) and this Worker share the host; the Worker's routes are in
+    wrangler.toml (docs/cloudflare-setup.md §6). Original note: until it is
+    set, no webhook is registered and reconciliation carries the inbound sync alone.
 
 S11. **Assignee candidates in the link preview.** An assignee text is
     confident when exactly one project person (or external contact) has that

@@ -14,14 +14,14 @@ compatibility_flags = ["nodejs_compat"]
 # ─────────────────────────────────────────────────────────────
 # Routes on the platform's host (docs/cloudflare-setup.md §6). The web app is
 # Cloudflare Pages on the same host; these paths go to this Worker, the rest
-# to Pages. The host is not decided (spec §17-4): uncomment once it is.
+# to Pages. Host decided by the owner 2026-11-11 (spec §17-4): sheets.naflaw.sa.
 # ─────────────────────────────────────────────────────────────
-# routes = [
-#   { pattern = "REPLACE_WITH_HOST/api/*", zone_name = "naflaw.sa" },
-#   { pattern = "REPLACE_WITH_HOST/auth/*", zone_name = "naflaw.sa" },
-#   { pattern = "REPLACE_WITH_HOST/webhooks/*", zone_name = "naflaw.sa" },
-#   { pattern = "REPLACE_WITH_HOST/health", zone_name = "naflaw.sa" },
-# ]
+routes = [
+  { pattern = "sheets.naflaw.sa/api/*", zone_name = "naflaw.sa" },
+  { pattern = "sheets.naflaw.sa/auth/*", zone_name = "naflaw.sa" },
+  { pattern = "sheets.naflaw.sa/webhooks/*", zone_name = "naflaw.sa" },
+  { pattern = "sheets.naflaw.sa/health", zone_name = "naflaw.sa" },
+]
 
 # ─────────────────────────────────────────────────────────────
 # Non-secret variables
@@ -39,11 +39,9 @@ PLATFORM_ID = "REPLACE_WITH_PLATFORM_ID"
 BASECAMP_ACCOUNT_ID = "REPLACE_WITH_BASECAMP_ACCOUNT_ID"
 # Google Sheets import (src/google-import). The OAuth client id is not secret.
 GOOGLE_CLIENT_ID = "REPLACE_WITH_GOOGLE_CLIENT_ID"
-# Sync (src/sync): the public HTTPS origin Basecamp posts webhooks to, e.g.
-# "https://sheets.naflaw.sa" (spec §17-4, not decided). Until it is an HTTPS
-# origin no webhook is registered and reconciliation (every 15 min) carries
-# Basecamp's changes alone. See apps/api/OPEN_QUESTIONS.md "Sync (wave 3)".
-PUBLIC_API_ORIGIN = "REPLACE_WITH_PUBLIC_API_ORIGIN"
+# Sync (src/sync): the public HTTPS origin Basecamp posts webhooks to (spec
+# §17-4, decided by the owner 2026-11-11). See apps/api/OPEN_QUESTIONS.md S10.
+PUBLIC_API_ORIGIN = "https://sheets.naflaw.sa"
 # Secrets for these two modules — only via `wrangler secret put`, never here:
 #   BASECAMP_CLIENT_ID, BASECAMP_CLIENT_SECRET, GOOGLE_CLIENT_SECRET,
 #   TOKEN_ENCRYPTION_KEY (32 random bytes, base64; see src/crypto.ts)
