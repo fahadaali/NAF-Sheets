@@ -6,3 +6,4 @@ dist/
 spike/basecamp/.live-test-state.json
 spike/basecamp/live-test-report.md
 spike/univer/preview.log
+apps/api/wrangler.deploy.toml

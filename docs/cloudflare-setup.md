@@ -60,6 +60,8 @@
 | Non-production branch builds | معطّلة |
 | Build variable | `NODE_VERSION` = `22` |
 
+إذا توقف نشر بعد إنشاء مساحة KV وقبل ربطها، يحاول النشر التالي إنشاءها مرة ثانية ويفشل بالرسالة «a namespace with this account ID and title already exists». السكربت يتجنب ذلك: يجد المساحات الموجودة باسمها (`naf-sheets-auth-kv` و`naf-sheets-settings`) ويضع معرّفاتها في نسخة مؤقتة من الإعداد أثناء البناء فقط (`scripts/resolve-kv.mjs`)، فلا تدخل المستودع.
+
 `npx wrangler deploy` وحده من الجذر يفشل بالرسالة «application detection logic has been run in the root of a workspace»، لأن الجذر فيه أكثر من تطبيق. السكربت يمرّر `--config apps/api/wrangler.toml`.
 
 إن فشل إنشاء الموارد أو تطبيق المخطط بسبب الصلاحية، فرمز البناء الذي أنشأته Cloudflare ينقصه إذن. أضف إليه **D1: Edit** و**Workers KV Storage: Edit** و**Workers R2 Storage: Edit** و**Queues: Edit**.
