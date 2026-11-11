@@ -42,6 +42,20 @@ cells use Univer's defaults (11 pt).
 **Needed:** keep imported font families, drop them, or map them to Thmanyah?
 Apply Google's default size (10 pt) to imported workbooks?
 
+The .xlsx reader (`@naf-sheets/xlsx-import`, 2026-11-11) drops the file's
+default font (Calibri/Aptos 11 from Excel, Arial 10 from a Google export) the
+way the Sheets API omits unset fields, so unformatted cells behave alike on
+all three paths; other fonts are passed through as here (apps/api
+`OPEN_QUESTIONS.md` "Google import" G24).
+
+## 17. Report messages name the source program
+
+`MESSAGES.unsupportedFormula` and `formulaNote` take the program's name
+(`ConvertOptions.sourceName`): "Google Sheets" by default, "Excel" or «البرنامج
+الذي أنشأ الملف» for .xlsx imports. The message now says «دالة أو مرجعًا» because
+an Excel structured reference (`Table1[…]`) or a link to another workbook is
+listed with the function names (`ConvertOptions.formulaBlockers`).
+
 ## 3. Functions with the same name but different arguments
 
 Verified differences between Google (support.google.com/docs) and Univer 1.4.0

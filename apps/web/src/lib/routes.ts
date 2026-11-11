@@ -10,7 +10,9 @@
 //   /workbooks/:id/import-report        import report (§7.2, §12.1 item 7)
 //   /workbooks/:id/link                 linking wizard (§7.3), full screen
 //   /settings                           the user's settings: Basecamp account (§3), admin entries
-//   /admin/people-matches               naf-id members ↔ Basecamp people, admins only (§3)
+//   /admin/members                      platform members: role and active state, admins only (§3)
+//   /admin/people-matches               naf-id members ↔ Basecamp people, admins only (§3);
+//                                       `#match-<user id>` focuses that member's row
 //   /admin/sync-health                  sync health report, admins only (§9.4, phase 7)
 //   /admin/templates                    templates, admins only (§7.1, phase 7)
 //   /admin/api-tokens                   service tokens of the internal API, admins only (§13)
@@ -27,6 +29,7 @@ export type Route =
   | { name: 'importReport'; id: string }
   | { name: 'linkWizard'; id: string }
   | { name: 'settings' }
+  | { name: 'members' }
   | { name: 'peopleMatches' }
   | { name: 'syncHealth' }
   | { name: 'templates' }
@@ -66,6 +69,7 @@ export function parseRoute(pathname: string, search = ''): Route {
   }
   if (pathname === '/denied' || pathname === '/denied/') return { name: 'denied', reason: params.get('r') ?? '' }
   if (pathname === '/settings' || pathname === '/settings/') return { name: 'settings' }
+  if (pathname === '/admin/members' || pathname === '/admin/members/') return { name: 'members' }
   if (pathname === '/admin/people-matches' || pathname === '/admin/people-matches/') return { name: 'peopleMatches' }
   if (pathname === '/admin/sync-health' || pathname === '/admin/sync-health/') return { name: 'syncHealth' }
   if (pathname === '/admin/templates' || pathname === '/admin/templates/') return { name: 'templates' }
@@ -110,6 +114,8 @@ export function pathFor(route: Route): string {
       return `/workbooks/${encodeURIComponent(route.id)}/link`
     case 'settings':
       return '/settings'
+    case 'members':
+      return '/admin/members'
     case 'peopleMatches':
       return '/admin/people-matches'
     case 'syncHealth':

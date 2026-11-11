@@ -1,0 +1,30 @@
+{
+  "name": "@naf-sheets/xlsx-import",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Reads an .xlsx package (Excel or a Google Sheets export) into the Google Sheets intermediate model of @naf-sheets/gsheets-import, normalised by origin, and converts it with the same converter.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p ."
+  },
+  "dependencies": {
+    "@naf-sheets/gsheets-import": "0.0.0",
+    "@univerjs/core": "1.4.0"
+  },
+  "devDependencies": {
+    "@univerjs/engine-formula": "1.4.0",
+    "@univerjs/sheets": "1.4.0",
+    "@univerjs/sheets-formula": "1.4.0",
+    "@univerjs/sheets-conditional-formatting": "1.4.0",
+    "@univerjs/sheets-data-validation": "1.4.0",
+    "@univerjs/sheets-filter": "1.4.0",
+    "@univerjs/sheets-note": "1.4.0",
+    "@univerjs/sheets-hyper-link": "1.4.0",
+    "@univerjs/sheets-numfmt": "1.4.0",
+    "rxjs": "7.8.2"
+  }
+}

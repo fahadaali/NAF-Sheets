@@ -10,7 +10,12 @@ const { workbook, report } = convertSpreadsheet(nafCommsPlan)
 
 describe('import report for the synthetic NAF workbook', () => {
   it('counts what was transferred', () => {
-    expect(report.source).toEqual({ spreadsheetId: '1SyNtHeTiCfIxTuReNaFcOmMs2026', title: 'خطة الاتصال المؤسسي 2026', locale: 'ar' })
+    expect(report.source).toEqual({
+      spreadsheetId: '1SyNtHeTiCfIxTuReNaFcOmMs2026',
+      title: 'خطة الاتصال المؤسسي 2026',
+      locale: 'ar',
+      origin: { kind: 'google_api', via: 'google_api', application: null, alignment: 'as_given' },
+    })
     expect(report.counts).toMatchObject({
       sheets: 4,
       // Kept: IF, SUM (المهام); COUNTIF, SUM(Costs), UNIQUE (الملخص).

@@ -167,6 +167,38 @@ export interface ImportGsheetsResponse {
   reportId: string
 }
 
+// ---------------------------------------------------------------------------
+// .xlsx import and public Google Sheets links (owner decision 2026-11-11:
+// no Google OAuth secret; apps/api/OPEN_QUESTIONS.md "Google import" G18–G30)
+// ---------------------------------------------------------------------------
+
+/**
+ * POST /api/import/xlsx?name=<file name>&title=<title>
+ * Body: the .xlsx file's bytes (any Content-Type; Content-Length required).
+ * Editors and admins only. → 201 `ImportXlsxResponse`.
+ * `name` (optional) is the file's own name, kept in the report; `title`
+ * (optional, 1–200 after trimming) names the workbook, else the file name
+ * without its extension.
+ */
+export const XLSX_IMPORT_PATH = '/api/import/xlsx'
+
+/** Largest .xlsx accepted (upload, or a Google export download), in bytes. */
+export const XLSX_MAX_FILE_BYTES = 15 * 1024 * 1024
+
+export type ImportXlsxResponse = ImportGsheetsResponse
+
+/**
+ * POST /api/import/gsheets-link → 201 `ImportXlsxResponse`.
+ * The platform downloads the file as .xlsx from Google's export address,
+ * without any Google account: only files shared "anyone with the link can
+ * view" can be read. Same `source` forms as `ImportGsheetsRequest` (G6).
+ */
+export interface ImportGsheetsLinkRequest {
+  source: string
+  /** Defaults to the file's title as Google names the download. */
+  title?: string
+}
+
 /**
  * GET /api/workbooks/:id/import-report
  * `report` is `ImportReport` from @naf-sheets/gsheets-import, stored as JSON

@@ -31,7 +31,7 @@
 // as static values. Produced cells no anchor claims stay as static values and
 // are reported. OPEN: OPEN_QUESTIONS.md §4.
 
-import type { ICellData, ISheetDataValidationRule, IObjectArrayPrimitiveType, IObjectMatrixPrimitiveType, IRange, IRowData, IColumnData, IStyleData, IWorkbookData, IWorksheetData, LocaleType } from '@univerjs/core'
+import type { DateSystem, ICellData, ISheetDataValidationRule, IObjectArrayPrimitiveType, IObjectMatrixPrimitiveType, IRange, IRowData, IColumnData, IStyleData, IWorkbookData, IWorksheetData, LocaleType } from '@univerjs/core'
 import type { GridSize } from './a1'
 import { absoluteA1Range, cellRange, cellsToRanges, gridRangeToRange, quoteSheetName } from './a1'
 import { bandedFills } from './banding'
@@ -41,7 +41,7 @@ import { convertDataValidation } from './data-validation'
 import { convertBasicFilter } from './filter'
 import { findUnsupportedFunctions, UNIVER_SUPPORTED_FUNCTIONS } from './formula'
 import type { GsCellData, GsDataValidationRule, GsDimensionProperties, GsErrorType, GsExtendedValue, GsNumberFormat, GsSheet, GsSpreadsheet } from './google-types'
-import { emptyCounts, formulaNote, location, MESSAGES, type ImportCounts, type ImportedSheetInfo, type ImportReport, type ImportReportItem } from './report'
+import { emptyCounts, formulaNote, GOOGLE_SHEETS, location, MESSAGES, type ImportCounts, type ImportedSheetInfo, type ImportOrigin, type ImportReport, type ImportReportItem } from './report'
 import { buildCellDocument, type TextSegment } from './rich-text'
 import { cellFormatToStyle, mergeTextFormats, pickNumberFormat, stableStringify, StyleRegistry, textFormatToStyle, type StyleContext } from './style'
 import {
@@ -70,6 +70,21 @@ export interface ConvertOptions {
    * its live set, including custom functions it registers.
    */
   supportedFunctions?: ReadonlySet<string>
+  /**
+   * Where the data came from (report `source.origin`). Default: the Sheets
+   * API. The .xlsx reader (@naf-sheets/xlsx-import) passes the detected origin.
+   */
+  origin?: ImportOrigin
+  /** The program named in report messages and cell notes. Default: Google Sheets. */
+  sourceName?: string
+  /**
+   * Reasons beyond unknown functions that keep a formula from being kept
+   * (e.g. an Excel structured reference). Each label is reported with the
+   * function names. Default: none (the Sheets API path has no such cases).
+   */
+  formulaBlockers?: (formula: string) => string[]
+  /** Univer `IWorkbookData.dateSystem`; omitted means Excel 1900 (what Google uses). */
+  dateSystem?: DateSystem
 }
 
 export interface ConvertResult {
@@ -157,6 +172,8 @@ interface SheetContext {
   size: GridSize
   styleCtx: StyleContext
   supported: ReadonlySet<string>
+  blockers: (formula: string) => string[]
+  sourceName: string
   sheetIds: ReadonlyMap<number, string>
   styles: StyleRegistry
   counts: ImportCounts
@@ -214,7 +231,7 @@ function convertGridSheet(sheet: GsSheet, ctx: SheetContext): ConvertedSheet {
     const key = `${r}:${c}`
     const formula = cell.userEnteredValue?.formulaValue
     if (typeof formula === 'string') {
-      const unsupported = findUnsupportedFunctions(formula, ctx.supported)
+      const unsupported = [...findUnsupportedFunctions(formula, ctx.supported), ...ctx.blockers(formula)]
       if (unsupported.length > 0) unsupportedByCell.set(key, unsupported)
       anchors.set(key, { kind: 'formula', keep: unsupported.length === 0 })
     } else if (cell.pivotTable) anchors.set(key, { kind: 'pivot' })
@@ -321,13 +338,13 @@ function convertGridSheet(sheet: GsSheet, ctx: SheetContext): ConvertedSheet {
         const unsupported = unsupportedByCell.get(key) ?? []
         stored = valueToCell(cell.effectiveValue, cell.formattedValue)
         counts.valueOnlyFormulas++
-        putNote(r, c, formulaNote(formula, cell.note))
+        putNote(r, c, formulaNote(formula, cell.note, ctx.sourceName))
         const onlyImage = unsupported.every((n) => n === 'IMAGE')
         items.push({
           kind: onlyImage ? 'image' : 'unsupported_formula',
           outcome: 'value_only',
           location: here(spillRect.get(key) ?? cellRange(r, c)),
-          message: onlyImage ? MESSAGES.imageFormula() : MESSAGES.unsupportedFormula(unsupported),
+          message: onlyImage ? MESSAGES.imageFormula() : MESSAGES.unsupportedFormula(unsupported, ctx.sourceName),
           detail: formula,
         })
       }
@@ -653,6 +670,8 @@ export function convertSpreadsheet(response: GsSpreadsheet, options: ConvertOpti
       size,
       styleCtx: { colors, sheetIsRtl: !!p.rightToLeft },
       supported,
+      blockers: options.formulaBlockers ?? (() => []),
+      sourceName: options.sourceName ?? GOOGLE_SHEETS,
       sheetIds,
       styles,
       counts,
@@ -719,6 +738,7 @@ export function convertSpreadsheet(response: GsSpreadsheet, options: ConvertOpti
     sheets,
     resources,
   }
+  if (options.dateSystem) workbook.dateSystem = options.dateSystem
   const iterative = props.iterativeCalculationSettings
   if (iterative) {
     workbook.calculationSettings = {
@@ -730,6 +750,16 @@ export function convertSpreadsheet(response: GsSpreadsheet, options: ConvertOpti
 
   return {
     workbook,
-    report: { source: { spreadsheetId: response.spreadsheetId ?? null, title, locale: props.locale ?? null }, counts, sheets: sheetInfo, items },
+    report: {
+      source: {
+        spreadsheetId: response.spreadsheetId ?? null,
+        title,
+        locale: props.locale ?? null,
+        origin: options.origin ?? { kind: 'google_api', via: 'google_api', application: null, alignment: 'as_given' },
+      },
+      counts,
+      sheets: sheetInfo,
+      items,
+    },
   }
 }

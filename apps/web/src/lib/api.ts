@@ -42,14 +42,19 @@ import type {
   ExternalContact,
   GoogleLinkResponse,
   GrantProjectPersonRequest,
+  ImportGsheetsLinkRequest,
   ImportGsheetsRequest,
   ImportGsheetsResponse,
+  ImportXlsxResponse,
   ImportReportResponse,
   LinkPlan,
   LinkPreviewResponse,
   LinkWorkbookResponse,
   MeResponse,
   PeopleMatchesResponse,
+  PlatformMembersResponse,
+  UpdatePlatformMemberRequest,
+  UpdatePlatformMemberResponse,
   PutPeopleMatchRequest,
   RestoreConflictResponse,
   RevokeBasecampLinkResponse,
@@ -230,6 +235,13 @@ export function createApiClient(options: ApiClientOptions = {}) {
       request<BasecampPeopleResponse>('GET', `${projectPath(projectId)}/people`, undefined, signal),
     /** GET /api/admin/people-matches (admins) */
     getPeopleMatches: (signal?: AbortSignal) => request<PeopleMatchesResponse>('GET', '/api/admin/people-matches', undefined, signal),
+
+    /** «أعضاء المنصة»: every member with role, state and Basecamp match (admin). */
+    listMembers: (signal?: AbortSignal) => request<PlatformMembersResponse>('GET', '/api/admin/members', undefined, signal),
+
+    /** Changes a member's role and/or active state (admin; not oneself, never the last active admin). */
+    updateMember: (userId: string, body: UpdatePlatformMemberRequest) =>
+      request<UpdatePlatformMemberResponse>('PUT', `/api/admin/members/${encodeURIComponent(userId)}`, body),
     /**
      * PUT /api/admin/people-matches/:userId (admins).
      * OPEN: the contract gives no success body; any 2xx counts and the caller
@@ -246,6 +258,8 @@ export function createApiClient(options: ApiClientOptions = {}) {
     getGoogleLink: (signal?: AbortSignal) => request<GoogleLinkResponse>('GET', '/api/google/link', undefined, signal),
     /** POST /api/import/gsheets */
     importGsheets: (body: ImportGsheetsRequest) => request<ImportGsheetsResponse>('POST', '/api/import/gsheets', body),
+    /** POST /api/import/gsheets-link — a public Google Sheets file, downloaded as .xlsx without a Google account. */
+    importGsheetsLink: (body: ImportGsheetsLinkRequest) => request<ImportXlsxResponse>('POST', '/api/import/gsheets-link', body),
     /** GET /api/workbooks/:id/import-report */
     getImportReport: (id: string, signal?: AbortSignal) =>
       request<ImportReportResponse>('GET', `${workbookPath(id)}/import-report`, undefined, signal),

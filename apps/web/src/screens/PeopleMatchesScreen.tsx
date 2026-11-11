@@ -71,6 +71,23 @@ function PeopleMatches() {
     return () => controller.abort()
   }, [attempt])
 
+  // `#match-<user id>` (a link from «أعضاء المنصة»): bring that member's row
+  // into view and focus its select once the list is shown.
+  const ready = load.kind === 'ready'
+  useEffect(() => {
+    if (!ready || !window.location.hash.startsWith('#match-')) return
+    let id: string
+    try {
+      id = decodeURIComponent(window.location.hash.slice(1))
+    } catch {
+      return
+    }
+    const select = document.getElementById(id)
+    if (!(select instanceof HTMLSelectElement)) return
+    select.scrollIntoView({ block: 'center' })
+    select.focus()
+  }, [ready])
+
   if (load.kind === 'loading') {
     return (
       <div className="panel panel--plain" role="status">

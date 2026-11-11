@@ -98,10 +98,14 @@ behaviour chosen in the absence of a rule and need only a confirmation.
     messages (reconciliation recovers state); no webhook is registered before
     then.
 
-17. **(owner)** **First admin.** naf-auth creates every member as `viewer`; nothing in the
-    platform can promote the first admin. Proposed: a one-off
-    `wrangler d1 execute naf-sheets --remote --command "UPDATE members SET role = 'admin' WHERE email = '…'"`
-    after that person's first sign-in.
+17. **First admin, then the screen** (updated 2026-11-11). naf-auth creates every
+    member as `viewer`. The **first** admin is still promoted once by SQL, after
+    that person's first sign-in:
+    `wrangler d1 execute naf-sheets --remote --command "UPDATE members SET role = 'admin' WHERE email = '…'"`.
+    Every later change of role or active state goes through «أعضاء المنصة»
+    (`/admin/members`; GET/PUT `/api/admin/members`, src/routes/platform-members.ts):
+    audited, reported to naf-id, guarded (an admin cannot change themselves;
+    the last active admin is never demoted or suspended). See "Platform members" below.
 
 18. **Uniqueness assumptions**: one live (non-archived) workbook per Basecamp
     project and one sheet per to-do list (partial unique indexes), because
@@ -229,6 +233,138 @@ G17. `POST /api/import/gsheets` answers **201** (like `POST /api/workbooks`;
     that was not imported). Two audit entries per import:
     `workbook.create` and `workbook.import.gsheets` (counts, no cell content);
     each Google link is audited as `google.link` (scope and expiry, no token).
+
+### Without OAuth: .xlsx upload and public links (owner decision 2026-11-11)
+
+**Decided (owner, 2026-11-11):** there will be no Google OAuth secret
+(`GOOGLE_CLIENT_SECRET` is never set). Importing works two ways instead, both
+built here (`src/xlsx-import/`) on `@naf-sheets/xlsx-import`:
+
+- **Upload an Excel file** — `POST /api/import/xlsx?name=&title=`, the file's
+  bytes as the body.
+- **Paste a Google Sheets link** — `POST /api/import/gsheets-link {source, title?}`:
+  the platform downloads `https://docs.google.com/spreadsheets/d/<id>/export?format=xlsx`
+  with no account. Only files shared "anyone with the link can view" can be read.
+
+The OAuth routes (`/auth/google/*`, `GET /api/google/link`,
+`POST /api/import/gsheets`) stay in place, unused by the web app; G1–G4, G7,
+G10, G11, G14–G16 are moot while there is no secret. The report route
+(`GET /api/workbooks/:id/import-report`) serves all three paths.
+
+**Design.** The reader is a new package `packages/xlsx-import` (zip + XML
+read by our own code; no third-party parser) that builds the **same
+intermediate model** the Sheets API path uses (`google-types.ts`), normalised
+by origin, and hands it to the one converter (`convertSpreadsheet`). The
+writing to Univer, the report and every existing converter rule stay in one
+place. A separate package, because the binary container, its security
+guards and the per-origin normalisation are their own concern and the
+converter keeps no knowledge of zip or XML. The converter gained four options
+(`origin`, `sourceName`, `formulaBlockers`, `dateSystem`) and the report a
+`source.origin` field; nothing else in it changed.
+
+G18. **Origin detection, and what differs per origin.** Verified on 2026-11-11:
+
+| What | Excel (and other writers) | Google export (platform download or File → Download) | Sheets API (old path) | Evidence |
+|---|---|---|---|---|
+| Detection | `docProps/app.xml` `<Application>Microsoft Excel</Application>` | no `docProps/` at all, `xmlns:mx`/`xmlns:mv` Mac namespaces on `<workbook>`, empty `xl/persons/person.xml`, theme named "Sheets", `__xludf.DUMMYFUNCTION` | — | real Google files (4); Excel from the spec (no Excel here); openpyxl writes "Microsoft Excel Compatible / Openpyxl 3.1.5" → `other`; LibreOffice "LibreOffice/24.2…" → `other` (real file) |
+| Colours | theme index (0↔lt1, 1↔dk1 swapped) + `tint` (HLS), `indexed` palette, `rgb` | `rgb` **and** theme indexes (Google writes `theme="1"` text), no tint seen | RGB/theme in JSON | real Google files; tint values checked against Excel's 2023 palette names |
+| Default font | Aptos Narrow 11 / Calibri 11 | Arial 10 | `userEnteredFormat` holds only what was set | real Google files |
+| Column width | ECMA formula, max digit width 7 px (9.140625 → 64 px) | `(px + 1) / 8` (12.63 → 100 px) | `pixelSize` | **Google: 13 real columns against Google's htmlview pixel widths**; Excel: formula |
+| Row height | points × 4/3 | points × 4/3 (15.75 pt = 21 px) | `pixelSize` | real Google files |
+| Google-only functions | `_xludf.` = unknown to Excel → value only | `IFERROR(__xludf.DUMMYFUNCTION("<formula>"), <value>)`; spilled cells `…("""COMPUTED_VALUE""")…` → original formula restored, cells produced | formula as typed | real export (`QUERY`) |
+| Shared / array formulas | both | **Google writes shared formulas too** | n/a | real export |
+| Checkboxes | stay TRUE/FALSE (Excel 365 checkboxes reported) | written as plain booleans **without** a rule → restored as checkboxes, reported `checkbox` / converted | BOOLEAN rule | real exports (3 sheets) |
+| Dropdowns | list rules | list rules (literal `"a,b"` and ranges), arrow shown | ONE_OF_LIST / RANGE | real export |
+| "Is a valid date" rule | — | custom `OR(NOT(ISERROR(DATEVALUE(B2))), AND(ISNUMBER(B2), LEFT(CELL("format", B2))="D"))` → date rule | DATE_IS_VALID | real export (formula copied into the synthetic fixture; the 2.7 MB file is not committed) |
+| Tables | built-in styles (`TableStyleMedium2`) carry no colours → reported | own `tableStyles` → static fills | `tables` reported | real export / synthesised |
+| 1904 dates | `workbookPr date1904` → workbook `dateSystem: 'date1904'`, serials unchanged | never seen | n/a | Univer 1.4.0 core/engine-formula/numfmt read `dateSystem`; headless load test |
+| Sheet names | as written | Google drops characters Excel forbids (`3. Show/Hide Data` became `3. ShowHide Data`); not detectable | as named | real export |
+
+G19. **(verify live)** **Private files.** No private file was available, so how
+Google answers one was not observed. Treated as "not shared by link"
+(`gsheets_link_private`, 403): a redirect to `accounts.google.com` or a
+`docs.google.com/ServiceLogin…` page, an HTML page (200), 401 and 403. 404 and
+410 (observed for a missing and a deleted file) are `gsheets_link_not_found`.
+A "not a spreadsheet" answer (a PDF, a Doc id) is `xlsx_not_xlsx`.
+
+G20. **Fixtures: which are real.** Real (`packages/xlsx-import/test/fixtures/`):
+`google-class-data.xlsx` (Google's own Sheets API sample, 1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms),
+`google-checkboxes.xlsx`, `google-dropdowns.xlsx`, `google-gantt.xlsx`
+(public templates by benlcollins.com and a public Gantt sheet; ids in the
+test file), and `libreoffice-from-google.xlsx` (one of them saved by
+LibreOffice 24.2 here). **Synthesised:** `excel-fixture.ts` builds an Excel-
+shaped file part by part (no Excel was available; openpyxl and LibreOffice
+open it) and a small Google-shaped file for the API tests (workerd cannot
+read files from disk). Phase 2 acceptance still needs the real NAF file.
+Confirm the third-party sample files may stay in the repository.
+
+G21. **`workbooks.source` stays `'gsheets'`** for both new paths: the D1 CHECK
+allows only `blank | template | gsheets`, and changing it means rebuilding the
+table. `source_ref` is the spreadsheet id (link) or `upload:<sha-256 of the
+file>` (upload); `import_reports.gsheet_id` the same. The exact origin is in
+the report (`source.origin`) and the audit (`workbook.import.xlsx` /
+`workbook.import.gsheets_link`, with sha-256, sizes and detection evidence, no
+cell content). Add `'xlsx'` with a table-rebuilding migration?
+
+G22. **Limits** (to calibrate with the real file and the Worker's 128 MB):
+file ≤ 15 MiB (`XLSX_MAX_FILE_BYTES`, shared with the web app; refused from
+`Content-Length` before a byte is read, and again while reading); ≤ 2,000 zip
+entries; one part ≤ 48 MiB and all parts read ≤ 96 MiB unpacked, **counted
+while inflating** (a zip bomb stops at the limit whatever its headers say);
+≤ 500,000 cells (as G5) and Σ rows × columns ≤ 1,000,000; download 30 s per
+request, ≤ 3 redirects. Above a limit: 413, nothing stored.
+
+G23. **Excel column widths use a maximum digit width of 7 px** (Calibri 11 and
+Aptos Narrow 11 at 96 dpi). A workbook whose default font is much larger
+gets narrower columns than in Excel. The default width without
+`defaultColWidth` is 64 px.
+
+G24. **Fonts.** The workbook's default font (Calibri/Aptos 11, Arial 10) is not
+written on cells — size, family and colour equal to it are dropped, as the
+Sheets API omits unset fields — so those cells use the grid's font (Thmanyah
+via the web app) and Univer's default size. Every other font is kept as named
+(gsheets-import OPEN §2 still open: map them to Thmanyah?). The default font
+found is shown in the report.
+
+G25. **Built-in number formats 14 and 22** ("system short date") are written as
+`yyyy-mm-dd` / `yyyy-mm-dd h:mm` (spec §12.2). Locale-dependent built-ins
+(5–8, 42, 44 currency; 27–36, 50–81 East Asian) carry no code in the file and
+are reported as not transferred.
+
+G26. **Fills.** Patterned fills become their foreground colour and gradients
+their first stop; one workbook-level `cell_format` item says so. Diagonal
+borders and indents are dropped (no Univer counterpart used yet); shrink-to-
+fit is ignored.
+
+G27. **Validation.** "Whole number" becomes Univer's decimal rule (the
+whole-number restriction is lost); `time` and `textLength` rules are reported
+as not transferred; `strict` = `showErrorMessage` with error style `stop`;
+`showDropDown="1"` hides the arrow (§18.3.1.32 semantics).
+
+G28. **Defined names.** A name local to one sheet becomes workbook-wide;
+names whose value is a constant or a formula are reported; Excel's
+`_xlnm._FilterDatabase` is skipped silently (bookkeeping); print areas and
+titles are reported once.
+
+G29. **Conditional formats.** Excel can apply several matching rules; the
+converter gives every rule `stopIfTrue` (Google's first-match semantics), and
+rules are ordered by Excel's `priority`. `cellIs` with a formula operand
+becomes a custom formula on the range's first cell (`=D2<$D$7/10`). Data
+bars, icon sets, top/bottom, above-average, duplicates and error rules, and
+rules in the Excel 2010 `<extLst>`, are reported.
+
+G30. **Filters.** The filter range is transferred; Excel's criteria are not
+read (reported per column) and the rows they hid are shown again. Google's
+export of filter criteria was not observed.
+
+G31. **Other reported, never silent:** pictures, shapes, form controls and
+charts in drawings; chart sheets; pivot tables (their values stay); Excel
+tables (data and formats stay, formulas with structured references keep
+their values); sparklines; sheet protection and protected ranges; outline
+groups; macros (`vbaProject.bin`); links to other workbooks (formulas keep
+their values); data connections; Excel 365 checkboxes; threaded comments (a
+legacy note becomes a cell note). Smart chips in an export are plain text
+(nothing marks them).
 
 ## Basecamp link
 
@@ -614,6 +750,10 @@ R11. **A server change that is not cell-only** (inbound sync inserting a row,
 R12. **Access is fixed per connection.** The Worker checks access at connect
     (spec §14); a role changed while a person is connected applies from their
     next connection.
+    A change made in «أعضاء المنصة» closes the person's connections
+    (`WorkbookRoom.disconnectUser`, close code 4403, not fatal), so the client
+    reconnects at once under the new access (see P4). A change made directly in
+    D1 still waits for the next connection.
 
 R13. **Author of a room commit.** R2's `savedBy` on a room commit is the author
     of the last op it includes (several people's edits may be in one version).
@@ -1000,3 +1140,50 @@ D7. **Migration number.** `0007_dashboard.sql` was the next free number on 2026-
 D8. **Appearance** is stored in KV `SETTINGS` under `settings:appearance` (palette overrides only, `#rrggbb`); every change is in `audit_log` (`settings.appearance`). Reading it needs a signed-in member; changing it needs a platform admin. **The calm palette is approved as the platform's look (owner, 2026-11-10)**: `apps/web/src/styles/theme.css`, adjustable through «المظهر».
 
 D9. **The dashboard is the workbook's first sheet tab «اللوحة»** (owner, 2026-11-10; apps/web #66). It is a real Univer worksheet, marked by platform data in its `custom` field (`nafSheetRole: 'dashboard'`, never by name or id), kept first in `sheetOrder` (`@naf-sheets/shared` dashboard-sheet.ts). The API adds it with `withDashboardSheet` when it serves a workbook (GET /api/workbooks/:id) and the room adds it with the same deterministic function when it loads one (room.ts `load`), so an editor that opened from the GET holds the same model as the room; blank workbooks, workbooks from a template and Google imports are created with it. It is never in D1 `sheets`: the files list, the link wizard, sync detection, /api/v1 and backups (D1 export) never see it, and backups copy snapshots byte for byte. Templates drop it and re-create it on instantiation. The figures and widgets skip it (a widget naming it is `sheet_missing`). sheet-model refuses it (`dashboard_sheet`) in `readTasks`, `ensureSystemColumns`, `applyInbound`, indentation, decoration and reordering. The room refuses any op that would remove, rename, hide or move it, put a sheet before it, insert a second one, or write its cells, properties or plugin data (footprint.ts `classifyOp`, as `invalid`); row heights and column widths on it pass. PUT …/snapshot stores what the editor sends unchanged (the editor always sends it); a snapshot saved without it is given it again on the next read. Confirm that a stored snapshot may lack it until its next save.
+
+## Platform members «أعضاء المنصة» (src/routes/platform-members.ts)
+
+P1. **Who may change what.** Platform admins only (403 `forbidden` in the route
+    for editors and viewers). Any admin may demote or suspend another admin;
+    there is no "owner" above admins. An admin cannot change their own role or
+    state (409 `cannot_change_self`); the last active admin can never be
+    demoted or suspended (409 `last_active_admin`, checked again inside the
+    UPDATE so two admins demoting each other at once cannot both win). Confirm
+    that every admin may demote other admins.
+
+P2. **Effect.** naf-auth reads `members.role` and `members.is_active` on every
+    protected request (`getMember`, no cache in the session or KV; verified by
+    test/members-session.test.ts through the real middleware), so a change
+    applies from the person's next request: suspended → 403 `access_denied`
+    (`reason: inactive`); a demotion caps every workbook role (access.ts). The
+    naf-auth session in AUTH_KV is not deleted on suspension; it is refused per
+    request and ends with naf-id's session.
+
+P3. **naf-id report** (naf-auth `reportAccessChange`): `role` on a role change,
+    `state: revoked` (reason «أُوقف من إعدادات المنصة») on suspension, `granted`
+    on reactivation, in one call when both change. Best effort: the local
+    change stands; the response says `sent | failed | skipped` (skipped = no
+    email, naf-id matches by email) and a failure is logged by code only. No
+    retry: naf-auth re-reports the role at the person's next sign-in, but not
+    the state. Should a failed report be queued and retried?
+
+P4. **Open realtime connections** are closed after a change, in every live
+    workbook the person owns or is a member of (every live workbook if they
+    were an admin). Best effort (`waitUntil`).
+
+P5. **Not touched by a suspension:** the person's Basecamp link and tokens,
+    workbooks they own, their workbook seats, and `bc-outbound` messages
+    already queued with their token (those still go out). Confirm whether
+    suspension should also stop their queued writes or revoke their Basecamp link.
+
+P6. **Audit.** One row per change, `member.access.update`, entity `member`,
+    details `{ from: { role, active }, to: { role, active } }`, written in the
+    same batch only when the UPDATE changed the row. The naf-id outcome is not
+    in the audit log (it happens after the commit); it is in the response and the log.
+
+P7. **Basecamp match column** is read from `bc_person_matches` and the account
+    people cache as stored (`storedMatches`, basecamp-link/people.ts): no
+    Basecamp call and no automatic matching on this screen, so a new member
+    shows «غير مطابَق» until the people-matching screen (which refreshes and
+    matches by email) has been opened. States: auto (email), manual, declined
+    (admin recorded no person), none.

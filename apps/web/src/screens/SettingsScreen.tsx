@@ -1,10 +1,10 @@
 // The user's settings: their own Basecamp account (spec §3, «اربط حسابك في
 // Basecamp»), and for platform admins the entries of §12.1 item 8 that exist
-// so far: people matching (§3), sync health (§9.4), templates (§7.1) and the
+// so far: platform members «أعضاء المنصة» (§3), people matching (§3), sync health (§9.4), templates (§7.1) and the
 // internal API's service tokens (§13), and the palette («المظهر»).
 
 import type { ReactNode } from 'react'
-import { Activity, KeyRound, LayoutTemplate, Palette, Users } from 'lucide-react'
+import { Activity, KeyRound, LayoutTemplate, Palette, UserCog, Users } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { CurrentUser } from '@naf-sheets/shared'
 import { AppBar } from '../components/AppBar'
@@ -32,8 +32,13 @@ export function SettingsScreen({ user }: { user: CurrentUser | null }) {
           {user?.role === 'admin' ? (
             <section className="card" aria-labelledby="admin-heading" data-testid="admin-section">
               <h2 id="admin-heading">{t.settings.adminSection}</h2>
+              <AdminEntry Icon={UserCog} title={t.settings.membersTitle} body={t.settings.membersBody}>
+                <Link className="button button--small" href={pathFor({ name: 'members' })} data-testid="open-members">
+                  {t.settings.membersOpen}
+                </Link>
+              </AdminEntry>
               <AdminEntry Icon={Users} title={t.settings.peopleMatchesTitle} body={t.settings.peopleMatchesBody}>
-                <Link className="button button--small" href={pathFor({ name: 'peopleMatches' })}>
+                <Link className="button button--small" href={pathFor({ name: 'peopleMatches' })} data-testid="open-people-matches">
                   {t.settings.peopleMatchesOpen}
                 </Link>
               </AdminEntry>

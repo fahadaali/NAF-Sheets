@@ -1,0 +1,71 @@
+/* «أعضاء المنصة» (src/screens/MembersScreen.tsx). Tokens from theme.css only. */
+
+.members-table__email,
+.members-table .num {
+  white-space: nowrap;
+}
+
+/* Badges, buttons and names keep their own width instead of filling the cell. */
+.members-table .stack-tight {
+  align-items: flex-start;
+}
+
+.members-table__role {
+  inline-size: auto;
+}
+
+/* Narrow screens: each member is a block, each cell a labelled line. */
+@media (max-width: 48rem) {
+  .members-table thead {
+    position: absolute;
+    inline-size: 1px;
+    block-size: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .members-table,
+  .members-table tbody,
+  .members-table tr,
+  .members-table th,
+  .members-table td {
+    display: block;
+    inline-size: 100%;
+  }
+
+  .members-table tr {
+    padding-block: var(--space-2);
+    border-block-end: var(--border-width) solid var(--color-border);
+  }
+
+  .members-table tbody tr:last-child {
+    border-block-end: 0;
+  }
+
+  .members-table th,
+  .members-table td,
+  .members-table tbody tr:last-child td {
+    border-block-end: 0;
+    padding-block: var(--space-1);
+  }
+
+  .members-table tbody th {
+    font-size: var(--font-size-md);
+    font-weight: var(--font-weight-bold);
+    color: var(--color-text);
+    white-space: normal;
+  }
+
+  .members-table__email {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .members-table td::before {
+    content: attr(data-label);
+    display: block;
+    font-size: var(--font-size-sm);
+    color: var(--color-text-muted);
+  }
+}

@@ -56,10 +56,12 @@ beforeAll(async () => {
     persist: false,
     ip: '127.0.0.1',
     logLevel: 'warn',
+    // A dashboard variable in production (wrangler.toml keep_vars), so not in the config.
+    vars: { PLATFORM_ID: 'naf-sheets-test' },
     experimental: { disableExperimentalWarning: true, disableDevRegistry: true },
   })
   const exec = async (statements: string[]) => {
-    const res = await fetch(`http://127.0.0.1:${worker.port}/__test/exec`, { method: 'POST', body: JSON.stringify({ statements }) })
+    const res = await fetch(`http://127.0.0.1:${worker.port}/api/__test/exec`, { method: 'POST', body: JSON.stringify({ statements }) })
     if (!res.ok) throw new Error(`exec: ${res.status} ${await res.text()}`)
   }
   for (const file of readdirSync(join(root, 'migrations')).filter((f) => f.endsWith('.sql')).sort()) {

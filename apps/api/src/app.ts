@@ -8,6 +8,8 @@ import { authConfig, nafAuthMiddleware } from './auth'
 import { ApiFailure, errorBody } from './errors'
 import { adminTemplateRoutes, apiTokenRoutes, backupRoutes, internalApiRoutes, templateRoutes } from './phase7'
 import { meRoutes } from './routes/me'
+import type { AccessReporter } from './routes/platform-members'
+import { platformMemberRoutes } from './routes/platform-members'
 import { webhookRoutes } from './routes/webhooks'
 import { workbookRoutes } from './routes/workbooks'
 import { DEFAULT_SNAPSHOT_ORPHAN_AGE_MS } from './snapshot'
@@ -17,6 +19,8 @@ export interface AppOptions {
   auth?: AuthMiddleware
   /** See DEFAULT_SNAPSHOT_ORPHAN_AGE_MS. */
   snapshotOrphanAgeMs?: number
+  /** Reports «أعضاء المنصة» changes to naf-id. Default: naf-auth's reportAccessChange. Tests pass a fake. */
+  reportAccess?: AccessReporter
 }
 
 export function createApp(options: AppOptions = {}): Hono<AppEnv> {
@@ -59,6 +63,8 @@ export function createApp(options: AppOptions = {}): Hono<AppEnv> {
   app.route('/api/admin/templates', adminTemplateRoutes())
   app.route('/api/admin/api-tokens', apiTokenRoutes())
   app.route('/api/admin/backups', backupRoutes())
+  // Platform roles and active state «أعضاء المنصة» (§3, §14).
+  app.route('/api/admin/members', platformMemberRoutes({ report: options.reportAccess }))
 
   return app
 }

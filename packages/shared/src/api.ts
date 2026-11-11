@@ -44,6 +44,20 @@ export type ApiErrorCode =
   | 'google_rate_limited'
   | 'google_unavailable'
   | 'google_bad_response'
+  // .xlsx upload and public Google Sheets links (apps/api/src/xlsx-import/errors.ts; owner 2026-11-11)
+  | 'xlsx_length_required'
+  | 'xlsx_empty'
+  | 'xlsx_file_too_large'
+  | 'xlsx_not_xlsx'
+  | 'xlsx_legacy_or_encrypted'
+  | 'xlsx_corrupt'
+  | 'xlsx_unpacked_too_large'
+  | 'xlsx_no_sheets'
+  | 'gsheets_link_private'
+  | 'gsheets_link_not_found'
+  | 'gsheets_link_too_large'
+  | 'gsheets_link_rate_limited'
+  | 'gsheets_link_unavailable'
   // Basecamp account link (apps/api/src/basecamp-link/errors.ts)
   | 'basecamp_not_configured'
   | 'basecamp_not_linked'
@@ -91,6 +105,10 @@ export type ApiErrorCode =
   | 'widget_not_confirmed'
   | 'widget_limit'
   | 'invalid_palette'
+  // Platform members «أعضاء المنصة» (apps/api/src/routes/platform-members.ts, contract ./api-members.ts)
+  | 'cannot_change_self'
+  | 'last_active_admin'
+  | 'member_changed'
 
 /** Every non-2xx JSON response. `message` is Arabic: what happened and what to do (spec §12.2). */
 export interface ApiError {

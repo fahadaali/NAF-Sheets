@@ -1,6 +1,8 @@
 export { convertSpreadsheet, univerSheetId, rewriteSheetLink, type ConvertOptions, type ConvertResult } from './convert'
 export type * from './google-types'
 export * from './report'
+export { colorToHex } from './color'
+export { stableStringify } from './style'
 export { mapHorizontalAlignment, mapLeftRightSides } from './rtl-open'
 export {
   extractFunctionCalls,

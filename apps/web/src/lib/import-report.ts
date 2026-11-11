@@ -4,7 +4,7 @@
 // anything is drawn from it, and its items are grouped by sheet. Pure,
 // unit-tested; type-only import of the package (nothing of it is bundled).
 
-import type { ImportCounts, ImportedSheetInfo, ImportReport, ImportReportItem } from '@naf-sheets/gsheets-import'
+import type { ImportCounts, ImportedSheetInfo, ImportOrigin, ImportReport, ImportReportItem } from '@naf-sheets/gsheets-import'
 import { isCellRange } from './cell-target'
 import type { EditorTarget } from './cell-target'
 
@@ -49,19 +49,69 @@ function isSheetInfo(value: unknown): value is ImportedSheetInfo {
   return isObject(value) && typeof value.sheetId === 'string' && typeof value.name === 'string' && typeof value.hidden === 'boolean'
 }
 
+const ORIGIN_KINDS = new Set(['google_api', 'google_export', 'excel', 'other'])
+const VIAS = new Set(['google_api', 'upload', 'google_link'])
+const isStringOrNull = (v: unknown) => v === null || v === undefined || typeof v === 'string'
+
+/** `source.origin` when it has a known shape; reports stored before 2026-11-11 have none. */
+function isOrigin(value: unknown): value is ImportOrigin {
+  if (!isObject(value)) return false
+  if (!ORIGIN_KINDS.has(value.kind as string) || !VIAS.has(value.via as string)) return false
+  if (!isStringOrNull(value.application) || !isStringOrNull(value.fileName)) return false
+  if (value.defaultFont !== undefined && value.defaultFont !== null) {
+    const f = value.defaultFont
+    if (!isObject(f) || !isStringOrNull(f.family) || !(f.size === null || typeof f.size === 'number')) return false
+  }
+  if (value.dateSystem !== undefined && value.dateSystem !== 'date1900' && value.dateSystem !== 'date1904') return false
+  return true
+}
+
 /**
  * The report when it has the shape the screen relies on, otherwise null (the
  * screen then says so instead of guessing). Unknown item kinds are kept: the
  * screen labels them generically.
  */
-export function parseImportReport(value: unknown): ImportReport | null {
-  if (!isObject(value) || !isObject(value.source) || !isObject(value.counts)) return null
-  if (typeof value.source.title !== 'string') return null
+export function parseImportReport(input: unknown): ImportReport | null {
+  if (!isObject(input) || !isObject(input.source) || !isObject(input.counts)) return null
+  if (typeof input.source.title !== 'string') return null
+  let value: JsonObject = input
+  // An unreadable origin is dropped rather than refusing the whole report.
+  if (input.source.origin !== undefined && !isOrigin(input.source.origin)) {
+    const { origin: _dropped, ...rest } = input.source
+    void _dropped
+    value = { ...input, source: rest }
+  }
   if (!Array.isArray(value.sheets) || !value.sheets.every(isSheetInfo)) return null
   if (!Array.isArray(value.items) || !value.items.every(isItem)) return null
-  const counts = value.counts
+  const counts = value.counts as JsonObject
   if (!COUNT_KEYS.every((k) => typeof counts[k] === 'number' && Number.isFinite(counts[k]))) return null
   return value as unknown as ImportReport
+}
+
+/** What the screen states about where the file came from. */
+export interface OriginFacts {
+  kind: ImportOrigin['kind']
+  via: ImportOrigin['via']
+  application: string | null
+  fileName: string | null
+  /** `Calibri 11`, `Arial 10`…; null when the report has none (Sheets API imports). */
+  defaultFont: string | null
+  dateSystem: 'date1900' | 'date1904' | null
+}
+
+/** Origin facts; a report without `origin` predates 2026-11-11 and came from the Sheets API. */
+export function originFacts(report: Pick<ImportReport, 'source'>): OriginFacts {
+  const o = report.source.origin
+  if (!o) return { kind: 'google_api', via: 'google_api', application: null, fileName: null, defaultFont: null, dateSystem: null }
+  const font = o.defaultFont && o.defaultFont.family ? `${o.defaultFont.family}${typeof o.defaultFont.size === 'number' ? ` ${o.defaultFont.size}` : ''}` : null
+  return {
+    kind: o.kind,
+    via: o.via,
+    application: o.application ?? null,
+    fileName: o.fileName ?? null,
+    defaultFont: font,
+    dateSystem: o.dateSystem ?? null,
+  }
 }
 
 export interface ReportGroup {

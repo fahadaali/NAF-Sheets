@@ -3,7 +3,8 @@
 // no upload progress, so this one request uses XMLHttpRequest; its answers and
 // failures are read exactly as the rest of the API client reads them.
 
-import type { UploadAttachmentResponse } from '@naf-sheets/shared'
+import type { ImportXlsxResponse, UploadAttachmentResponse } from '@naf-sheets/shared'
+import { XLSX_IMPORT_PATH } from '@naf-sheets/shared'
 import { t } from '../strings'
 import { ApiRequestError, redirectToLogin, toApiRequestError } from './api'
 
@@ -27,13 +28,29 @@ function parse(text: string): unknown {
 }
 
 export function uploadAttachment(workbookId: string, uid: string, file: File, options: UploadOptions = {}): Promise<UploadAttachmentResponse> {
+  return sendFile<UploadAttachmentResponse>(uploadPath(workbookId, uid, file.name), file, options)
+}
+
+/** POST /api/import/xlsx?name=…[&title=…] (packages/shared/src/api-integrations.ts). */
+export function xlsxImportPath(name: string, title?: string): string {
+  const params = new URLSearchParams({ name })
+  if (title) params.set('title', title)
+  return `${XLSX_IMPORT_PATH}?${params.toString()}`
+}
+
+/** «رفع ملف Excel»: the file's bytes as the body, with upload progress. */
+export function uploadXlsx(file: File, options: UploadOptions & { title?: string } = {}): Promise<ImportXlsxResponse> {
+  return sendFile<ImportXlsxResponse>(xlsxImportPath(file.name, options.title), file, options)
+}
+
+function sendFile<T>(path: string, file: File, options: UploadOptions): Promise<T> {
   return new Promise((resolve, reject) => {
     if (options.signal?.aborted) {
       reject(new DOMException('aborted', 'AbortError'))
       return
     }
     const xhr = new XMLHttpRequest()
-    xhr.open('POST', uploadPath(workbookId, uid, file.name))
+    xhr.open('POST', path)
     xhr.setRequestHeader('Accept', 'application/json')
     // The file's own type; the browser sets Content-Length from the file.
     xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream')
@@ -42,7 +59,7 @@ export function uploadAttachment(workbookId: string, uid: string, file: File, op
       const payload = parse(xhr.responseText)
       if (xhr.status >= 200 && xhr.status < 300 && typeof payload === 'object' && payload !== null) {
         options.onProgress?.(file.size, file.size)
-        resolve(payload as UploadAttachmentResponse)
+        resolve(payload as T)
         return
       }
       if (xhr.status >= 200 && xhr.status < 300) {

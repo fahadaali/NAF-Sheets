@@ -3,25 +3,32 @@
 //   2. من قالب ناف (phase 7) — GET /api/templates, then POST /api/workbooks
 //      with `source: 'template'`: a copy of the template's snapshot (admins
 //      manage templates from «الإعدادات» → «القوالب»).
-//   3. استيراد من Google Sheets (§7.2) — paste a link; when the caller's
-//      Google account is not linked, the browser goes to Google's consent and
-//      comes back here (`/?import=<id>`), then POST /api/import/gsheets and
-//      the import report opens.
+//   3. رفع ملف Excel — an .xlsx from Excel or downloaded from Google Sheets:
+//      POST /api/import/xlsx with the file's bytes (upload progress).
+//   4. رابط Google Sheets — a public ("anyone with the link") file: POST
+//      /api/import/gsheets-link; the platform downloads it as .xlsx itself.
+//   Owner decision 2026-11-11: there is no Google OAuth secret, so neither
+//   option goes through Google's consent (the OAuth routes stay in the API,
+//   unused by this screen). After either import the import report opens.
+//   `/?import=<id>` still opens the dialog on option 4 with the id filled in.
 // OPEN: the phase 1 contract has no rename endpoint, so the title is asked
 // here, once (apps/web/OPEN_QUESTIONS.md #2).
 
 import { useEffect, useId, useRef, useState } from 'react'
-import type { FormEvent, RefObject } from 'react'
-import { FileSpreadsheet, LayoutTemplate, LoaderCircle, Sheet } from 'lucide-react'
+import type { DragEvent, FormEvent, RefObject } from 'react'
+import { FileSpreadsheet, FileUp, LayoutTemplate, Link2, LoaderCircle } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import type { ImportGsheetsRequest, TemplateSummary } from '@naf-sheets/shared'
-import { api, errorMessage, googleStartUrl, isAbortError } from '../lib/api'
+import type { ImportGsheetsLinkRequest, TemplateSummary } from '@naf-sheets/shared'
+import { XLSX_MAX_FILE_BYTES } from '@naf-sheets/shared'
+import { api, errorMessage, isAbortError } from '../lib/api'
 import { parseSpreadsheetSource } from '../lib/gsheets-source'
-import { pathFor } from '../lib/routes'
+import { uploadXlsx } from '../lib/upload'
+import { checkXlsxFile, formatMegabytes, XLSX_ACCEPT } from '../lib/xlsx-file'
 import { t } from '../strings'
 
-type Choice = 'blank' | 'template' | 'gsheets'
-type Busy = null | 'creating' | 'checkingGoogle' | 'redirecting' | 'importing'
+type Choice = 'blank' | 'template' | 'xlsx' | 'gsheets'
+type Busy = null | 'creating' | 'uploading' | 'importing'
+const MAX_MB = Math.round(XLSX_MAX_FILE_BYTES / (1024 * 1024))
 type Templates = { kind: 'idle' } | { kind: 'loading' } | { kind: 'error'; message: string } | { kind: 'ready'; list: TemplateSummary[] }
 
 export function NewWorkbookDialog({
@@ -32,7 +39,7 @@ export function NewWorkbookDialog({
   onImported,
 }: {
   open: boolean
-  /** A spreadsheet id to start the import with (back from Google's consent). */
+  /** A spreadsheet id to start the link import with (`/?import=<id>`). */
   initialImport?: string | undefined
   onClose: () => void
   onCreated: (id: string) => void
@@ -41,18 +48,21 @@ export function NewWorkbookDialog({
   const dialogRef = useRef<HTMLDialogElement>(null)
   const titleRef = useRef<HTMLInputElement>(null)
   const sourceRef = useRef<HTMLInputElement>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
+  const [file, setFile] = useState<File | null>(null)
+  const [progress, setProgress] = useState(0)
+  const [dragOver, setDragOver] = useState(false)
   const [choice, setChoice] = useState<Choice>('blank')
   const [title, setTitle] = useState<string>(t.newFile.defaultTitle)
   const [source, setSource] = useState('')
   const [importTitle, setImportTitle] = useState('')
   const [busy, setBusy] = useState<Busy>(null)
   const [error, setError] = useState<string | null>(null)
-  const [returned, setReturned] = useState(false)
   const [templates, setTemplates] = useState<Templates>({ kind: 'idle' })
   const [templateId, setTemplateId] = useState('')
   const templateRef = useRef<HTMLSelectElement>(null)
   // Which field takes the focus once the dialog has rendered its option's fields.
-  const focusOnOpen = useRef<'title' | 'source' | null>(null)
+  const focusOnOpen = useRef<'title' | 'source' | 'file' | null>(null)
   const ids = useId()
   const headingId = `${ids}-heading`
   const errorId = `${ids}-error`
@@ -67,7 +77,9 @@ export function NewWorkbookDialog({
       setBusy(null)
       setChoice(initialImport ? 'gsheets' : 'blank')
       setSource(initialImport ?? '')
-      setReturned(Boolean(initialImport))
+      setFile(null)
+      setProgress(0)
+      setDragOver(false)
       setTemplates({ kind: 'idle' })
       setTemplateId('')
       focusOnOpen.current = initialImport ? 'source' : 'title'
@@ -82,6 +94,9 @@ export function NewWorkbookDialog({
   useEffect(() => {
     if (focusOnOpen.current === 'source' && sourceRef.current) {
       sourceRef.current.focus()
+      focusOnOpen.current = null
+    } else if (focusOnOpen.current === 'file' && fileRef.current) {
+      fileRef.current.focus()
       focusOnOpen.current = null
     } else if (focusOnOpen.current === 'title' && titleRef.current) {
       titleRef.current.select()
@@ -156,7 +171,7 @@ export function NewWorkbookDialog({
     }
   }
 
-  const importSheet = async () => {
+  const importLink = async () => {
     const check = parseSpreadsheetSource(source)
     if (!check.ok) {
       setError(t.newFile.sourceProblems[check.problem])
@@ -164,23 +179,13 @@ export function NewWorkbookDialog({
       return
     }
     setError(null)
-    setReturned(false)
-    setBusy('checkingGoogle')
+    setBusy('importing')
     try {
-      const google = await api.getGoogleLink()
-      if (google.state !== 'active') {
-        // Unlinked or expired: Google's consent, then back to «ملف جديد» with the id filled in.
-        // OPEN: the user presses «استيراد» again; nothing is imported unasked (OPEN_QUESTIONS.md #26).
-        setBusy('redirecting')
-        window.location.assign(googleStartUrl(pathFor({ name: 'files', q: '', importSource: check.spreadsheetId })))
-        return
-      }
-      setBusy('importing')
       // OPEN: the id is sent rather than the pasted address (the contract takes either), OPEN_QUESTIONS.md #27.
-      const body: ImportGsheetsRequest = { source: check.spreadsheetId }
+      const body: ImportGsheetsLinkRequest = { source: check.spreadsheetId }
       const wanted = importTitle.trim()
       if (wanted) body.title = wanted
-      const { workbookId } = await api.importGsheets(body)
+      const { workbookId } = await api.importGsheetsLink(body)
       setBusy(null)
       onImported(workbookId)
     } catch (err) {
@@ -189,16 +194,61 @@ export function NewWorkbookDialog({
     }
   }
 
+  const pickFile = (picked: File | null) => {
+    setFile(picked)
+    setError(null)
+    if (picked) {
+      const check = checkXlsxFile(picked)
+      if (!check.ok) setError(t.newFile.fileProblems[check.problem])
+    }
+  }
+
+  const importFile = async () => {
+    const check = checkXlsxFile(file)
+    if (!check.ok || !file) {
+      setError(t.newFile.fileProblems[check.ok ? 'missing' : check.problem])
+      fileRef.current?.focus()
+      return
+    }
+    setError(null)
+    setProgress(0)
+    setBusy('uploading')
+    try {
+      const wanted = importTitle.trim()
+      const { workbookId } = await uploadXlsx(file, {
+        ...(wanted ? { title: wanted } : {}),
+        onProgress: (loaded, total) => {
+          setProgress(total > 0 ? Math.min(100, Math.round((loaded / total) * 100)) : 0)
+          if (total > 0 && loaded >= total) setBusy('importing')
+        },
+      })
+      setBusy(null)
+      onImported(workbookId)
+    } catch (err) {
+      if (!isAbortError(err)) setError(errorMessage(err))
+      setBusy(null)
+    }
+  }
+
+  const onDrop = (e: DragEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    setDragOver(false)
+    if (busy) return
+    const dropped = e.dataTransfer.files?.[0] ?? null
+    if (dropped) pickFile(dropped)
+  }
+
   const submit = (e: FormEvent) => {
     e.preventDefault()
     if (busy) return
     if (choice === 'blank') void createBlank()
     else if (choice === 'template') void createFromTemplate()
-    else if (choice === 'gsheets') void importSheet()
+    else if (choice === 'xlsx') void importFile()
+    else if (choice === 'gsheets') void importLink()
   }
 
-  const status =
-    busy === 'checkingGoogle' ? t.newFile.checkingGoogle : busy === 'redirecting' ? t.newFile.redirectingToGoogle : busy === 'importing' ? t.newFile.importing : null
+  const status = busy === 'uploading' ? t.newFile.uploading(progress) : busy === 'importing' ? t.newFile.importing : null
+  const importing = choice === 'xlsx' || choice === 'gsheets'
 
   return (
     <dialog
@@ -214,7 +264,15 @@ export function NewWorkbookDialog({
         <h2 id={headingId}>{t.newFile.title}</h2>
         <fieldset className="choices" disabled={busy !== null}>
           <legend className="sr-only">{t.newFile.optionsLegend}</legend>
-          <ChoiceCard name={`${ids}-choice`} value="blank" checked={choice === 'blank'} onChoose={choose} Icon={FileSpreadsheet} label={t.newFile.blankOption} hint={t.newFile.blankHint} />
+          <ChoiceCard
+            name={`${ids}-choice`}
+            value="blank"
+            checked={choice === 'blank'}
+            onChoose={choose}
+            Icon={FileSpreadsheet}
+            label={t.newFile.blankOption}
+            hint={t.newFile.blankHint}
+          />
           <ChoiceCard
             name={`${ids}-choice`}
             value="template"
@@ -224,7 +282,24 @@ export function NewWorkbookDialog({
             label={t.newFile.templateOption}
             hint={t.newFile.templateHint}
           />
-          <ChoiceCard name={`${ids}-choice`} value="gsheets" checked={choice === 'gsheets'} onChoose={choose} Icon={Sheet} label={t.newFile.importOption} hint={t.newFile.importHint} />
+          <ChoiceCard
+            name={`${ids}-choice`}
+            value="xlsx"
+            checked={choice === 'xlsx'}
+            onChoose={choose}
+            Icon={FileUp}
+            label={t.newFile.xlsxOption}
+            hint={t.newFile.xlsxHint}
+          />
+          <ChoiceCard
+            name={`${ids}-choice`}
+            value="gsheets"
+            checked={choice === 'gsheets'}
+            onChoose={choose}
+            Icon={Link2}
+            label={t.newFile.importOption}
+            hint={t.newFile.importHint}
+          />
         </fieldset>
 
         {choice === 'template' ? (
@@ -262,46 +337,94 @@ export function NewWorkbookDialog({
           </div>
         ) : null}
 
-        {choice === 'gsheets' ? (
-          <>
-            {returned ? (
-              <p className="muted" role="status" data-testid="import-returned">
-                {t.newFile.returnedFromGoogle}
-              </p>
-            ) : null}
-            <div className="field">
-              <label htmlFor={`${ids}-source`}>{t.newFile.sourceLabel}</label>
+        {choice === 'xlsx' ? (
+          <div className="field">
+            <span className="field-label" id={`${ids}-file-label`}>
+              {t.newFile.fileLabel}
+            </span>
+            <div
+              className={`dropzone import-dropzone${dragOver ? ' is-active' : ''}`}
+              data-testid="xlsx-dropzone"
+              onDragOver={(e) => {
+                e.preventDefault()
+                if (!busy) setDragOver(true)
+              }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={onDrop}
+            >
+              <FileSpreadsheet className="icon" aria-hidden="true" />
+              {file ? (
+                <p className="import-dropzone__file" data-testid="xlsx-chosen">
+                  <bdi dir="ltr">{file.name}</bdi>
+                  <span className="muted num">
+                    <bdi dir="ltr">{t.newFile.fileSize(formatMegabytes(file.size))}</bdi>
+                  </span>
+                </p>
+              ) : (
+                <p className="muted">{t.newFile.fileDrop}</p>
+              )}
+              <label className="button button--small" htmlFor={`${ids}-file`}>
+                {file ? t.newFile.fileChange : t.newFile.fileChoose}
+              </label>
               <input
-                ref={sourceRef}
-                id={`${ids}-source`}
-                name="source"
-                dir="ltr"
-                inputMode="url"
-                value={source}
-                onChange={(e) => setSource(e.target.value)}
-                placeholder={t.newFile.sourcePlaceholder}
-                autoComplete="off"
-                spellCheck={false}
-                required
+                ref={fileRef}
+                id={`${ids}-file`}
+                className="sr-only"
+                type="file"
+                name="file"
+                accept={XLSX_ACCEPT}
+                aria-labelledby={`${ids}-file-label`}
+                aria-describedby={error ? `${errorId} ${ids}-file-hint` : `${ids}-file-hint`}
                 aria-invalid={error ? true : undefined}
-                aria-describedby={error ? errorId : undefined}
+                onChange={(e) => pickFile(e.target.files?.[0] ?? null)}
               />
             </div>
-            <div className="field">
-              <label htmlFor={`${ids}-import-title`}>{t.newFile.importTitleLabel}</label>
-              <input
-                id={`${ids}-import-title`}
-                name="importTitle"
-                value={importTitle}
-                onChange={(e) => setImportTitle(e.target.value)}
-                autoComplete="off"
-                aria-describedby={`${ids}-import-title-hint`}
-              />
-              <p id={`${ids}-import-title-hint`} className="field-hint">
-                {t.newFile.importTitleHint}
-              </p>
-            </div>
-          </>
+            <p id={`${ids}-file-hint`} className="field-hint">
+              {t.newFile.fileHint(MAX_MB)}
+            </p>
+            {busy === 'uploading' ? <progress className="import-progress" max={100} value={progress} aria-label={t.newFile.uploading(progress)} /> : null}
+          </div>
+        ) : null}
+
+        {choice === 'gsheets' ? (
+          <div className="field">
+            <label htmlFor={`${ids}-source`}>{t.newFile.sourceLabel}</label>
+            <input
+              ref={sourceRef}
+              id={`${ids}-source`}
+              name="source"
+              dir="ltr"
+              inputMode="url"
+              value={source}
+              onChange={(e) => setSource(e.target.value)}
+              placeholder={t.newFile.sourcePlaceholder}
+              autoComplete="off"
+              spellCheck={false}
+              required
+              aria-invalid={error ? true : undefined}
+              aria-describedby={error ? `${errorId} ${ids}-link-help` : `${ids}-link-help`}
+            />
+            <p id={`${ids}-link-help`} className="field-hint">
+              {t.newFile.linkHelp}
+            </p>
+          </div>
+        ) : null}
+
+        {importing ? (
+          <div className="field">
+            <label htmlFor={`${ids}-import-title`}>{t.newFile.importTitleLabel}</label>
+            <input
+              id={`${ids}-import-title`}
+              name="importTitle"
+              value={importTitle}
+              onChange={(e) => setImportTitle(e.target.value)}
+              autoComplete="off"
+              aria-describedby={`${ids}-import-title-hint`}
+            />
+            <p id={`${ids}-import-title-hint`} className="field-hint">
+              {choice === 'xlsx' ? t.newFile.uploadTitleHint : t.newFile.importTitleHint}
+            </p>
+          </div>
         ) : null}
 
         {error ? (
@@ -318,7 +441,7 @@ export function NewWorkbookDialog({
         <div className="dialog__actions">
           <button type="submit" className="button button--primary" disabled={busy !== null}>
             {busy ? <LoaderCircle className="icon spin" aria-hidden="true" /> : null}
-            {choice === 'gsheets' ? t.newFile.importSubmit : busy === 'creating' ? t.newFile.creating : t.newFile.create}
+            {importing ? t.newFile.importSubmit : busy === 'creating' ? t.newFile.creating : t.newFile.create}
           </button>
           <button type="button" className="button" onClick={onClose} disabled={busy !== null}>
             {t.newFile.cancel}
@@ -351,7 +474,16 @@ function ChoiceCard({
   const id = `${name}-${value}`
   return (
     <div className="choice" data-choice={value}>
-      <input type="radio" id={id} name={name} value={value} checked={checked} disabled={disabled} onChange={() => onChoose(value)} aria-describedby={`${id}-hint`} />
+      <input
+        type="radio"
+        id={id}
+        name={name}
+        value={value}
+        checked={checked}
+        disabled={disabled}
+        onChange={() => onChoose(value)}
+        aria-describedby={`${id}-hint`}
+      />
       <label htmlFor={id}>
         <Icon className="icon" aria-hidden="true" />
         <span>

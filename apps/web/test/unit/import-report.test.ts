@@ -94,6 +94,7 @@ describe('parseImportReport', () => {
       object_sheet: true, chart: true, slicer: true, filter_view: true, protected_range: true, banded_range: true, conditional_format: true,
       data_validation: true, filter: true, filter_criteria: true, hyperlink: true, smart_chip: true, number_format: true, table: true,
       row_group: true, column_group: true, comment: true, named_range: true, theme_color: true,
+      checkbox: true, drawing_image: true, drawing_shape: true, unsupported_feature: true, cell_format: true,
     }
     for (const kind of Object.keys(kinds)) expect(t.report.kinds[kind], kind).toMatch(/[؀-ۿ]/)
   })

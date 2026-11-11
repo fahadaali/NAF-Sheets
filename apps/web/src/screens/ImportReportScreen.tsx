@@ -17,8 +17,8 @@ import { AppBar } from '../components/AppBar'
 import { Notice } from '../components/Notice'
 import { api, errorMessage, isAbortError } from '../lib/api'
 import { formatCount, formatDateTime } from '../lib/format'
-import { COUNT_KEYS, groupReportItems, itemTarget, outcomeCounts, parseImportReport } from '../lib/import-report'
-import type { ReportGroup } from '../lib/import-report'
+import { COUNT_KEYS, groupReportItems, itemTarget, originFacts, outcomeCounts, parseImportReport } from '../lib/import-report'
+import type { OriginFacts, ReportGroup } from '../lib/import-report'
 import { Link } from '../lib/router'
 import { pathFor } from '../lib/routes'
 import { useDocumentTitle } from '../lib/use-document-title'
@@ -106,6 +106,7 @@ function Report({ id, response, report, actions }: { id: string; response: Impor
   const groups = groupReportItems(report)
   const outcomes = outcomeCounts(report.items)
   const importedAt = formatDateTime(response.createdAt)
+  const origin = originFacts(report)
   return (
     <div className="stack">
       <section className="card" data-testid="report-summary">
@@ -114,8 +115,8 @@ function Report({ id, response, report, actions }: { id: string; response: Impor
             <bdi>{report.source.title}</bdi>
           </h2>
         </div>
-        <p className="muted">
-          {t.report.source}
+        <p className="muted" data-testid="report-source">
+          {t.report.originKinds[origin.kind] ?? t.report.source}
           {importedAt ? (
             <>
               {' · '}
@@ -126,6 +127,7 @@ function Report({ id, response, report, actions }: { id: string; response: Impor
             </>
           ) : null}
         </p>
+        <OriginList origin={origin} />
         <h3 className="card__subhead">{t.report.countsTitle}</h3>
         <dl className="counts" data-testid="report-counts">
           {COUNT_KEYS.map((key) => (
@@ -165,6 +167,61 @@ function Report({ id, response, report, actions }: { id: string; response: Impor
         </section>
       )}
     </div>
+  )
+}
+
+function OriginList({ origin }: { origin: OriginFacts }) {
+  return (
+    <>
+      <h3 className="card__subhead">{t.report.originTitle}</h3>
+      <dl className="report-origin" data-testid="report-origin" data-origin={origin.kind} data-via={origin.via}>
+        <div>
+          <dt>{t.report.originLabel}</dt>
+          <dd>{t.report.originKinds[origin.kind] ?? t.report.otherKind}</dd>
+        </div>
+        <div>
+          <dt>{t.report.viaLabel}</dt>
+          <dd>{t.report.via[origin.via] ?? t.report.otherKind}</dd>
+        </div>
+        {origin.fileName ? (
+          <div>
+            <dt>{t.report.fileNameLabel}</dt>
+            <dd>
+              <bdi dir="ltr">{origin.fileName}</bdi>
+            </dd>
+          </div>
+        ) : null}
+        {origin.application ? (
+          <div>
+            <dt>{t.report.applicationLabel}</dt>
+            <dd>
+              <bdi dir="ltr">{origin.application}</bdi>
+            </dd>
+          </div>
+        ) : null}
+        {origin.defaultFont ? (
+          <div>
+            <dt>{t.report.defaultFontLabel}</dt>
+            <dd>
+              <bdi dir="ltr" className="num">
+                {origin.defaultFont}
+              </bdi>{' '}
+              <span className="muted">{t.report.defaultFontNote}</span>
+            </dd>
+          </div>
+        ) : null}
+        {origin.dateSystem ? (
+          <div>
+            <dt>{t.report.dateSystemLabel}</dt>
+            <dd>{t.report.dateSystem[origin.dateSystem]}</dd>
+          </div>
+        ) : null}
+        <div>
+          <dt>{t.report.alignmentLabel}</dt>
+          <dd>{t.report.alignmentValue}</dd>
+        </div>
+      </dl>
+    </>
   )
 }
 

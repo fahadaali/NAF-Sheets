@@ -219,6 +219,12 @@ export function parseClientMessage(text: string): RoomClientMessage | null {
   }
 }
 
+/**
+ * A member's platform access changed (`disconnectUser`). Not one of the
+ * client's fatal codes (ROOM_CLOSE in @naf-sheets/shared): it reconnects.
+ */
+export const ROOM_CLOSE_ACCESS_CHANGED = 4403
+
 const CLOSE_FOR: Record<RoomErrorCode, number | null> = {
   protocol_mismatch: ROOM_CLOSE.protocolMismatch,
   unavailable: ROOM_CLOSE.unavailable,
@@ -364,6 +370,26 @@ export class WorkbookRoom extends DurableObject<Env> {
   /** True while at least one editor has joined. */
   async isLive(): Promise<boolean> {
     return this.joinedSockets().length > 0
+  }
+
+  /**
+   * Closes every connection of `userId` because their platform role or
+   * active state changed («أعضاء المنصة»). The close code is not fatal, so
+   * the client reconnects and the Worker checks access again: a suspended
+   * member is refused, a demoted one comes back read-only. Returns how many
+   * connections were closed.
+   */
+  async disconnectUser(userId: string): Promise<number> {
+    const sockets = this.ctx.getWebSockets(`user:${userId}`)
+    for (const ws of sockets) {
+      try {
+        ws.close(ROOM_CLOSE_ACCESS_CHANGED, 'access_changed')
+      } catch {
+        // Already closed.
+      }
+      await this.departed(ws)
+    }
+    return sockets.length
   }
 
   /**

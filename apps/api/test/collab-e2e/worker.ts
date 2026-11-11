@@ -7,7 +7,9 @@
 // - sign-in: instead of naf-id, the member id comes from the `x-test-user`
 //   header (or, for the room's WebSocket, the `test-user` query parameter),
 //   and the member row is read exactly as naf-auth reads it (`getMember`);
-// - POST /__test/exec runs SQL statements (migrations and members).
+// - POST /api/__test/exec runs SQL statements (migrations and members). Under
+//   /api/ because only those paths reach the Worker before the static assets
+//   (wrangler.toml run_worker_first).
 
 import { getMember } from 'naf-auth'
 import { createApp } from '../../src/app'
@@ -38,7 +40,7 @@ setOutboundDetection(detectAfterRoomCommit)
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url)
-    if (url.pathname === '/__test/exec' && request.method === 'POST') {
+    if (url.pathname === '/api/__test/exec' && request.method === 'POST') {
       const { statements } = (await request.json()) as { statements: string[] }
       for (const sql of statements) await env.DB.prepare(sql).run()
       return new Response('ok')

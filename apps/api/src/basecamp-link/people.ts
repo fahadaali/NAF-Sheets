@@ -346,6 +346,33 @@ export async function peopleMatches(ctx: LinkContext): Promise<PeopleMatchesResp
   }
 }
 
+/** A member's stored Basecamp match, as «أعضاء المنصة» shows it (contract `BasecampMatchState`). */
+export interface StoredMatch {
+  state: 'auto' | 'manual' | 'declined' | 'none'
+  bcPersonId: number | null
+  personName: string | null
+}
+
+/**
+ * The stored match of every member (active or not), read only: no Basecamp
+ * call and no automatic matching. The matching itself is `matchByEmail` and
+ * `setManualMatch` above; this only names what they recorded.
+ */
+export async function storedMatches(db: D1Database): Promise<Map<string, StoredMatch>> {
+  const { results } = await db
+    .prepare(
+      `SELECT pm.user_id, pm.bc_person_id, pm.source, pc.name AS person_name
+       FROM bc_person_matches pm LEFT JOIN bc_account_people_cache pc ON pc.bc_person_id = pm.bc_person_id`,
+    )
+    .all<{ user_id: string; bc_person_id: number | null; source: 'email' | 'manual'; person_name: string | null }>()
+  const map = new Map<string, StoredMatch>()
+  for (const row of results) {
+    const state = row.bc_person_id === null ? 'declined' : row.source === 'email' ? 'auto' : 'manual'
+    map.set(row.user_id, { state, bcPersonId: row.bc_person_id, personName: row.person_name })
+  }
+  return map
+}
+
 /**
  * PUT /api/admin/people-matches/:userId — an admin's manual decision. `null`
  * records "no Basecamp person" so the automatic match never overrides it.

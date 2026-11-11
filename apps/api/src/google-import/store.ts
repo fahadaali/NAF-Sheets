@@ -30,6 +30,12 @@ export interface PersistInput {
   /** Number of spreadsheets.get calls, for the audit entry. */
   googleRequests: number
   maxInlineReportBytes: number
+  /**
+   * The import's own audit entry, when it is not the Sheets API path
+   * (`workbook.import.gsheets`): the .xlsx upload and the public link
+   * (src/xlsx-import) name their action and details here. No cell content.
+   */
+  audit?: { action: string; details: Record<string, unknown> }
 }
 
 /** R2 key of a report too large for D1. */
@@ -119,7 +125,7 @@ export async function persistImport(env: Env, input: PersistInput): Promise<Impo
         entityType: 'workbook',
         entityId: workbookId,
         workbookId,
-        details: { title: input.title, source: 'gsheets', ownerId: input.ownerId },
+        details: { title: input.title, source: 'gsheets', ownerId: input.ownerId, origin: input.report.source.origin?.kind ?? 'google_api' },
       },
       now,
     ),
@@ -128,14 +134,13 @@ export async function persistImport(env: Env, input: PersistInput): Promise<Impo
       db,
       {
         actorId: input.ownerId,
-        action: 'workbook.import.gsheets',
+        action: input.audit?.action ?? 'workbook.import.gsheets',
         entityType: 'workbook',
         entityId: workbookId,
         workbookId,
         details: {
-          spreadsheetId: input.spreadsheetId,
+          ...(input.audit ? input.audit.details : { spreadsheetId: input.spreadsheetId, googleRequests: input.googleRequests }),
           reportId,
-          googleRequests: input.googleRequests,
           counts: input.report.counts,
           reportItems: input.report.items.length,
           reportInR2: summaryJson !== reportJson,

@@ -2989,3 +2989,68 @@ a.widget__total-value:hover {
 .activity__meta bdi[dir='ltr'] {
   white-space: nowrap;
 }
+
+/* «رفع ملف Excel» in «ملف جديد» (NewWorkbookDialog) ---------------------------- */
+
+.field-label {
+  font-weight: var(--font-weight-medium);
+}
+
+/* The file input is visually hidden; its label is the button, and the zone shows focus. */
+.field input.sr-only {
+  block-size: 1px;
+  padding: 0;
+  border: 0;
+}
+
+.import-dropzone:focus-within {
+  box-shadow: var(--focus-ring);
+}
+
+.import-dropzone__file {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-2);
+  overflow-wrap: anywhere;
+}
+
+.import-progress {
+  inline-size: 100%;
+  block-size: var(--progress-height);
+  accent-color: var(--progress-fill);
+}
+
+/* Import report: where the file came from (ImportReportScreen) ---------------- */
+
+.report-origin {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: var(--space-2) var(--space-4);
+  margin: 0;
+}
+
+.report-origin > div {
+  display: contents;
+}
+
+.report-origin dt {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.report-origin dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 30rem) {
+  .report-origin {
+    grid-template-columns: 1fr;
+    gap: var(--space-1);
+  }
+
+  .report-origin dd {
+    margin-block-end: var(--space-2);
+  }
+}

@@ -9,6 +9,7 @@ import { Notice } from './components/Notice'
 import { FilesScreen } from './screens/FilesScreen'
 import { ImportReportScreen } from './screens/ImportReportScreen'
 import { DeniedScreen, NotFoundScreen } from './screens/MessageScreens'
+import { MembersScreen } from './screens/MembersScreen'
 import { PeopleMatchesScreen } from './screens/PeopleMatchesScreen'
 import { SettingsScreen } from './screens/SettingsScreen'
 import { ApiTokensScreen } from './screens/ApiTokensScreen'
@@ -116,6 +117,8 @@ export function App() {
       )
     case 'settings':
       return <SettingsScreen user={user} />
+    case 'members':
+      return <MembersScreen user={user} userSettled={settled} />
     case 'peopleMatches':
       return <PeopleMatchesScreen user={user} userSettled={settled} />
     case 'syncHealth':

@@ -14,6 +14,7 @@
     "@naf-sheets/shared": "0.0.0",
     "@naf-sheets/sheet-model": "0.0.0",
     "@naf-sheets/sync-engine": "0.0.0",
+    "@naf-sheets/xlsx-import": "0.0.0",
     "@univerjs/core": "1.4.0",
     "@univerjs/data-validation": "1.4.0",
     "@univerjs/docs": "1.4.0",

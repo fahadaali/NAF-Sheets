@@ -57,7 +57,7 @@ prerequisites, not dropped:
 |---|---|
 | 0 — Spike | **Approved 2026-11-10.** Report: `docs/phase-0-report.md` |
 | 1 — Foundation | Built and tested locally; live acceptance needs naf-id (`PLATFORM_ID`) and Cloudflare |
-| 2 — Import | Built (converter, OAuth, report); live acceptance blocked on the real file |
+| 2 — Import | Built: one converter (`packages/gsheets-import`) fed by the Sheets API path (OAuth, unused: owner 2026-11-11, no `GOOGLE_CLIENT_SECRET`) and by `packages/xlsx-import` — **.xlsx upload** and **public Google Sheets links** downloaded as .xlsx, origin detected (Excel / Google export / other) and recorded in the report; tested on real Google exports and synthesised Excel files (apps/api `OPEN_QUESTIONS.md` G18–G31); live acceptance blocked on the real file |
 | 3 / 4 — Outbound / inbound sync | Built against a fake Basecamp; live acceptance blocked on Basecamp inputs and `PUBLIC_API_ORIGIN` |
 | 5 — Subtasks, assignment, attachments, comments | Built against a fake Basecamp, except external-contact email (provider undecided, spec §17-7) |
 | 6 — Realtime collaboration | Built: default (a) self-built per spec §5.3 (headless Univer in the `WorkbookRoom`) until §17-2 is decided; tested locally only |

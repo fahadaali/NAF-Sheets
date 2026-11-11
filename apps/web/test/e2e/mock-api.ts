@@ -31,12 +31,16 @@ import type {
   BasecampTodolistsResponse,
   BcPerson,
   GoogleLinkResponse,
+  ImportGsheetsLinkRequest,
   ImportGsheetsRequest,
   ImportReportResponse,
   LinkPlan,
   LinkPreviewResponse,
   LinkWorkbookResponse,
   MeResponse,
+  NafIdReport,
+  PlatformMember,
+  UpdatePlatformMemberRequest,
   PeopleMatchesResponse,
   PutPeopleMatchRequest,
   SaveSnapshotRequest,
@@ -110,6 +114,10 @@ export class MockApi {
   importReports = new Map<string, ImportReportResponse>()
   /** POST /api/import/gsheets: what to create; returns the response. */
   onImport: ((req: ImportGsheetsRequest) => { workbookId: string; reportId: string }) | null = null
+  /** POST /api/import/xlsx (raw file body; `name`/`title` in the query): a response, or an error reply. */
+  onXlsxImport: ((req: { size: number; name: string | null; title: string | null }) => { workbookId: string; reportId: string } | Reply) | null = null
+  /** POST /api/import/gsheets-link: a response, or an error reply. */
+  onLinkImport: ((req: ImportGsheetsLinkRequest) => { workbookId: string; reportId: string } | Reply) | null = null
   /** POST …/link/preview */
   preview: (plan: LinkPlan) => LinkPreviewResponse = (plan) => ({
     sheets: plan.sheets.map((s) => ({ sheetId: s.sheetId, todosToCreate: 0, subtasksToCreate: 0, proposedMatches: [], unmatchedAssignees: [], warnings: [] })),
@@ -172,6 +180,11 @@ export class MockApi {
   palette: AppearancePalette = {}
   private widgetCount = 0
 
+  // --- Platform members «أعضاء المنصة» (packages/shared/src/api-members.ts) ---
+  platformMembers: PlatformMember[] = []
+  /** What PUT /api/admin/members/:userId says about the naf-id report. */
+  memberReport: NafIdReport = 'sent'
+
   bodies(method: string, path: string): unknown[] {
     return this.requests.filter((r) => r.method === method && r.path === path).map((r) => r.body)
   }
@@ -218,7 +231,7 @@ export class MockApi {
     const request = route.request()
     const url = new URL(request.url())
     let body: unknown = null
-    if (request.method() === 'POST' && /\/tasks\/[^/]+\/attachments$/.test(url.pathname)) {
+    if (request.method() === 'POST' && (/\/tasks\/[^/]+\/attachments$/.test(url.pathname) || url.pathname === '/api/import/xlsx')) {
       // A raw file body (not JSON): its size and type are what the mock keeps.
       const data = request.postDataBuffer() ?? Buffer.alloc(0)
       body = { size: data.length, contentType: request.headers()['content-type'] ?? null, data }
@@ -270,6 +283,18 @@ export class MockApi {
       return { status: 204, body: undefined }
     }
     if (path === '/api/google/link' && method === 'GET') return { status: 200, body: this.googleLink }
+    if (path === '/api/import/xlsx' && method === 'POST') {
+      if (!this.onXlsxImport) return error(415, 'xlsx_not_xlsx', 'الملف ليس ملف Excel بصيغة ‎.xlsx.')
+      const raw = body as { size: number }
+      const query = new URLSearchParams(this.requests[this.requests.length - 1]?.path.split('?')[1] ?? '')
+      const out = this.onXlsxImport({ size: raw.size, name: query.get('name'), title: query.get('title') })
+      return 'status' in out ? out : { status: 201, body: out }
+    }
+    if (path === '/api/import/gsheets-link' && method === 'POST') {
+      if (!this.onLinkImport) return error(403, 'gsheets_link_private', 'الملف غير مشارك بالرابط.')
+      const out = this.onLinkImport(body as ImportGsheetsLinkRequest)
+      return 'status' in out ? out : { status: 201, body: out }
+    }
     if (path === '/api/import/gsheets' && method === 'POST') {
       if (!this.onImport) return error(400, 'unsupported_source', 'تعذّر الاستيراد.')
       return { status: 201, body: this.onImport(body as ImportGsheetsRequest) }
@@ -563,9 +588,33 @@ export class MockApi {
     return undefined
   }
 
+  /** GET/PUT /api/admin/members (with the API's guards); undefined when the path is not one of them. */
+  private members(method: string, path: string, body: unknown): Reply | undefined {
+    const one = /^\/api\/admin\/members\/([^/]+)$/.exec(path)
+    if (path !== '/api/admin/members' && !one) return undefined
+    if (this.me.user.role !== 'admin') return error(403, 'forbidden', 'هذا الإجراء مقصور على مسؤول المنصة. اطلبه من مسؤول المنصة.')
+    if (!one && method === 'GET') return { status: 200, body: { members: this.platformMembers } }
+    if (!one?.[1] || method !== 'PUT') return undefined
+    const userId = decodeURIComponent(one[1])
+    const current = this.platformMembers.find((m) => m.userId === userId)
+    if (!current) return error(404, 'not_found', 'لم يُعثر على هذا العضو في المنصة. حدّث الصفحة ثم اختر عضواً من القائمة.')
+    const req = body as UpdatePlatformMemberRequest
+    const next: PlatformMember = { ...current, role: req.role ?? current.role, active: req.active ?? current.active }
+    if (next.role === current.role && next.active === current.active) return { status: 200, body: { member: current, changed: false, nafIdReport: 'not_needed' } }
+    if (userId === this.me.user.id) return error(409, 'cannot_change_self', 'لا يمكنك تغيير دورك أو إيقاف حسابك بنفسك. اطلب ذلك من مسؤول آخر للمنصة.')
+    const otherAdmins = this.platformMembers.filter((m) => m.userId !== userId && m.role === 'admin' && m.active).length
+    if (current.role === 'admin' && current.active && (next.role !== 'admin' || !next.active) && otherAdmins === 0) {
+      return error(409, 'last_active_admin', 'لم يُحفظ التغيير: هذا آخر مسؤول نشط في المنصة. رقِّ عضواً آخر إلى «مسؤول» أولاً، ثم أعد المحاولة.')
+    }
+    this.platformMembers = this.platformMembers.map((m) => (m.userId === userId ? next : m))
+    return { status: 200, body: { member: next, changed: true, nafIdReport: this.memberReport } }
+  }
+
   private reply(method: string, url: URL, body: unknown): Reply {
     const path = url.pathname
     if (method === 'GET' && path === '/api/me') return { status: 200, body: this.me }
+    const members = this.members(method, path, body)
+    if (members) return members
     const dashboard = this.dashboard(method, path, body)
     if (dashboard) return dashboard
     const phase7 = this.phase7(method, path, body)

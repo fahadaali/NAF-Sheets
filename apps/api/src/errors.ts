@@ -42,6 +42,15 @@ export const MESSAGES = {
   invalid_query: 'معايير البحث غير صالحة: status إحدى done أو open أو overdue، وdue_before تاريخ بصيغة YYYY-MM-DD. صحّحها ثم أعد المحاولة.',
   invalid_backup_retention:
     'قيم الاحتفاظ بالنسخ الاحتياطية غير صالحة: عدد النسخ اليومية عدد صحيح من 1 إلى 365، وعدد الأشهر عدد صحيح من 0 إلى 120. صحّحهما ثم أعد المحاولة.',
+  // Platform members «أعضاء المنصة» (src/routes/platform-members.ts).
+  platform_member_not_found: 'لم يُعثر على هذا العضو في المنصة. حدّث الصفحة ثم اختر عضواً من القائمة.',
+  invalid_member_change:
+    'الطلب غير صالح: أرسل «role» بإحدى القيم admin أو editor أو viewer، أو «active» بقيمة true أو false، أو كليهما. صحّح الطلب ثم أعد المحاولة.',
+  cannot_change_self:
+    'لا يمكنك تغيير دورك أو إيقاف حسابك بنفسك، حتى لا تفقد المنصة إدارتها بالخطأ. اطلب ذلك من مسؤول آخر للمنصة.',
+  last_active_admin:
+    'لم يُحفظ التغيير: هذا آخر مسؤول نشط في المنصة، وبدونه لا يستطيع أحد إدارتها. رقِّ عضواً آخر إلى «مسؤول» أولاً، ثم أعد المحاولة.',
+  member_changed: 'تغيّر دور هذا العضو أو حالته في أثناء طلبك، فلم يُحفظ شيء. حدّث الصفحة ثم أعد المحاولة.',
 } as const
 
 export type ErrorKey = keyof typeof MESSAGES
@@ -82,6 +91,11 @@ const CODES: Record<ErrorKey, ApiErrorCode> = {
   api_token_required: 'unauthorized',
   invalid_query: 'invalid_request',
   invalid_backup_retention: 'invalid_request',
+  platform_member_not_found: 'not_found',
+  invalid_member_change: 'invalid_request',
+  cannot_change_self: 'cannot_change_self',
+  last_active_admin: 'last_active_admin',
+  member_changed: 'member_changed',
 }
 
 export type ErrorStatus = 400 | 401 | 403 | 404 | 409 | 426 | 500 | 503

@@ -10,6 +10,7 @@ import { registerGoogleImportRoutes } from './google-import'
 import { registerPhase5Routes } from './phase5'
 import { setOutboundDetection } from './room/outbound-seam'
 import { registerSyncRoutes } from './sync/outbound'
+import { registerXlsxImportRoutes } from './xlsx-import'
 import { detectAfterRoomCommit } from './sync/room-commit'
 
 const app = createApp()
@@ -18,6 +19,8 @@ const app = createApp()
 // Launchpad/Google. Each module throws if registered twice on one app.
 registerBasecampLinkRoutes(app)
 registerGoogleImportRoutes(app)
+// .xlsx upload and public Google Sheets links (owner, 2026-11-11: no Google OAuth secret).
+registerXlsxImportRoutes(app)
 registerSyncRoutes(app)
 registerPhase5Routes(app)
 // The workbook dashboard and the appearance palette (src/dashboard). Reads only, no remote call.
