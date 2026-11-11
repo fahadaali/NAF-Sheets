@@ -412,6 +412,23 @@ describe('diffTask — inbound', () => {
     expect(only(r.outbound, 'update_todo').write.descriptionHtml).toBe(edited)
   })
 
+  it('a notes cell that lost its stored description (files gone from the local notes) sends nothing and drops no file (Q2)', () => {
+    const r = diffTask(localTodo({ notesHtml: '<div>خطة النشر للربع الرابع، راجعوا المرفق.</div>' }), base0, remote0, todoCtx())
+    expect(r).toMatchObject({ outbound: [], inbound: [], conflicts: [] })
+  })
+
+  it('a plain value pasted over the notes keeps the files in the PUT (Q2)', () => {
+    const r = diffTask(localTodo({ notesHtml: '<div>نص جديد</div>' }), base0, remote0, todoCtx())
+    const write = only(r.outbound, 'update_todo').write
+    expect(write.descriptionHtml).toContain('<div>نص جديد</div>')
+    expect(write.descriptionHtml).toContain('sgid="BAh7CEkiCGdpZAY6BkVU"')
+  })
+
+  it('a plain value with the title changed also keeps the files, with the record not fetched (Q2)', () => {
+    const r = diffTask(localTodo({ title: 'عنوان جديد', notesHtml: null }), base0, null, todoCtx())
+    expect(only(r.outbound, 'update_todo').write.descriptionHtml).toContain('sgid="BAh7CEkiCGdpZAY6BkVU"')
+  })
+
   it('whitespace reflowed by Basecamp is not a change', () => {
     const reflowed = HUMAN_NOTES.replace('</div><div>', '</div>\n  <div>')
     const r = diffTask(localTodo(), base0, remoteTodo({ descriptionHtml: reflowed, updatedAt: T2 }), todoCtx())

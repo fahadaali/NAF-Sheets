@@ -13,7 +13,7 @@
 // by its visible text, which a file has none of. A file in the person's part
 // is also what Basecamp shows for a file a person attached there.
 
-import { decodeBasicEntities } from './html'
+import { decodeBasicEntities, htmlToComparableText } from './html'
 
 /** One `<bc-attachment>` element found in an HTML fragment. */
 export interface AttachmentElement {
@@ -109,4 +109,34 @@ export function attachmentElementsOf(html: string | null | undefined): string {
   return findAttachmentElements(html)
     .map((e) => e.html)
     .join('')
+}
+
+/**
+ * `human` (the notes a row sends) with every file of `current` (the person's
+ * part of the description as Basecamp, or the last synced state, holds it)
+ * that `human` does not carry, appended at its end exactly as found. A notes
+ * cell that lost its stored description (a plain value pasted over it) carries
+ * no files, and sending it as it is would take them out of Basecamp. Files
+ * leave a description only through an explicit action of a person in the
+ * platform (the attachment editor, or a notes picture removed from its cell),
+ * which has its own path (phase 5 `changeTodoDescription`); the ordinary sync
+ * never removes one (OPEN_QUESTIONS.md Q2).
+ */
+export function keepAttachments<T extends string | null | undefined>(human: T, current: string | null | undefined): T | string {
+  const text = human ?? ''
+  const have = new Set(attachmentSgids(text))
+  let missing = ''
+  const seen = new Set<string>()
+  for (const e of findAttachmentElements(current)) {
+    // An element without an sgid cannot be matched: it is kept as found unless the same markup is already in `human`.
+    const key = e.sgid ?? e.html
+    if (e.sgid !== null ? have.has(e.sgid) : text.includes(e.html)) continue
+    if (seen.has(key)) continue
+    seen.add(key)
+    missing += e.html
+  }
+  if (missing === '') return human
+  // Same visible text as `current`: the notes were not edited, only their files were lost; `current` as it is.
+  if (htmlToComparableText(withoutAttachments(text)) === htmlToComparableText(withoutAttachments(current))) return current as string
+  return text + missing
 }

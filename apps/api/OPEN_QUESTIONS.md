@@ -989,7 +989,9 @@ P10. **The description write takes the task's sync lease** (the one the
 P11. **Notes cells keep files.** sheet-model now keeps the description's
     `<bc-attachment>` elements when a person edits or clears the notes text
     (sheet-model OPEN #8), so only the attachment editor removes a file. Before
-    this, editing the notes cell dropped every file from Basecamp.
+    this, editing the notes cell dropped every file from Basecamp. A cell that
+    lost its stored description keeps them too (Q2: the diff re-adds the files
+    of the description as Basecamp has it).
 
 P12. **Inbound extraction.** Files are keyed by `sgid` (`uq_attachments_task_sgid`).
     Name, type, size and `download_url` come from `description_attachments`
@@ -1241,18 +1243,67 @@ D8. **Appearance** is stored in KV `SETTINGS` under `settings:appearance` (palet
 
 D9. **The dashboard is the workbook's first sheet tab «اللوحة»** (owner, 2026-11-10; apps/web #66). It is a real Univer worksheet, marked by platform data in its `custom` field (`nafSheetRole: 'dashboard'`, never by name or id), kept first in `sheetOrder` (`@naf-sheets/shared` dashboard-sheet.ts). The API adds it with `withDashboardSheet` when it serves a workbook (GET /api/workbooks/:id) and the room adds it with the same deterministic function when it loads one (room.ts `load`), so an editor that opened from the GET holds the same model as the room; blank workbooks, workbooks from a template and Google imports are created with it. It is never in D1 `sheets`: the files list, the link wizard, sync detection, /api/v1 and backups (D1 export) never see it, and backups copy snapshots byte for byte. Templates drop it and re-create it on instantiation. The figures and widgets skip it (a widget naming it is `sheet_missing`). sheet-model refuses it (`dashboard_sheet`) in `readTasks`, `ensureSystemColumns`, `applyInbound`, indentation, decoration and reordering. The room refuses any op that would remove, rename, hide or move it, put a sheet before it, insert a second one, or write its cells, properties or plugin data (footprint.ts `classifyOp`, as `invalid`); row heights and column widths on it pass. PUT …/snapshot stores what the editor sends unchanged (the editor always sends it); a snapshot saved without it is given it again on the next read. Confirm that a stored snapshot may lack it until its next save.
 
-## Before the first real Basecamp link (owner, 2026-11-11)
+## Before the first real Basecamp link: decided and implemented (owner, 2026-11-11)
 
-Nothing is linked to Basecamp yet, so these two are deferred, not dropped. They
-must be decided and built **before the first workbook is linked**:
+Both were deferred until before the first workbook is linked. **Decided
+(owner, 2026-11-11, the safer behaviour) and built.** The rule they come from,
+checked across `src/sync` and `src/phase5`: **nothing removes an attachment, a
+file or a description part from Basecamp unless a person's explicit action in
+the platform caused it** (the attachment editor's confirmed removal, a notes
+picture removed from its cell, a confirmed row deletion).
 
-- **Q1. Changing a sheet's notes column** treats the old column's pictures as
-  removed and takes their files out of the to-dos' descriptions in Basecamp
-  (I7). Proposed: a settings change never removes anything from Basecamp; only
-  a picture a person removed from the cell does.
-- **Q2. A notes cell that loses its stored description** (for example a plain
-  value pasted over it) makes ordinary sync drop all of that to-do's files from
-  Basecamp (P11, older than I7). Proposed: sync keeps the files in that case.
+- **Q1. Changing a sheet's notes column** removes nothing from Basecamp. Before:
+  the old column's pictures read as "removed from the cell" and their files
+  were taken out of the to-dos' descriptions (I7). Now: each notes picture's
+  `attachments` row records the notes column it is tracked under
+  (`notes_column`, migration 0009, set when the picture is first sent).
+  `src/images/notes-images.ts` `workOf` considers only rows tracked under the
+  sheet's current notes column; a row tracked under another column whose
+  picture is not in the current notes cell is not tracked (neither removed nor
+  revived; its file stays in Basecamp, its chip stays). A picture found in the
+  current notes cell that was tracked under another column is adopted by it
+  (re-stamped, same file, no second upload); removing it from there afterwards
+  is a person's removal (I7). A row with `notes_column` NULL (older than the
+  migration) reads as tracked under the current column. Only a picture a
+  person removed from the notes cell removes its file. Tests:
+  `test/images/notes-safe.test.ts`.
+- **Q2. A notes cell that loses its stored description** (a plain value
+  pasted over it, the `custom` data gone) no longer makes the ordinary sync
+  drop the to-do's files. Before: the cell read as notes text without the
+  `<bc-attachment>` elements (sheet-model `readNotes` keeps them only from the
+  stored description, P11), so the next `PUT /todos` carried a description
+  without them. Now `@naf-sheets/sync-engine` `diff.ts` (`keepAttachments`,
+  attachments.ts): (1) the local notes are compared with the base after
+  re-adding the base's files they lack, so a lost stored description alone is
+  not a local change (no PUT); (2) when notes are sent, every file of the
+  description as Basecamp has it (or, the record not fetched, of the last
+  synced state) that the local notes lack is appended to them, byte for byte
+  (and when the visible text is the same, the current description is sent as
+  it is). Files leave a description only through `changeTodoDescription`
+  `remove` (attachment editor I7/P4, notes pictures). Tests:
+  `packages/sync-engine/test/{diff,attachments}.test.ts`,
+  `test/images/notes-safe.test.ts`.
+
+**Found while checking the rule (no other path violates it):**
+- Every other Basecamp write was read: `todos.update` (only the diff above and
+  `changeTodoDescription`), `todos.trash` / `subtasks.deletePermanently` (only
+  the confirmed-deletion path, §9.2.7), `reposition` (a row move to another
+  sheet moves the to-do with its description), `complete`. Reconciliation,
+  webhooks and inbound extraction never write a description: a file that left
+  the description in Basecamp only loses its chip in the platform (P12). A
+  hierarchy change (indent) is held (`hierarchy_change_unsupported`), nothing
+  is sent. Free-column remaps only change the managed block, never the person's
+  part.
+- **(owner) Uncertain, not changed:** pointing the notes column at a column
+  that holds *different text* (settings change) reads as a local edit of the
+  notes, and the next sync writes that column's text over the description's
+  text part (files are kept, Q2). It is a person's settings action, but an
+  indirect one; if it should not overwrite text, the safe alternative is to
+  adopt Basecamp's text into the new column instead (needs a decision: which
+  side wins when the notes column changes).
+- **(owner) Uncertain, not changed:** a row deleted from a sheet and
+  confirmed trashes the whole to-do in Basecamp with its files (recoverable
+  25 days); that is an explicit, confirmed action (§9.2.7), unchanged.
 
 ## Platform members «أعضاء المنصة» (src/routes/platform-members.ts)
 
@@ -1475,9 +1526,10 @@ I7. **Decided (owner, 2026-11-11: «نعم تحذف») and built: a picture remo
     putting a removed `sgid` back into the same description is not documented
     either way (rich_text.md only forbids reusing an attachment in another
     record); the notes cell's undo already relied on it (P11).
-    **Open:** changing which column is the notes column (link settings) reads
-    the old column's pictures as removed and takes their files out of the
-    description (reversible as above). Tests: `test/images/notes-remove.test.ts`.
+    **Changing which column is the notes column** no longer reads the old
+    column's pictures as removed (Q1, decided and implemented: «Before the
+    first real Basecamp link»). Tests: `test/images/notes-remove.test.ts`,
+    `test/images/notes-safe.test.ts`.
 
 I8. **Inbound never removes a picture.** Every inbound write goes through
     sheet-model `writeValue`, which, for a cell holding pictures, keeps them

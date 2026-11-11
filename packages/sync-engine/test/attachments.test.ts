@@ -10,6 +10,7 @@ import {
   buildManagedBlock,
   composeDescription,
   findAttachmentElements,
+  keepAttachments,
   removeAttachment,
   splitDescription,
   withoutAttachments,
@@ -123,5 +124,23 @@ describe('the sync engine with files in the description', () => {
     // And its echo is not a loop.
     const echo = remoteTodo({ descriptionHtml: write?.descriptionHtml ?? '', updatedAt: T3 })
     expect(diffTask(local, baseAfterTodoWrite('uid-todo', echo, write!), echo, todoCtx()).outbound).toEqual([])
+  })
+})
+
+describe('keeping files (Q2)', () => {
+  const A = attachmentElementHtml('a')
+  const B = attachmentElementHtml('b')
+  it('appends the files the notes lack, once, exactly as found', () => {
+    expect(keepAttachments('<div>جديد</div>', `<div>قديم</div>${A}${B}`)).toBe(`<div>جديد</div>${A}${B}`)
+    expect(keepAttachments(`<div>جديد</div>${B}`, `<div>قديم</div>${A}${B}`)).toBe(`<div>جديد</div>${B}${A}`)
+  })
+  it('returns the notes untouched when nothing is missing', () => {
+    expect(keepAttachments('<div>x</div>', '<div>y</div>')).toBe('<div>x</div>')
+    expect(keepAttachments(null, null)).toBeNull()
+    expect(keepAttachments(`<div>x</div>${A}`, A)).toBe(`<div>x</div>${A}`)
+  })
+  it('gives the current description back when only the files were lost', () => {
+    expect(keepAttachments('<div>نص</div>', `<div>نص</div>${A}`)).toBe(`<div>نص</div>${A}`)
+    expect(keepAttachments(null, A)).toBe(A)
   })
 })

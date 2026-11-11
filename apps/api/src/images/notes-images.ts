@@ -33,6 +33,11 @@
 //     reused in *another* record; putting it back in the same description is
 //     not documented either way.)
 //
+// Changing the sheet's notes column is not a removal (OPEN_QUESTIONS.md «Before
+// the first real Basecamp link» Q1): each picture's row records the notes
+// column it is tracked under (`notes_column`); pictures of another column than
+// the sheet's current one are not tracked, their files stay in Basecamp.
+//
 // Every other column skips its pictures (title, assignees, dates, status,
 // free columns, attachments; and a subtask's notes: Basecamp subtasks have no
 // description). Floating pictures are never in a cell, so they never reach
@@ -80,8 +85,8 @@ function imageIdOfKey(workbookId: string, uid: string, key: string): string | nu
  * be read, lists none), so a missing entry never means "removed". Subtask
  * rows are left out.
  */
-export function notesCellsOf(state: WorkbookState): Map<string, string[]> {
-  const out = new Map<string, string[]>()
+export function notesCellsOf(state: WorkbookState): Map<string, NotesCell> {
+  const out = new Map<string, NotesCell>()
   for (const sheet of syncedSheets(state)) {
     const plan = state.plans.get(sheet.id)
     const data = state.snapshot.sheets[sheet.univer_sheet_id]
@@ -105,7 +110,7 @@ export function notesCellsOf(state: WorkbookState): Map<string, string[]> {
         const ref = parseImagePath(image.source)
         if (ref && ref.workbookId === state.wb.id && !ids.includes(ref.imageId)) ids.push(ref.imageId)
       }
-      out.set(uid, ids)
+      out.set(uid, { column: notes.columnKey.trim().toUpperCase(), ids })
     }
   }
   return out
@@ -114,8 +119,15 @@ export function notesCellsOf(state: WorkbookState): Map<string, string[]> {
 /** `notesCellsOf`, only the rows whose notes cell holds at least one picture. */
 export function notesImagesOf(state: WorkbookState): Map<string, string[]> {
   const out = new Map<string, string[]>()
-  for (const [uid, ids] of notesCellsOf(state)) if (ids.length > 0) out.set(uid, ids)
+  for (const [uid, cell] of notesCellsOf(state)) if (cell.ids.length > 0) out.set(uid, cell.ids)
   return out
+}
+
+/** A to-do's notes cell: the column it is read from (the sheet's notes column now) and its pictures. */
+export interface NotesCell {
+  /** Column key (upper case) of the sheet's notes column at the time of reading. */
+  column: string
+  ids: string[]
 }
 
 interface NotesImageRow {
@@ -126,6 +138,8 @@ interface NotesImageRow {
   removed_reason: string | null
   state: string
   bc_sgid: string | null
+  /** The notes column the picture was tracked under; null for a row older than migration 0009. */
+  notes_column: string | null
 }
 
 /** The notes-picture attachment rows of `uids` (removed or not), with their picture id. */
@@ -134,7 +148,7 @@ async function notesImageRows(db: D1Database, workbookId: string, uids: readonly
   for (let i = 0; i < uids.length; i += 500) {
     const { results } = await db
       .prepare(
-        `SELECT id, task_uid, r2_key, removed_at, removed_reason, state, bc_sgid FROM attachments
+        `SELECT id, task_uid, r2_key, removed_at, removed_reason, state, bc_sgid, notes_column FROM attachments
          WHERE task_uid IN (SELECT value FROM json_each(?1)) AND origin = 'local' ORDER BY created_at, id`,
       )
       .bind(JSON.stringify(uids.slice(i, i + 500)))
@@ -155,12 +169,24 @@ export interface NotesImageWork {
   revive: Array<NotesImageRow & { imageId: string }>
   /** Files sent for a picture that is no longer in the cell (live rows, `attached` or `failed`). */
   remove: Array<NotesImageRow & { imageId: string }>
+  /** Rows to stamp with the current notes column: a picture now in the notes cell that was tracked under another column (or none yet). */
+  adopt: string[]
 }
 
-function workOf(ids: readonly string[], rows: ReadonlyArray<NotesImageRow & { imageId: string }>): NotesImageWork {
-  const byImage = new Map(rows.map((r) => [r.imageId, r]))
+/**
+ * Q1 (OPEN_QUESTIONS.md «Before the first real Basecamp link»): a picture's
+ * file is removed from Basecamp only when a person removed the picture from
+ * the cell. Changing the sheet's notes column is not that: the pictures of the
+ * old column are no longer tracked (their rows stay as they are, their files
+ * stay in Basecamp). A picture tracked under another column that is found in
+ * the current notes cell is adopted by it.
+ */
+function workOf(cell: NotesCell, allRows: ReadonlyArray<NotesImageRow & { imageId: string }>): NotesImageWork {
+  const ids = cell.ids
   const inCell = new Set(ids)
-  const work: NotesImageWork = { send: [], revive: [], remove: [] }
+  const rows = allRows.filter((r) => r.notes_column === null || r.notes_column === cell.column || inCell.has(r.imageId))
+  const byImage = new Map(rows.map((r) => [r.imageId, r]))
+  const work: NotesImageWork = { send: [], revive: [], remove: [], adopt: rows.filter((r) => r.notes_column !== cell.column).map((r) => r.id) }
   for (const id of ids) {
     const row = byImage.get(id)
     if (!row) work.send.push(id)
@@ -172,7 +198,7 @@ function workOf(ids: readonly string[], rows: ReadonlyArray<NotesImageRow & { im
   return work
 }
 
-const hasWork = (w: NotesImageWork) => w.send.length > 0 || w.revive.length > 0 || w.remove.length > 0
+const hasWork = (w: NotesImageWork) => w.send.length > 0 || w.revive.length > 0 || w.remove.length > 0 || w.adopt.length > 0
 
 /**
  * The tasks of `cells` (uid → pictures of its notes cell, empty when none)
@@ -180,13 +206,13 @@ const hasWork = (w: NotesImageWork) => w.send.length > 0 || w.revive.length > 0 
  * the cell after its file was removed with it, or a file whose picture left
  * the cell.
  */
-export async function tasksWithNotesImageWork(db: D1Database, workbookId: string, cells: ReadonlyMap<string, readonly string[]>): Promise<string[]> {
+export async function tasksWithNotesImageWork(db: D1Database, workbookId: string, cells: ReadonlyMap<string, NotesCell>): Promise<string[]> {
   if (cells.size === 0) return []
   const rows = await notesImageRows(db, workbookId, [...cells.keys()])
   const byTask = new Map<string, Array<NotesImageRow & { imageId: string }>>()
   for (const r of rows) byTask.set(r.task_uid, [...(byTask.get(r.task_uid) ?? []), r])
   const out: string[] = []
-  for (const [uid, ids] of cells) if (hasWork(workOf(ids, byTask.get(uid) ?? []))) out.push(uid)
+  for (const [uid, cell] of cells) if (hasWork(workOf(cell, byTask.get(uid) ?? []))) out.push(uid)
   return out
 }
 
@@ -351,11 +377,13 @@ export async function syncNotesImages(env: Env, deps: SyncDeps, workbookId: stri
   if (fileMode(wb, found.sheet, found.task).kind !== 'basecamp') return outcome
   const state = await loadWorkbookState(env, wb)
   if (!state) return outcome
-  const ids = notesCellsOf(state).get(uid)
+  const cell = notesCellsOf(state).get(uid)
   // The notes cell could not be located (row gone, no notes column…): never read as "every picture removed".
-  if (ids === undefined) return outcome
-  const work = workOf(ids, await notesImageRows(db, workbookId, [uid]))
+  if (cell === undefined) return outcome
+  const work = workOf(cell, await notesImageRows(db, workbookId, [uid]))
   if (!hasWork(work)) return outcome
+  // Pictures now tracked under the current notes column (no network, so first).
+  for (const id of work.adopt) await db.prepare(`UPDATE attachments SET notes_column = ?2 WHERE id = ?1`).bind(id, cell.column).run()
 
   const ctx = syncContext(env, deps)
   for (const row of work.remove) if (await removeNotesImageFile(env, deps, ctx, wb, row, actorId)) outcome.removed++
@@ -393,11 +421,11 @@ export async function syncNotesImages(env: Env, deps: SyncDeps, workbookId: stri
     const at = new Date(deps.now()).toISOString()
     const inserted = await db
       .prepare(
-        `INSERT INTO attachments (id, task_uid, r2_key, filename, size, mime, bc_sgid, bc_blob_url, origin, created_by, created_at, state, r2_stored, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, NULL, 'local', ?7, ?8, 'uploading', 1, ?8)
+        `INSERT INTO attachments (id, task_uid, r2_key, filename, size, mime, bc_sgid, bc_blob_url, origin, created_by, created_at, state, r2_stored, updated_at, notes_column)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, NULL, 'local', ?7, ?8, 'uploading', 1, ?8, ?9)
          ON CONFLICT DO NOTHING`,
       )
-      .bind(id, uid, key, copy.name, copy.size, copy.type, actorId, at)
+      .bind(id, uid, key, copy.name, copy.size, copy.type, actorId, at, cell.column)
       .run()
     if ((inserted.meta.changes ?? 0) === 0) continue
     outcome.added++

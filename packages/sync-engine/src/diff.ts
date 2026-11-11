@@ -33,6 +33,7 @@ import {
 import { computeAutoAssignees, isAutoAssignmentEcho, type AutoAssignSettings } from './auto-assign'
 import { warning, type EngineWarning } from './errors'
 import { isEcho, syncedFieldsOfBase, syncedFieldsOfRemote, type SyncedFields } from './hash'
+import { keepAttachments } from './attachments'
 import { sameHtml } from './html'
 import { composeDescription, managedBlockForTask, sameManagedBlock, splitDescription, type Directory } from './managed-block'
 
@@ -281,6 +282,9 @@ export function diffTask(local: LocalTask, base: SyncedBase | null, remote: Remo
     position: local.position,
   }
   const B: View | null = base !== null ? viewOf(syncedFieldsOfBase(base)) : null
+  // Q2: files of the last synced description that the local notes no longer carry (a notes cell that lost its
+  // stored description) are not a local change: the ordinary sync never takes a file out of Basecamp.
+  if (bcType === 'todo' && B !== null) L.notes = keepAttachments(L.notes, B.notes)
   // Unchanged since the base (echo) or not fetched: the remote side counts as the base.
   const R: View = remote !== null && !echo ? viewOf(syncedFieldsOfRemote(remote)) : (B as View)
   const hasBase = B !== null
@@ -410,7 +414,8 @@ export function diffTask(local: LocalTask, base: SyncedBase | null, remote: Remo
           ? todoStateOfBase(base)
           : null
     if (contentChanged && current !== null) {
-      const human = notesW === 'local' ? (local.notesHtml ?? '') : current.human
+      // Q2: files already in the description stay when the local notes carry none of them.
+      const human = notesW === 'local' ? (keepAttachments(local.notesHtml, current.human) ?? '') : current.human
       const added = mergedIds.filter((id) => !current.assigneeIds.includes(id))
       const write: TodoWrite = {
         content: titleW === 'local' ? local.title : current.content,
