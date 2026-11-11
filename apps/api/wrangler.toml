@@ -17,6 +17,11 @@ compatibility_flags = ["nodejs_compat"]
 # variable that is not in [vars].
 keep_vars = true
 
+# Workers Logs: keeps console output (e.g. naf-auth's `naf-auth: <code>` on a
+# refused sign-in) searchable in the dashboard, Worker → Observability.
+[observability]
+enabled = true
+
 # ─────────────────────────────────────────────────────────────
 # One Worker serves the whole platform on sheets.naflaw.sa (owner, 2026-11-11,
 # replacing spec §4's separate Pages project; host: spec §17-4).
