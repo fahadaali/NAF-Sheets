@@ -20,6 +20,7 @@ import type {
   TemplateSummary,
   UpdateTemplateRequest,
 } from '@naf-sheets/shared'
+import { contentSheetIds } from '@naf-sheets/shared'
 import { instantiateTemplate, toTemplateWorkbook } from '@naf-sheets/sheet-model'
 import type { WorkbookSnapshot } from '@naf-sheets/sheet-model'
 import type { Caller } from '../access'
@@ -126,10 +127,10 @@ function sheetTitle(title: string, univerSheetId: string): string {
  * snapshot's own order and names with the header on row 1.
  */
 function plannedSheets(row: TemplateRow, snapshot: WorkbookSnapshot): TemplateSheet[] {
-  const stored = sheetsOfTemplate(row).filter((s) => snapshot.sheets[s.univerSheetId] !== undefined)
+  const content = new Set(contentSheetIds(snapshot))
+  const stored = sheetsOfTemplate(row).filter((s) => content.has(s.univerSheetId))
   if (stored.length > 0) return stored
-  const order = Array.isArray(snapshot.sheetOrder) ? snapshot.sheetOrder : Object.keys(snapshot.sheets)
-  return order.filter((id) => snapshot.sheets[id] !== undefined).map((id) => ({ univerSheetId: id, title: String(snapshot.sheets[id]?.name ?? ''), headerRow: 1 }))
+  return [...content].map((id) => ({ univerSheetId: id, title: String(snapshot.sheets[id]?.name ?? ''), headerRow: 1 }))
 }
 
 /**
@@ -233,7 +234,8 @@ async function createTemplate(env: Env, caller: Caller, body: unknown): Promise<
     console.warn(`template from workbook ${wb.id}: ${unreadableSheets.length} sheet(s) with unreadable system columns kept as they are`)
   }
 
-  const order = Array.isArray(cleaned.sheetOrder) ? cleaned.sheetOrder.filter((id) => cleaned.sheets[id] !== undefined) : Object.keys(cleaned.sheets)
+  // The dashboard sheet is not in the template (toTemplateWorkbook drops it).
+  const order = contentSheetIds(cleaned)
   const known = new Map(sheetRows.map((s) => [s.univer_sheet_id, s]))
   const sheets: TemplateSheet[] = order.map((id) => {
     const meta = known.get(id)

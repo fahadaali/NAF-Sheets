@@ -8,6 +8,7 @@
 // add a row at the bottom and sort. Rows between tasks that are not tasks
 // (blank separators, notes) keep their place.
 
+import { isDashboardSheet } from '@naf-sheets/shared'
 import type { SheetPlan, TaskLevel, TaskUid } from '@naf-sheets/shared'
 import { isBlankCell, rowCells, type SheetSnapshot, type WorkbookSnapshot } from './cells'
 import { engineMoveRow, type EngineErrorCode } from './engine'
@@ -32,6 +33,8 @@ export interface TaskTable {
 export function openTable(workbook: WorkbookSnapshot, sheetId: string, plan: Pick<SheetPlan, 'headerRow' | 'columns'>): Result<TaskTable> {
   const sheet = workbook.sheets[sheetId]
   if (sheet === undefined) return fail('sheet_not_found')
+  // The dashboard tab «اللوحة» holds no tasks: nothing is ever written into it.
+  if (isDashboardSheet(sheet)) return fail('dashboard_sheet')
   const header = headerIndex(plan)
   if (header === null) return fail('invalid_header_row')
   const fields = fieldColumns(plan)

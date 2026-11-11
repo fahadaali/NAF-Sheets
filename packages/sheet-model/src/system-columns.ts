@@ -14,6 +14,7 @@
 // SheetPermissionCheckController check the rows' range protection), and rows
 // must move with their identity. OPEN: OPEN_QUESTIONS.md #1.
 
+import { isDashboardSheet } from '@naf-sheets/shared'
 import type { TaskLevel, TaskUid } from '@naf-sheets/shared'
 import type { SheetPlan } from '@naf-sheets/shared'
 import { columnIndex } from './a1'
@@ -181,6 +182,8 @@ export function ensureSystemColumns(
   uidFactory: () => TaskUid,
   options: EnsureSystemColumnsOptions = {},
 ): Result<EnsuredSystemColumns> {
+  // The dashboard tab «اللوحة» is never linked.
+  if (isDashboardSheet(sheet)) return fail('dashboard_sheet')
   const header = headerIndex(plan)
   if (header === null) return fail('invalid_header_row')
   const title = titleColumn(plan)

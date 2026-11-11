@@ -4,7 +4,9 @@
 import { env } from 'cloudflare:workers'
 import { describe, expect, it } from 'vitest'
 import type { ApiTokenListResponse, CreateApiTokenResponse, V1StatsResponse, V1TasksResponse, V1WorkbooksResponse } from '@naf-sheets/shared'
+import { DASHBOARD_SHEET_ID } from '@naf-sheets/shared'
 import { dayOf, statusOf } from '../../src/phase7'
+import { readSnapshot } from '../../src/snapshot'
 import { call, isArabic, json, seedMember, testApp } from '../helpers'
 import { harness, setupLinked } from '../sync/harness'
 
@@ -95,6 +97,11 @@ describe('/api/v1', () => {
 
     const all = await json<V1TasksResponse>(await v1(`/api/v1/workbooks/${l.wbId}/tasks`))
     expect(all.asOf).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+    // The workbook carries the dashboard tab «اللوحة» (first); it holds no task and is no sheet here.
+    const stored = (await readSnapshot(h.env, l.wbId, (await h.env.DB.prepare('SELECT current_snapshot_version AS v FROM workbooks WHERE id = ?1').bind(l.wbId).first<{ v: number }>())!.v)) as { sheetOrder: string[] }
+    expect(stored.sheetOrder[0]).toBe(DASHBOARD_SHEET_ID)
+    expect(all.tasks).toHaveLength(4)
+    expect(all.tasks.every((t) => t.sheetTitle === 'ورقة 1')).toBe(true)
     const byTitle = new Map(all.tasks.map((t) => [t.title, t]))
     expect(byTitle.get('مهمة متأخرة')).toMatchObject({ status: 'overdue', completed: false, dueOn: '2020-01-05', level: 0, syncState: 'synced', sheetTitle: 'ورقة 1' })
     expect(byTitle.get('مهمة متأخرة')?.assignees).toEqual([{ kind: 'bc_person', id: String(sara.id), name: 'سارة' }])

@@ -5,6 +5,7 @@ import { env } from 'cloudflare:workers'
 import { describe, expect, it } from 'vitest'
 import { convertSpreadsheet } from '@naf-sheets/gsheets-import'
 import type { ImportGsheetsResponse, ImportReportResponse } from '@naf-sheets/shared'
+import { DASHBOARD_SHEET_ID, withDashboardSheet } from '@naf-sheets/shared'
 import { nafCommsPlan } from '../../../../packages/gsheets-import/test/fixtures/naf-comms-plan'
 import { registerGoogleImportRoutes } from '../../src/google-import'
 import type { GoogleImportLimits } from '../../src/google-import'
@@ -93,7 +94,11 @@ describe('POST /api/import/gsheets', () => {
     const expected = convertSpreadsheet(withoutComments(nafCommsPlan), { workbookId })
     const object = await env.SNAPSHOTS.get(`workbooks/${workbookId}/snapshots/1.json`)
     expect(object).not.toBeNull()
-    expect(await object!.json()).toEqual(JSON.parse(JSON.stringify({ ...expected.workbook, id: workbookId, name: GOOGLE_TITLE })))
+    // The converter makes no dashboard sheet; the stored workbook gets the platform's own «اللوحة» first.
+    expect(expected.workbook.sheetOrder).not.toContain(DASHBOARD_SHEET_ID)
+    const stored = (await object!.json()) as { sheetOrder: string[] }
+    expect(stored).toEqual(JSON.parse(JSON.stringify(withDashboardSheet({ ...expected.workbook, id: workbookId, name: GOOGLE_TITLE }))))
+    expect(stored.sheetOrder[0]).toBe(DASHBOARD_SHEET_ID)
 
     // ---- D1: workbook, sheets in tab order, report.
     const workbook = await env.DB.prepare('SELECT * FROM workbooks WHERE id = ?1').bind(workbookId).first<Record<string, unknown>>()

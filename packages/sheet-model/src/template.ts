@@ -8,11 +8,14 @@
 // - the platform's reversible marks (deleted in Basecamp, unsynced subtask
 //   cell, subtask indentation), restored to the style the person had set;
 // - the platform's own cell data (`custom.nafSheets`) and the platform's
-//   «لا يُزامَن مع Basecamp» notes.
+//   «لا يُزامَن مع Basecamp» notes;
+// - the dashboard sheet «اللوحة» (@naf-sheets/shared dashboard-sheet.ts): a
+//   template holds content only; a workbook made from it gets a new one.
 //
 // Pure: the input is never mutated. A workbook made from the template starts
 // with local sheets only; linking it to Basecamp is the wizard's job (§7.3).
 
+import { withDashboardSheet, withoutDashboardSheet } from '@naf-sheets/shared'
 import { cloneWorkbook, getCell, nafData, rowIndexes, setCell, withNafData, type MarkName, type SheetSnapshot, type WorkbookSnapshot } from './cells'
 import { removeMark } from './marks'
 import { readNotes, writeNotes } from './resources'
@@ -83,7 +86,7 @@ function dropPlatformNotes(workbook: WorkbookSnapshot, sheetId: string): void {
 
 /** The template copy of a workbook snapshot. */
 export function toTemplateWorkbook(source: WorkbookSnapshot, options: TemplateOptions = {}): TemplateResult {
-  const workbook = cloneWorkbook(source)
+  const workbook = cloneWorkbook(withoutDashboardSheet(source))
   const strippedSheets: string[] = []
   const unreadableSheets: string[] = []
   for (const [sheetId, sheet] of Object.entries(workbook.sheets)) {
@@ -107,12 +110,13 @@ export function toTemplateWorkbook(source: WorkbookSnapshot, options: TemplateOp
 
 /**
  * A new workbook's snapshot from a template: the same content under the new
- * workbook's id and title. Sheet ids are kept (they only need to be unique
- * inside one workbook, and plugin resources are keyed by them).
+ * workbook's id and title, with the dashboard sheet «اللوحة» first (re-created,
+ * whatever the template holds). Sheet ids are kept (they only need to be
+ * unique inside one workbook, and plugin resources are keyed by them).
  */
 export function instantiateTemplate(template: WorkbookSnapshot, input: { workbookId: string; title: string }): WorkbookSnapshot {
-  const workbook = cloneWorkbook(template)
+  const workbook = cloneWorkbook(withoutDashboardSheet(template))
   workbook.id = input.workbookId
   workbook.name = input.title
-  return workbook
+  return withDashboardSheet(workbook)
 }

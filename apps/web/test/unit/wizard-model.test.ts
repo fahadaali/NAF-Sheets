@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { SheetMeta } from '@naf-sheets/shared'
+import { withDashboardSheet } from '@naf-sheets/shared'
 import {
   buildLinkPlan,
   canStart,
@@ -73,6 +74,11 @@ describe('wizardSheets', () => {
     expect(sheets[1]?.grid).toEqual([['المهمة', '3'], [], ['', 'TRUE']])
     expect(sheets[2]?.grid).toEqual([]) // registered but absent from the snapshot
     expect(unregistered).toBe(1)
+    // The dashboard tab «اللوحة» is neither listed nor counted as an unregistered sheet.
+    const withDash = withDashboardSheet({ sheetOrder: ['u-1', 'u-2', 'u-9'], ...snapshot })
+    const again = wizardSheets([meta('m-2', 'u-2', 'ب', 2), meta('m-1', 'u-1', 'أ', 1)], withDash as never)
+    expect(again.sheets.map((s) => s.univerSheetId)).toEqual(['u-1', 'u-2'])
+    expect(again.unregistered).toBe(1)
   })
 })
 

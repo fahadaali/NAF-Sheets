@@ -2,8 +2,14 @@
 // one (routes/workbooks.ts): the snapshot is written to R2 first with the
 // same create-only helper, then D1 moves in one batch — workbook, sheets,
 // import report and audit entries — so D1 never points at a missing snapshot.
+//
+// The converter never makes a dashboard sheet (a Google sheet named «اللوحة»
+// stays an ordinary sheet); the stored snapshot gets the platform's own as its
+// first tab, like a blank workbook (@naf-sheets/shared dashboard-sheet.ts).
+// D1 lists the imported sheets only.
 
 import type { ConvertResult, ImportReport } from '@naf-sheets/gsheets-import'
+import { contentSheetIds, withDashboardSheet } from '@naf-sheets/shared'
 import { auditStatement } from '../audit'
 import type { Env } from '../env'
 import { ApiFailure } from '../errors'
@@ -57,11 +63,12 @@ export async function persistImport(env: Env, input: PersistInput): Promise<Impo
   const reportId = crypto.randomUUID()
   const version = 1
 
-  const sheetOrder = input.workbook.sheetOrder
+  const sheetOrder = contentSheetIds(input.workbook)
   const names = new Map(input.report.sheets.map((s) => [s.sheetId, s.name]))
+  const snapshot = withDashboardSheet(input.workbook)
 
   // R2 first. The id is fresh, so an existing object is never replaced.
-  const written = await writeSnapshotVersion(env, { workbookId, version, savedBy: input.ownerId }, JSON.stringify(input.workbook), {
+  const written = await writeSnapshotVersion(env, { workbookId, version, savedBy: input.ownerId }, JSON.stringify(snapshot), {
     orphanAgeMs: Number.POSITIVE_INFINITY,
     stillUncommitted: async () => false,
   })

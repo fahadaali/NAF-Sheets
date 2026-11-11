@@ -25,6 +25,7 @@ import type {
   WidgetGroup,
   WidgetResult,
 } from '@naf-sheets/shared'
+import { contentSheetIds, isDashboardSheet } from '@naf-sheets/shared'
 import { columnIndex, columnLetters, findSystemColumns, latinDigits, serialToIso } from '@naf-sheets/sheet-model'
 import type { SheetSnapshot, WorkbookSnapshot } from '@naf-sheets/sheet-model'
 import { readSheet } from '../sync/state'
@@ -478,11 +479,13 @@ export function headerColumns(sheet: SheetSnapshot | undefined, headerRow: numbe
   return out
 }
 
-/** Univer sheet ids in tab order (the snapshot's `sheetOrder`, then any sheet it leaves out). */
+/**
+ * Univer sheet ids in tab order (the snapshot's `sheetOrder`, then any sheet
+ * it leaves out), without the dashboard sheet «اللوحة» itself: it holds no
+ * figures and is no widget source.
+ */
 export function sheetOrder(state: Pick<WorkbookState, 'snapshot'>): string[] {
-  const ids = Object.keys(state.snapshot.sheets)
-  const listed = (state.snapshot.sheetOrder ?? []).filter((id) => ids.includes(id))
-  return [...listed, ...ids.filter((id) => !listed.includes(id))]
+  return contentSheetIds(state.snapshot)
 }
 
 // ---------------------------------------------------------------------------
@@ -591,7 +594,8 @@ export function evaluateWidget(
   widgetId: string | null = null,
 ): WidgetResult {
   const sheet = snapshot.sheets[config.sheetId] as SheetSnapshot | undefined
-  if (!sheet) return { widgetId, ok: false, message: WIDGET_MESSAGES.sheet_missing }
+  // The dashboard sheet has no content to aggregate: as if it did not exist.
+  if (!sheet || isDashboardSheet(sheet)) return { widgetId, ok: false, message: WIDGET_MESSAGES.sheet_missing }
   const header = Math.max(0, headerRowOf(config.sheetId) - 1)
 
   // The cells read, as (row, column) pairs.

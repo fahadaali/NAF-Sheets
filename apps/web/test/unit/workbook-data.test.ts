@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_COLUMNS } from '@naf-sheets/shared'
+import { DASHBOARD_SHEET_ID, DEFAULT_COLUMNS, isDashboardSheet, withDashboardSheet } from '@naf-sheets/shared'
 import type { SheetMeta, WorkbookResponse } from '@naf-sheets/shared'
 import { blankWorkbookData, DERIVED_MUTATIONS, GRID_FONT, isPersistentChange, resolveWorkbookData } from '../../src/editor/workbook-data'
 
@@ -37,7 +37,9 @@ describe('blankWorkbookData', () => {
     const data = blankWorkbookData('wb-1', 'خطة', [sheet({ univerSheetId: 'b', title: 'ثانية', position: 1, headerRow: 2 }), sheet({ univerSheetId: 'a', position: 0 })])
     expect(data.id).toBe('wb-1')
     expect(data.name).toBe('خطة')
-    expect(data.sheetOrder).toEqual(['a', 'b'])
+    // The dashboard tab «اللوحة» first, then the sheets.
+    expect(data.sheetOrder).toEqual([DASHBOARD_SHEET_ID, 'a', 'b'])
+    expect(isDashboardSheet(data.sheets?.[DASHBOARD_SHEET_ID])).toBe(true)
     const a = data.sheets?.a
     expect(a?.name).toBe('المهام')
     expect(a?.rightToLeft).toBe(1)
@@ -49,11 +51,19 @@ describe('blankWorkbookData', () => {
 })
 
 describe('resolveWorkbookData', () => {
-  it('uses a stored snapshot as is, filling a missing id from the workbook', () => {
+  it('uses a stored snapshot as is, filling a missing id from the workbook, with the dashboard tab first', () => {
     const snapshot = { name: 'x', sheetOrder: ['s'], sheets: { s: { id: 's', cellData: {} } } }
     const resolved = resolveWorkbookData(response(snapshot))
-    expect(resolved).toEqual({ ok: true, source: 'snapshot', data: { ...snapshot, id: 'wb-1' } })
+    expect(resolved).toEqual({ ok: true, source: 'snapshot', data: { ...withDashboardSheet(snapshot), id: 'wb-1' } })
+    expect(resolved.ok && resolved.data.sheetOrder).toEqual([DASHBOARD_SHEET_ID, 's'])
     expect(snapshot).not.toHaveProperty('id')
+    expect(snapshot.sheetOrder).toEqual(['s'])
+  })
+
+  it('leaves a snapshot that already has its dashboard tab (as the API and the room send it) unchanged', () => {
+    const snapshot = withDashboardSheet({ id: 'wb-1', name: 'x', sheetOrder: ['s'], sheets: { s: { id: 's', cellData: {} } } })
+    const resolved = resolveWorkbookData(response(snapshot))
+    expect(resolved.ok && resolved.data).toEqual(snapshot)
   })
 
   it('keeps the snapshot id when it has one', () => {
@@ -64,7 +74,7 @@ describe('resolveWorkbookData', () => {
   it('builds a blank workbook when there is no snapshot yet', () => {
     const resolved = resolveWorkbookData(response(null))
     expect(resolved.ok && resolved.source).toBe('blank')
-    expect(resolved.ok && resolved.data.sheetOrder).toEqual(['sheet-1'])
+    expect(resolved.ok && resolved.data.sheetOrder).toEqual([DASHBOARD_SHEET_ID, 'sheet-1'])
   })
 
   it('refuses to guess: no snapshot and no sheets, or a snapshot that is not a workbook', () => {

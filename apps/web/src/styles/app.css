@@ -2004,44 +2004,6 @@ code {
 
 /* Dashboard («اللوحة», src/dashboard/) --------------------------------------- */
 
-.view-tabs {
-  display: inline-flex;
-  gap: var(--space-1);
-  padding: var(--space-1);
-  margin-inline-start: var(--space-2);
-  background: var(--color-surface-muted);
-  border-radius: var(--radius-pill);
-}
-
-.view-tabs__tab {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  padding-block: var(--space-1);
-  padding-inline: var(--space-3);
-  color: var(--color-text-muted);
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-medium);
-  text-decoration: none;
-  border-radius: var(--radius-pill);
-  white-space: nowrap;
-}
-
-.view-tabs__tab:hover {
-  color: var(--color-text);
-}
-
-.view-tabs__tab--active {
-  color: var(--color-text);
-  background: var(--color-surface);
-  box-shadow: var(--shadow-sm);
-}
-
-.view-tabs__tab .icon {
-  inline-size: var(--font-size-md);
-  block-size: var(--font-size-md);
-}
-
 .editor-body {
   position: relative;
   display: flex;
@@ -2050,11 +2012,18 @@ code {
   min-block-size: 0;
 }
 
+/*
+ * The dashboard tab «اللوحة» is a sheet tab in Univer's own bar; the dashboard
+ * is drawn over Univer's host element for that tab (src/dashboard/sheet-tab.ts),
+ * so the toolbar and the tab bar stay visible and usable around it. Its place
+ * and size are set inline from the host's (logical properties). Above Univer's
+ * content layers (≤ 50), below its menus and dialogs (≥ 1000).
+ */
 .editor-dashboard {
   position: absolute;
-  inset: 0;
-  z-index: 1;
+  z-index: 60;
   overflow-y: auto;
+  overflow-x: hidden;
   background: var(--color-page);
 }
 
@@ -2854,26 +2823,9 @@ a.widget__total-value:hover {
     padding-inline: var(--space-3);
   }
 
-  .view-tabs__tab {
-    padding-inline: var(--space-2);
-  }
 }
 
 @media (max-width: 30rem) {
-  .editor-bar__title {
-    display: none;
-  }
-
-  /* The view tabs take the title's place; the rest wraps rather than widening the page. */
-  .editor-bar {
-    flex-wrap: wrap;
-    padding-block: var(--space-1);
-  }
-
-  .view-tabs {
-    margin-inline-start: 0;
-  }
-
   .kpi-row {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }

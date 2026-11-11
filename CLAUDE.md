@@ -31,9 +31,11 @@ What still applies, because the **spec itself** requires it (not because of `naf
 - Latin digits; Gregorian dates as `YYYY-MM-DD`, optional Hijri display (§12.2).
 - Every error message in Arabic, stating what happened and what to do (§12.2).
 
-**Open:** what replaces `naf-ui` for colours and components. Until decided,
-define the theme once, in one file in this repo, and consume it everywhere —
-never scatter raw colour values through components.
+**Decided (owner, 2026-11-10): the calm palette is the platform's look.**
+What replaces `naf-ui` for colours is `apps/web/src/styles/theme.css`, the one
+file that defines the theme, plus the admin screen «المظهر» (overrides stored
+in KV, apps/api `OPEN_QUESTIONS.md` D8). Consume its tokens everywhere — never
+scatter raw colour values through components. Components stay this repo's own.
 
 `naf-id` (sign-in) is **not** part of the design system and still applies — §2.
 
@@ -118,6 +120,7 @@ Planned layout (§4.3): `apps/web`, `apps/api`, `packages/{shared,gsheets-import
 - `FRange.getCellRect()` is raw skeleton geometry: it ignores scroll and zoom. Do not position anything with it after scrolling or zooming.
 - Sheet services and the render unit are created asynchronously after `createWorkbook`; resolve them after it.
 - Out of scope / Pro-only: XLSX import/export, built-in collaboration, pivot tables, charts, print, edit history.
+- **The dashboard is the first sheet tab «اللوحة»** (owner, 2026-11-10): a real Univer sheet, recognised only by `custom.nafSheetRole === 'dashboard'` (never by name), kept first in `sheetOrder` by `withDashboardSheet` (`packages/shared/src/dashboard-sheet.ts`), which the API and the room both apply when they serve or load a workbook. It is never in D1 `sheets`; everything that reads sheets skips it (`contentSheetIds`, sheet-model `dashboard_sheet`). Univer's embed-tab anchor (`custom.UNIVER_EMBED_SHEETS_TAB`, sheets-ui) hides its grid; `apps/web/src/dashboard/sheet-tab.ts` provides `ISheetEmbedRuntimeService` and draws the dashboard over the host. Both the custom key and the host attribute are checked against the installed sources (`apps/web/test/unit/dashboard-sheet.test.ts`): re-check them with any Univer bump.
 
 ---
 

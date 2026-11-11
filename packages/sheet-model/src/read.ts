@@ -1,5 +1,6 @@
 // Task rows of a synced sheet, as the sync engine reads them (spec §6.1, §8, §9.2).
 
+import { isDashboardSheet } from '@naf-sheets/shared'
 import type { AssignMode, Assignee, AttachmentRef, IsoDateTime, LocalTask, SheetPlan, TaskUid } from '@naf-sheets/shared'
 import { columnLetters } from './a1'
 import { cellText, getCell, nafData, type WorkbookSnapshot } from './cells'
@@ -73,6 +74,8 @@ export function readTasks(
 ): Result<ReadTasksResult> {
   const sheet = workbook.sheets[sheetId]
   if (sheet === undefined) return fail('sheet_not_found')
+  // The dashboard tab «اللوحة» holds no tasks (@naf-sheets/shared dashboard-sheet.ts).
+  if (isDashboardSheet(sheet)) return fail('dashboard_sheet')
   const header = headerIndex(plan)
   if (header === null) return fail('invalid_header_row')
   const cols = fieldColumns(plan)

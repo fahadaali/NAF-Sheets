@@ -51,10 +51,35 @@ const READY = { timeout: 30_000 }
 const shot = (page: Page, name: string) => page.screenshot({ path: join(SHOTS, `${name}.png`), fullPage: true })
 
 const WB = 'wb-dash'
+/** The dashboard sheet's id (@naf-sheets/shared dashboard-sheet.ts). */
+const DASH = 'naf-dashboard'
 const SHEET = 'sheet-1'
 const BUDGET = 'sheet-2'
 
 const link = (range: string, sheetId = SHEET) => ({ sheetId, range })
+
+/** Univer's own sheet tabs (sheets-ui `SheetBarItem`); the dashboard is the first. */
+const TABS = '[data-u-comp="slide-tab-item"]'
+const tab = (page: Page, sheetId: string) => page.locator(`${TABS}[data-id="${sheetId}"]`)
+
+/** The tab bar as the person sees it: ids and names, first (rightmost in RTL) to last. */
+async function tabBar(page: Page): Promise<Array<{ id: string; name: string; right: number }>> {
+  return page.locator(TABS).evaluateAll((els) =>
+    els.map((e) => ({ id: (e as HTMLElement).dataset.id ?? '', name: (e.textContent ?? '').trim(), right: e.getBoundingClientRect().right })),
+  )
+}
+
+/** A picture of the bottom of the editor: the end of the grid or dashboard, and the tab bar. */
+async function shotTabBar(page: Page, name: string): Promise<void> {
+  const bar = await page.locator(TABS).first().evaluate((el) => {
+    const footer = el.closest('footer') ?? el.parentElement!
+    const r = footer.getBoundingClientRect()
+    return { y: r.top, height: r.height }
+  })
+  const width = page.viewportSize()!.width
+  const y = Math.max(0, bar.y - 160)
+  await page.screenshot({ path: join(SHOTS, `${name}.png`), clip: { x: 0, y, width, height: bar.y - y + bar.height } })
+}
 
 function dashboard(over: Partial<DashboardResponse> = {}): DashboardResponse {
   return {
@@ -166,17 +191,34 @@ const widget = (over: Partial<DashboardWidgetConfig> = {}): DashboardWidgetConfi
 })
 
 describe('the automatic dashboard', () => {
-  it('opens as «اللوحة» beside the sheets, shows KPIs and charts, and every figure links to its cells', async () => {
+  it('is the first sheet tab «اللوحة» in Univer\'s own bar, shows KPIs and charts, and every figure links to its cells', async () => {
     const api = dashApi()
-    const { context, page } = await openPage(api, `/workbooks/${WB}`, { width: 1280, height: 1900 })
-    await page.getByTestId('univer-host').waitFor()
-    // Not requested before it is opened.
+    const { context, page } = await openPage(api, `/workbooks/${WB}`, { width: 1280, height: 900 })
+    const host = page.getByTestId('univer-host')
+    await expect.poll(() => host.getAttribute('data-engine'), READY).toBe('ready')
+    // No view switch in the editor bar any more: the dashboard is a tab like the sheets.
+    expect(await page.locator('.view-tabs, [data-testid^="view-tab-"]').count()).toBe(0)
+    await expect.poll(() => tabBar(page).then((tabs) => tabs.map((t) => t.id))).toEqual([DASH, SHEET])
+    const tabs = await tabBar(page)
+    expect(tabs.map((t) => t.name)).toEqual(['اللوحة', 'المهام'])
+    // RTL: the first tab is the rightmost.
+    expect(tabs[0]!.right).toBeGreaterThan(tabs[1]!.right)
+    // /workbooks/:id opens on the first sheet, not on the dashboard; nothing is requested or saved yet.
+    expect(await host.getAttribute('data-active-sheet')).toBe(SHEET)
     expect(api.count('GET', `/api/workbooks/${WB}/dashboard`)).toBe(0)
-    await page.getByTestId('view-tab-dashboard').click()
+    expect(await page.getByTestId('dashboard').count()).toBe(0)
+
+    await tab(page, DASH).click()
     await page.waitForURL(`${BASE_URL}/workbooks/${WB}/dashboard`)
     const dash = page.getByTestId('dashboard')
     await expect.poll(() => dash.getAttribute('data-state'), READY).toBe('ready')
-    expect(await page.getByTestId('view-tab-dashboard').getAttribute('aria-current')).toBe('page')
+    expect(await host.getAttribute('data-active-sheet')).toBe(DASH)
+    // It covers the grid only: the toolbar above and the tab bar below stay where they are.
+    const box = (await page.locator('.editor-dashboard').boundingBox())!
+    const bar = (await page.locator(TABS).first().boundingBox())!
+    expect(box.y + box.height).toBeLessThanOrEqual(bar.y + 1)
+    expect(await page.locator('.editor-host [data-u-comp="headerbar"]').isVisible()).toBe(true)
+    await shotTabBar(page, 'dashboard-tab-bar')
 
     // KPIs: Latin digits, isolated.
     expect(await page.getByTestId('kpi-completion').innerText()).toContain('46%')
@@ -198,6 +240,7 @@ describe('the automatic dashboard', () => {
     })
     expect(geometry.labelStart).toBeGreaterThanOrEqual(geometry.barEnd - 1)
     // Times run right to left: the oldest week is on the right.
+    await page.getByTestId('dash-timeline').scrollIntoViewIfNeeded()
     const weeks = await page.locator('[data-chart="columns"] .chart__tick').evaluateAll((els) =>
       els.filter((e) => /^\d\d-\d\d$/.test(e.textContent ?? '')).map((e) => ({ text: e.textContent, x: e.getBoundingClientRect().left })),
     )
@@ -214,17 +257,93 @@ describe('the automatic dashboard', () => {
     // A KPI links to its cells.
     expect(await page.getByTestId('kpi-overdue').getAttribute('href')).toBe(`/workbooks/${WB}?sheet=${SHEET}&range=D3%3AD18`)
     // A chart element: the first sheet's bar → that sheet's completion column, selected in the grid.
+    await page.getByTestId('dash-sheets').scrollIntoViewIfNeeded()
     await page.locator('[data-testid="dash-sheets"] .recharts-bar-rectangle').first().click()
     await page.waitForURL(`${BASE_URL}/workbooks/${WB}?sheet=${SHEET}&range=E2%3AE17`)
-    await expect.poll(() => page.getByTestId('univer-host').getAttribute('data-selection'), { timeout: 20_000 }).toBe(`${SHEET}!E2:E17`)
+    await expect.poll(() => host.getAttribute('data-selection'), { timeout: 20_000 }).toBe(`${SHEET}!E2:E17`)
+    expect(await host.getAttribute('data-active-sheet')).toBe(SHEET)
     expect(await page.getByTestId('dashboard').isVisible()).toBe(false)
-    expect(await page.getByTestId('view-tab-sheets').getAttribute('aria-current')).toBe('page')
 
-    // Back to the dashboard (kept mounted), then a list item.
-    await page.getByTestId('view-tab-dashboard').click()
+    // Back to the dashboard tab (kept mounted), then a list item.
+    await tab(page, DASH).click()
+    await page.waitForURL(`${BASE_URL}/workbooks/${WB}/dashboard`)
     await page.getByTestId('dash-overdue').getByTestId('dash-task-link').first().click()
     await page.waitForURL(`${BASE_URL}/workbooks/${WB}?sheet=${SHEET}&range=A3`)
-    await expect.poll(() => page.getByTestId('univer-host').getAttribute('data-selection'), { timeout: 20_000 }).toBe(`${SHEET}!A3`)
+    await expect.poll(() => host.getAttribute('data-selection'), { timeout: 20_000 }).toBe(`${SHEET}!A3`)
+    // Choosing a sheet tab puts the address back on the workbook; Back returns to the dashboard tab.
+    await tab(page, DASH).click()
+    await page.waitForURL(`${BASE_URL}/workbooks/${WB}/dashboard`)
+    await tab(page, SHEET).click()
+    await page.waitForURL(`${BASE_URL}/workbooks/${WB}`)
+    await page.goBack()
+    await page.waitForURL(`${BASE_URL}/workbooks/${WB}/dashboard`)
+    await expect.poll(() => host.getAttribute('data-active-sheet')).toBe(DASH)
+    // Opening it changed nothing: no save.
+    expect(api.count('PUT', `/api/workbooks/${WB}/snapshot`)).toBe(0)
+    await context.close()
+  })
+
+  it('cannot be deleted, renamed, hidden, copied or protected, with an Arabic reason; a new sheet goes after it', async () => {
+    const api = dashApi()
+    const { context, page } = await openPage(api, `/workbooks/${WB}/dashboard`)
+    const host = page.getByTestId('univer-host')
+    await expect.poll(() => host.getAttribute('data-engine'), READY).toBe('ready')
+    await expect.poll(() => host.getAttribute('data-active-sheet')).toBe(DASH)
+    // The mock has no room: wait for the fallback (saved with PUT), where the workbook takes edits.
+    await expect.poll(() => host.getAttribute('data-editable'), READY).toBe('true')
+    // Opened on the dashboard tab, the grid under it is still mirrored, and stays so past
+    // the RTL layer's 3 s heartbeat (packages/univer-rtl).
+    await expect.poll(() => host.getAttribute('data-rtl-mirrored'), READY).toBe('true')
+    await page.waitForTimeout(4_000)
+    expect(await host.getAttribute('data-rtl-mirrored')).toBe('true')
+    expect(await page.getByTestId('editor-rtl-off').count()).toBe(0)
+    const refusal = page.getByTestId('sync-refusal')
+
+    // The tab's context menu: deleting, renaming and hiding it are switched off.
+    const menuItem = (text: string) => page.locator(`button:has(> span > span:text-is("${text}"))`)
+    await tab(page, DASH).click({ button: 'right' })
+    for (const item of ['حذف', 'إعادة تسمية', 'إخفاء']) await expect.poll(() => menuItem(item).isDisabled(), { timeout: 10_000 }).toBe(true)
+    await page.screenshot({ path: join(SHOTS, 'dashboard-tab-menu.png') })
+    // Copying or protecting it is refused, with the reason.
+    for (const [item, reason] of [['نسخ', 'لم تُنسخ «اللوحة»'], ['حماية ورقة العمل', '«اللوحة» تعرض أرقام الملف']] as const) {
+      if (!(await menuItem(item).isVisible())) await tab(page, DASH).click({ button: 'right' })
+      await menuItem(item).click()
+      await expect.poll(() => refusal.innerText(), { timeout: 10_000 }).toContain(reason)
+      await refusal.getByRole('button').click()
+    }
+    await page.keyboard.press('Escape')
+    await expect.poll(() => tabBar(page).then((tabs) => tabs.length)).toBe(2)
+
+    // The toolbar stays as on any tab; what it would write into the dashboard is refused.
+    await page.locator('[data-u-command="sheet.command.set-range-bold"]').first().click()
+    await expect.poll(() => refusal.innerText(), { timeout: 10_000 }).toContain('«اللوحة» تعرض أرقام الملف')
+    await refusal.getByRole('button').click()
+
+    // Double-click to rename: the name stays.
+    await tab(page, DASH).dblclick()
+    await page.keyboard.type('لوحتي')
+    await page.keyboard.press('Enter')
+    await expect.poll(() => tabBar(page).then((tabs) => tabs[0]!.name)).toBe('اللوحة')
+
+    // Moving a sheet before it is refused by the same rules (unit tests: test/unit/dashboard-sheet.test.ts,
+    // and the room's apps/api/test/room/dashboard-sheet.test.ts); a synthetic drag does not reach Univer's tab bar.
+    // On a sheet tab the same menu works as usual.
+    await tab(page, SHEET).click({ button: 'right' })
+    await expect.poll(() => menuItem('حذف').isDisabled(), { timeout: 10_000 }).toBe(false)
+    await page.keyboard.press('Escape')
+
+    // «+» adds a sheet after the dashboard, never before it.
+    await page.locator('.editor-host footer button').filter({ has: page.locator('svg') }).first().click()
+    await expect.poll(() => tabBar(page).then((tabs) => tabs.length)).toBe(3)
+    expect((await tabBar(page))[0]!.id).toBe(DASH)
+    expect(pageErrors).toEqual([])
+    // Nothing was ever written into the dashboard: every save so far leaves it empty and first.
+    for (const body of api.bodies('PUT', `/api/workbooks/${WB}/snapshot`) as Array<{ snapshot: { sheetOrder: string[]; sheets: Record<string, { cellData?: unknown; name?: string }> } }>) {
+      expect(body.snapshot.sheetOrder[0]).toBe(DASH)
+      expect(body.snapshot.sheets[DASH]).toMatchObject({ name: 'اللوحة' })
+      expect(Object.keys((body.snapshot.sheets[DASH]?.cellData ?? {}) as object)).toEqual([])
+    }
+    await shotTabBar(page, 'dashboard-tab-guarded')
     await context.close()
   })
 
@@ -357,6 +476,10 @@ describe('custom widgets', () => {
     const { context, page } = await openPage(api, `/workbooks/${WB}/dashboard`, { width: 375, height: 2600 })
     await expect.poll(() => page.getByTestId('dashboard').getAttribute('data-state'), READY).toBe('ready')
     await page.locator('[data-chart="donut"] .recharts-pie-sector').first().waitFor()
+    // The tab bar at phone width: «اللوحة» first (rightmost), selected.
+    await expect.poll(() => tabBar(page).then((tabs) => tabs.map((t) => t.id))).toEqual([DASH, SHEET])
+    expect(await page.getByTestId('univer-host').getAttribute('data-active-sheet')).toBe(DASH)
+    await shotTabBar(page, 'dashboard-tab-bar-375')
     const overflow = await page.locator('.editor-dashboard').evaluate((el) => el.scrollWidth - el.clientWidth)
     expect(overflow).toBeLessThanOrEqual(0)
     // The whole page too, editor bar included.

@@ -6,11 +6,12 @@
 import { env } from 'cloudflare:workers'
 import { describe, expect, it } from 'vitest'
 import type { AppearanceResponse, DashboardResponse, DashboardWidgetConfig, WidgetListResponse, WidgetResponse, WidgetResult } from '@naf-sheets/shared'
-import { contrastRatio, contrastWarnings } from '@naf-sheets/shared'
+import { DASHBOARD_SHEET_ID, contrastRatio, contrastWarnings } from '@naf-sheets/shared'
 import { registerDashboardRoutes } from '../../src/dashboard'
 import { readValue, weekOf, linkFor, parseRange } from '../../src/dashboard'
 import { addMember, call, createWorkbook, isArabic, json, seedMember, testApp } from '../helpers'
 import { harness, setupLinked } from '../sync/harness'
+import { readSnapshot } from '../../src/snapshot'
 
 const NOW = () => new Date('2026-11-10T09:00:00Z') // a Tuesday, Riyadh time 12:00
 
@@ -206,10 +207,14 @@ describe('custom widgets on a plain sheet', () => {
     const missing = await json<WidgetResult & { ok: false }>(await call(a, 'POST', `/api/workbooks/${id}/dashboard/preview`, { user: owner, body: config({ sheetId: 'no-such-sheet' }) }))
     expect(missing.ok).toBe(false)
     expect(isArabic(missing.message)).toBe(true)
+    // The dashboard tab «اللوحة» is in the snapshot but is no widget source.
+    const onDashboard = await json<WidgetResult & { ok: false }>(await call(a, 'POST', `/api/workbooks/${id}/dashboard/preview`, { user: owner, body: config({ sheetId: DASHBOARD_SHEET_ID }) }))
+    expect(onDashboard).toMatchObject({ ok: false, message: missing.message })
 
-    // The plain sheet is listed, with no task figures.
+    // The plain sheet is listed, with no task figures; the dashboard sheet itself is not.
     const d = await json<DashboardResponse>(await call(a, 'GET', `/api/workbooks/${id}/dashboard`, { user: owner }))
     expect(d.sheets).toEqual([expect.objectContaining({ sheetId, kind: 'plain', todos: 0, completion: null })])
+    expect((await readSnapshot(env, id, 2) as { sheetOrder: string[] }).sheetOrder).toEqual([DASHBOARD_SHEET_ID, sheetId])
     expect(d.totals).toMatchObject({ todos: 0, completion: null, overdue: 0 })
     expect(d.sync.state).toBe('unlinked')
   })

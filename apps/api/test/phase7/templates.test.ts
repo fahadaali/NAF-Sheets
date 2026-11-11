@@ -3,7 +3,7 @@
 
 import { env } from 'cloudflare:workers'
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_COLUMNS } from '@naf-sheets/shared'
+import { DASHBOARD_SHEET_ID, DEFAULT_COLUMNS, isDashboardSheet } from '@naf-sheets/shared'
 import type { TemplateListResponse, TemplateSummary, WorkbookResponse } from '@naf-sheets/shared'
 import { templateKey } from '../../src/phase7'
 import { call, createWorkbook, isArabic, json, seedMember, testApp } from '../helpers'
@@ -59,6 +59,12 @@ describe('templates', () => {
     expect(wb.sheets).toHaveLength(1)
     expect(wb.sheets[0]).toMatchObject({ title: 'ورقة 1', syncMode: 'local', bcTodolistId: null, headerRow: 1, position: 1 })
     expect(headerOf(snapshot, wb.sheets[0]!.univerSheetId)).toEqual([...DEFAULT_COLUMNS])
+    // The dashboard tab «اللوحة»: not in the template, re-created first in the new workbook, never in D1.
+    const stored = (await (await env.SNAPSHOTS.get(templateKey(template.id)))!.json()) as Snap
+    expect(stored.sheetOrder).not.toContain(DASHBOARD_SHEET_ID)
+    expect(Object.values(stored.sheets).some(isDashboardSheet)).toBe(false)
+    expect(snapshot.sheetOrder).toEqual([DASHBOARD_SHEET_ID, wb.sheets[0]!.univerSheetId])
+    expect(isDashboardSheet(snapshot.sheets[DASHBOARD_SHEET_ID])).toBe(true)
 
     const row = await env.DB.prepare(`SELECT source, source_ref FROM workbooks WHERE id = ?1`).bind(id).first()
     expect(row).toEqual({ source: 'template', source_ref: template.id })

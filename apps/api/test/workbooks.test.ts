@@ -1,6 +1,6 @@
 import { env } from 'cloudflare:workers'
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_COLUMNS } from '@naf-sheets/shared'
+import { DASHBOARD_SHEET_ID, DEFAULT_COLUMNS, contentSheetIds, isDashboardSheet, withDashboardSheet } from '@naf-sheets/shared'
 import type { WorkbookListResponse, WorkbookResponse } from '@naf-sheets/shared'
 import { snapshotKey } from '../src/snapshot'
 import { addMember, call, createWorkbook, isArabic, json, seedMember, testApp } from './helpers'
@@ -25,7 +25,8 @@ describe('POST /api/workbooks', () => {
     const id = await createWorkbook(app, owner)
     const res = await call(app, 'GET', `/api/workbooks/${id}`, { user: owner })
     const { snapshot } = await json<{ snapshot: { sheets: Record<string, { defaultStyle?: { ff?: string } }> } }>(res)
-    const sheets = Object.values(snapshot.sheets)
+    // «ورقة 1»; the dashboard tab «اللوحة» has no cells to style.
+    const sheets = contentSheetIds(snapshot).map((sheetId) => snapshot.sheets[sheetId])
     expect(sheets).toHaveLength(1)
     expect(sheets[0]?.defaultStyle?.ff).toBe('Thmanyah Sans')
   })
@@ -52,7 +53,9 @@ describe('POST /api/workbooks', () => {
       sheetOrder: string[]
       sheets: Record<string, { name: string; cellData: Record<string, Record<string, { v: string }>> }>
     }
-    expect(snapshot).toMatchObject({ id, name: 'خطة رمضان', locale: 'arSA', sheetOrder: [sheets[0]!.univer_sheet_id] })
+    // The dashboard tab «اللوحة» first (not in D1), then «ورقة 1».
+    expect(snapshot).toMatchObject({ id, name: 'خطة رمضان', locale: 'arSA', sheetOrder: [DASHBOARD_SHEET_ID, sheets[0]!.univer_sheet_id] })
+    expect(isDashboardSheet(snapshot.sheets[DASHBOARD_SHEET_ID])).toBe(true)
     const sheet = snapshot.sheets[sheets[0]!.univer_sheet_id as string]!
     expect(sheet.name).toBe('ورقة 1')
     const header = Object.entries(sheet.cellData['0']!)
@@ -189,7 +192,7 @@ describe('GET /api/workbooks/:id', () => {
     expect(typeof body.workbook.createdAt).toBe('string')
     expect(body.sheets).toHaveLength(1)
     expect(body.sheets[0]).toMatchObject({ title: 'ورقة 1', position: 1, syncMode: 'local', bcTodolistId: null, headerRow: 1 })
-    expect((body.snapshot as { sheetOrder: string[] }).sheetOrder).toEqual([body.sheets[0]!.univerSheetId])
+    expect((body.snapshot as { sheetOrder: string[] }).sheetOrder).toEqual([DASHBOARD_SHEET_ID, body.sheets[0]!.univerSheetId])
   })
 
   it('answers 404 — never 403 — to a non-member, and to an unknown id', async () => {
@@ -242,7 +245,8 @@ describe('PUT /api/workbooks/:id/snapshot', () => {
 
     const read = await json<WorkbookResponse>(await call(app, 'GET', `/api/workbooks/${id}`, { user: owner }))
     expect(read.version).toBe(2)
-    expect(read.snapshot).toEqual(newSnapshot('v2'))
+    // Stored as sent; read with the dashboard tab «اللوحة» added (the snapshot predates it).
+    expect(read.snapshot).toEqual(withDashboardSheet(newSnapshot('v2')))
   })
 
   it('answers a stale baseVersion with 409 version_conflict and writes nothing', async () => {

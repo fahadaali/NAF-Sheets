@@ -22,6 +22,7 @@ import {
   ROOM_LIMITS,
   ROOM_PROTOCOL_VERSION,
   toFrames,
+  withDashboardSheet,
 } from '@naf-sheets/shared'
 import type {
   RoomCell,
@@ -459,7 +460,7 @@ export class WorkbookRoom extends DurableObject<Env> {
     if (done) return this.send(ws, { type: 'ack', opId: msg.opId, seq: done.seq })
     if (msg.baseSeq > live.seq) return reject('invalid')
 
-    const classified = classifyOp(msg.mutations, live.engine.unitId)
+    const classified = classifyOp(msg.mutations, live.engine.unitId, live.engine.dashboardSheetId)
     if (!classified.ok) return reject('invalid')
     const footprint = classified.footprint
 
@@ -546,7 +547,10 @@ export class WorkbookRoom extends DurableObject<Env> {
     // Imported on first use: the API Worker shares this script, and Univer
     // adds ~70 ms of startup when evaluated eagerly (phase 6 spike).
     const { loadHeadlessWorkbook } = await import('./room/engine')
-    const data = { ...snapshot }
+    // The dashboard tab «اللوحة» is added to a workbook that predates it, the
+    // same way GET /api/workbooks/:id adds it (deterministic, so an editor
+    // that opened from that response holds the same model as the room).
+    const data = withDashboardSheet({ ...snapshot })
     if (typeof data.id !== 'string' || data.id === '') data.id = workbookId
     return loadHeadlessWorkbook(data)
   }

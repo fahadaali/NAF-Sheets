@@ -3,6 +3,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { decorateTaskRows, instantiateTemplate, readTasks, toTemplateWorkbook, type DecorationOptions, type WorkbookSnapshot } from '../src'
+import { DASHBOARD_SHEET_ID, DASHBOARD_SHEET_TITLE, isDashboardSheet, withDashboardSheet } from '@naf-sheets/shared'
 import { blankWorkbook, cell, defaultPlan, linkedWorkbook, putRow } from './helpers'
 
 const S = 'sheet-1'
@@ -97,7 +98,41 @@ describe('instantiateTemplate', () => {
     const copy = instantiateTemplate(template, { workbookId: 'wb-new', title: 'حملة الربع الأول' })
     expect(copy.id).toBe('wb-new')
     expect(copy.name).toBe('حملة الربع الأول')
-    expect(copy.sheetOrder).toEqual(['a', 'b'])
+    // The dashboard tab «اللوحة» is re-created first; the template's sheets follow.
+    expect(copy.sheetOrder).toEqual([DASHBOARD_SHEET_ID, 'a', 'b'])
+    expect(isDashboardSheet(copy.sheets[DASHBOARD_SHEET_ID])).toBe(true)
     expect(JSON.stringify(template)).toBe(before)
+  })
+
+  it('re-creates the dashboard sheet from scratch, whatever the template holds', () => {
+    const template = withDashboardSheet(blankWorkbook([{ id: 'a', title: 'المهام' }]))
+    const stored = template.sheets[DASHBOARD_SHEET_ID] as Record<string, unknown>
+    stored.name = 'اسم قديم'
+    stored.tabColor = '#123456'
+    const copy = instantiateTemplate(template, { workbookId: 'wb-new', title: 'نسخة' })
+    expect(copy.sheetOrder).toEqual([DASHBOARD_SHEET_ID, 'a'])
+    expect(copy.sheets[DASHBOARD_SHEET_ID]).toMatchObject({ name: DASHBOARD_SHEET_TITLE, cellData: {} })
+    expect((copy.sheets[DASHBOARD_SHEET_ID] as Record<string, unknown>).tabColor).toBeUndefined()
+  })
+})
+
+describe('toTemplateWorkbook: the dashboard sheet', () => {
+  it('is stripped, with any plugin data keyed by its id; the content sheets are kept', () => {
+    const source = withDashboardSheet(blankWorkbook([{ id: S, title: 'المهام' }]))
+    source.resources = [
+      { name: 'SHEET_FILTER_PLUGIN', data: JSON.stringify({ [DASHBOARD_SHEET_ID]: { ref: { startRow: 0 } }, [S]: { ref: { startRow: 1 } } }) },
+    ]
+    const before = JSON.stringify(source)
+    const { workbook } = toTemplateWorkbook(source)
+    expect(workbook.sheetOrder).toEqual([S])
+    expect(Object.keys(workbook.sheets)).toEqual([S])
+    expect(JSON.parse(workbook.resources![0]!.data)).toEqual({ [S]: { ref: { startRow: 1 } } })
+    expect(JSON.stringify(source)).toBe(before)
+  })
+
+  it('keeps a person\'s own sheet named «اللوحة»: only the platform mark makes a dashboard', () => {
+    const source = blankWorkbook([{ id: 'mine', title: DASHBOARD_SHEET_TITLE }])
+    const { workbook } = toTemplateWorkbook(source)
+    expect(workbook.sheetOrder).toEqual(['mine'])
   })
 })

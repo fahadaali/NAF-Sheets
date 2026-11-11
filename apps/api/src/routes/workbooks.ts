@@ -11,6 +11,7 @@ import type {
   WorkbookMembersResponse,
   WorkbookResponse,
 } from '@naf-sheets/shared'
+import { withDashboardSheet } from '@naf-sheets/shared'
 import type { AppEnv } from '../auth'
 import type { Caller, WorkbookAccess } from '../access'
 import { canCreateWorkbooks, canManageMembers, canWrite, resolveAccess } from '../access'
@@ -164,7 +165,9 @@ export function workbookRoutes(options: WorkbookRouteOptions): Hono<AppEnv> {
     return c.json<WorkbookResponse>({
       workbook: { ...toSummary(row, access), ownerId: row.owner_id, source: row.source, createdAt: row.created_at },
       sheets,
-      snapshot,
+      // The dashboard tab «اللوحة» is added to a workbook that predates it,
+      // exactly as the room adds it when it loads (room.ts `load`).
+      snapshot: isPlainObject(snapshot) ? withDashboardSheet(snapshot) : snapshot,
       version,
     })
   })

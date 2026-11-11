@@ -1,9 +1,10 @@
 // Workbook editor (spec §12.1 item 2). Loaded lazily from App.tsx: this module
 // is the only way into Univer, so the files screen never downloads it.
 
-import { useEffect, useMemo, useRef, useState } from 'react'
-import type { ReactNode } from 'react'
-import { ArrowRight, CloudCheck, CloudOff, CloudUpload, Eye, FileSpreadsheet, LayoutDashboard, LoaderCircle, Settings2, Table2, TriangleExclamationPoint } from 'lucide-react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import type { CSSProperties, ReactNode } from 'react'
+import { ArrowRight, CloudCheck, CloudOff, CloudUpload, Eye, FileSpreadsheet, LoaderCircle, Settings2, TriangleExclamationPoint } from 'lucide-react'
+import { contentSheetIds, findDashboardSheetId } from '@naf-sheets/shared'
 import type { AssigneeOptionsResponse, ConflictRecord, SaveSnapshotRequest, WorkbookResponse, WorkbookSyncResponse } from '@naf-sheets/shared'
 import { api, classifySaveError, errorMessage, isAbortError } from '../lib/api'
 import { Autosave } from '../lib/autosave'
@@ -51,7 +52,12 @@ export interface RoomNotice {
 
 const CONNECTING_VIEW: CollabView = { mode: 'connecting', readOnly: false, pending: 0, peers: [], locks: [] }
 
-/** What the editor shows: the grid, or the workbook's dashboard («اللوحة», /workbooks/:id/dashboard). */
+/**
+ * The address the editor was opened at: a sheet, or the dashboard tab
+ * «اللوحة» (/workbooks/:id/dashboard). The dashboard is the workbook's first
+ * sheet tab, in Univer's own bar (@naf-sheets/shared dashboard-sheet.ts,
+ * src/dashboard/sheet-tab.ts); choosing a tab updates the address in place.
+ */
 export type EditorView = 'sheets' | 'dashboard'
 
 export default function EditorScreen({ id, target, view = 'sheets' }: { id: string; target?: EditorTarget | undefined; view?: EditorView }) {
@@ -225,6 +231,15 @@ function WorkbookEditor({ data, target, view, onReload, session, collab, roomNot
   const [activeSheet, setActiveSheet] = useState<string | null>(null)
   const [selection, setSelection] = useState<{ kind: 'none' } | { kind: 'applied'; where: string } | { kind: 'missing' }>({ kind: 'none' })
   const [settingsOpen, setSettingsOpen] = useState(false)
+  // The dashboard tab: its sheet id, Univer's host element while it is shown, and where to draw over it.
+  const dashboardSheetId = useMemo(() => (resolved.ok ? findDashboardSheetId(resolved.data) : null), [resolved])
+  const firstContentSheetId = useMemo(() => (resolved.ok ? (contentSheetIds(resolved.data)[0] ?? null) : null), [resolved])
+  const [dashboardHost, setDashboardHost] = useState<HTMLElement | null>(null)
+  const [dashboardHostMissing, setDashboardHostMissing] = useState(false)
+  const stageRef = useRef<HTMLDivElement>(null)
+  const viewRef = useRef(view)
+  viewRef.current = view
+  const lastContentSheet = useRef<string | null>(null)
 
   // Wave 3: synced sheets.
   const [syncInfo, setSyncInfo] = useState<WorkbookSyncResponse | null>(null)
@@ -285,11 +300,32 @@ function WorkbookEditor({ data, target, view, onReload, session, collab, roomNot
     let layer: SyncLayer | null = null
     let frame = 0
 
+    const dashboard = dashboardSheetId
     mountWorkbook(host, resolved.data, {
       isCancelled: () => cancelled,
       onRtlStatus: (state) => {
         if (!cancelled) setRtl(state)
       },
+      // The address decides the first tab: the dashboard at …/dashboard, else the first sheet
+      // (a deep link's own sheet is selected right after, below).
+      initialSheetId: view === 'dashboard' ? dashboard : firstContentSheetId,
+      dashboard:
+        dashboard === null
+          ? null
+          : {
+              sheetId: dashboard,
+              onHost: (element) => {
+                if (cancelled) return
+                setDashboardHost(element)
+                if (element) setDashboardHostMissing(false)
+              },
+              onHostMissing: () => {
+                if (!cancelled) setDashboardHostMissing(true)
+              },
+              onRefused: (message) => {
+                if (!cancelled) refuse(message)
+              },
+            },
     }).then(
       (workbook) => {
         if (!workbook) return
@@ -303,8 +339,19 @@ function WorkbookEditor({ data, target, view, onReload, session, collab, roomNot
         const firstSheet = workbook.activeSheetId()
         if (synced.size > 0 && firstSheet !== null && synced.has(firstSheet)) workbook.setEditable(false)
         setActiveSheet(firstSheet)
+        if (firstSheet !== null && firstSheet !== dashboard) lastContentSheet.current = firstSheet
         workbook.onActiveSheetChange((sheetId) => {
-          if (!cancelled) setActiveSheet(sheetId)
+          if (cancelled) return
+          setActiveSheet(sheetId)
+          if (dashboard === null) return
+          // A tab chosen in the bar: the address follows (in place, no new history entry).
+          // The editor's own selections already match the address, so they navigate nowhere.
+          if (sheetId === dashboard) {
+            if (viewRef.current !== 'dashboard') navigate(pathFor({ name: 'dashboard', id: data.workbook.id }), { replace: true })
+          } else {
+            lastContentSheet.current = sheetId
+            if (viewRef.current === 'dashboard') navigate(pathFor({ name: 'editor', id: data.workbook.id }), { replace: true })
+          }
         })
         if (synced.size > 0) {
           try {
@@ -424,15 +471,50 @@ function WorkbookEditor({ data, target, view, onReload, session, collab, roomNot
     }
   }, [engine, session])
 
-  // While the dashboard covers the grid, the grid takes no focus or keys.
-  const showDashboard = view === 'dashboard'
+  // The dashboard tab is shown while it is the active sheet.
+  const showDashboard = engine === 'ready' && dashboardSheetId !== null && activeSheet === dashboardSheetId
+
+  // The address changed (a link, Back/Forward): show its tab. A deep link's
+  // range is selected by the target effect below.
   useEffect(() => {
-    const host = hostRef.current
-    if (!host) return
-    host.inert = showDashboard
-    if (showDashboard) host.setAttribute('aria-hidden', 'true')
-    else host.removeAttribute('aria-hidden')
-  }, [showDashboard])
+    const mounted = mountedRef.current
+    if (engine !== 'ready' || !mounted || dashboardSheetId === null) return
+    const active = mounted.activeSheetId()
+    if (view === 'dashboard' && active !== dashboardSheetId) mounted.select({ sheet: dashboardSheetId, range: null })
+    else if (view === 'sheets' && !target && active === dashboardSheetId) {
+      const back = lastContentSheet.current ?? firstContentSheetId
+      if (back) mounted.select({ sheet: back, range: null })
+    }
+    // `target` is read only to leave a deep link to its own effect.
+  }, [engine, view, dashboardSheetId])
+
+  // The dashboard is drawn over Univer's host element for the tab (src/dashboard/sheet-tab.ts
+  // says why not inside it): same place and size, followed as the layout changes.
+  const [dashboardBox, setDashboardBox] = useState<CSSProperties | null>(null)
+  useLayoutEffect(() => {
+    const stage = stageRef.current
+    if (!dashboardHost || !stage) return
+    const measure = () => {
+      const s = stage.getBoundingClientRect()
+      const h = dashboardHost.getBoundingClientRect()
+      const rtl = getComputedStyle(stage).direction === 'rtl'
+      setDashboardBox({
+        insetBlockStart: h.top - s.top,
+        insetInlineStart: rtl ? s.right - h.right : h.left - s.left,
+        inlineSize: h.width,
+        blockSize: h.height,
+      })
+    }
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(dashboardHost)
+    observer.observe(stage)
+    window.addEventListener('resize', measure)
+    return () => {
+      observer.disconnect()
+      window.removeEventListener('resize', measure)
+    }
+  }, [dashboardHost])
 
   // One place decides whether the grid takes edits: role, room, conflict, synced-sheet lock.
   useEffect(() => {
@@ -560,7 +642,8 @@ function WorkbookEditor({ data, target, view, onReload, session, collab, roomNot
   }, [])
 
   const { workbook } = data
-  const [dashboardOpened, setDashboardOpened] = useState(showDashboard)
+  // Mounted once first shown, so going back and forth keeps it; it refreshes on every commit.
+  const [dashboardOpened, setDashboardOpened] = useState(false)
   if (showDashboard && !dashboardOpened) setDashboardOpened(true)
   const onSyncedSheet = engine === 'ready' && activeSheet !== null && synced.has(activeSheet)
 
@@ -608,7 +691,6 @@ function WorkbookEditor({ data, target, view, onReload, session, collab, roomNot
       data-room-locks={JSON.stringify(collab.locks.map((l) => ({ userId: l.userId, ...l.cell })))}
     >
       <EditorBar title={workbook.title}>
-        <ViewTabs id={workbook.id} view={view} />
         {!canEdit ? (
           <span className="badge badge--neutral">
             <Eye className="icon" aria-hidden="true" />
@@ -740,6 +822,11 @@ function WorkbookEditor({ data, target, view, onReload, session, collab, roomNot
             <p>{t.rowSync.pollFailed}</p>
           </Notice>
         ) : null}
+        {showDashboard && dashboardHostMissing ? (
+          <Notice tone="danger" testId="dashboard-host-missing">
+            <p>{t.dashboard.sheet.hostMissing}</p>
+          </Notice>
+        ) : null}
         {selection.kind === 'missing' ? (
           <Notice tone="info" testId="editor-target-missing">
             <p>{t.editor.targetMissing}</p>
@@ -810,7 +897,7 @@ function WorkbookEditor({ data, target, view, onReload, session, collab, roomNot
 
       <div className="editor-body">
       {resolved.ok ? (
-        <div className="editor-stage">
+        <div className="editor-stage" ref={stageRef}>
           <div
             ref={hostRef}
             className="editor-host"
@@ -828,12 +915,18 @@ function WorkbookEditor({ data, target, view, onReload, session, collab, roomNot
               {t.editor.starting}
             </div>
           ) : null}
-        </div>
-      ) : null}
-      {/* Mounted once opened, so going back and forth keeps it; it refreshes on every commit. */}
-      {dashboardOpened ? (
-        <div className="editor-dashboard" hidden={!showDashboard} id="workbook-dashboard" role="region" aria-label={t.dashboard.tab}>
-          <DashboardView workbookId={workbook.id} visible={showDashboard} refreshKey={`${collab.version ?? ''}:${save.version}`} />
+          {dashboardOpened ? (
+            <div
+              className="editor-dashboard"
+              hidden={!showDashboard || !dashboardHost || !dashboardBox}
+              style={dashboardBox ?? undefined}
+              id="workbook-dashboard"
+              role="region"
+              aria-label={t.dashboard.tab}
+            >
+              <DashboardView workbookId={workbook.id} visible={showDashboard} refreshKey={`${collab.version ?? ''}:${save.version}`} />
+            </div>
+          ) : null}
         </div>
       ) : null}
       </div>
@@ -913,29 +1006,6 @@ function WorkbookEditor({ data, target, view, onReload, session, collab, roomNot
         onDismiss={resolveConflict((id, cid) => api.dismissConflict(id, cid))}
       />
     </div>
-  )
-}
-
-/**
- * «الجدول» / «اللوحة»: the grid or the dashboard of this workbook. Links, so
- * each view has its address (/workbooks/:id, /workbooks/:id/dashboard).
- * OPEN (apps/web/OPEN_QUESTIONS.md #66): in the editor bar rather than in
- * Univer's own sheet tab bar, which has no public slot for it.
- */
-function ViewTabs({ id, view }: { id: string; view: EditorView }) {
-  const tabs = [
-    { key: 'sheets' as const, href: pathFor({ name: 'editor', id }), label: t.dashboard.sheetsTab, Icon: Table2 },
-    { key: 'dashboard' as const, href: pathFor({ name: 'dashboard', id }), label: t.dashboard.tab, Icon: LayoutDashboard },
-  ]
-  return (
-    <nav className="view-tabs" aria-label={t.dashboard.viewSwitch}>
-      {tabs.map(({ key, href, label, Icon }) => (
-        <Link key={key} href={href} className={view === key ? 'view-tabs__tab view-tabs__tab--active' : 'view-tabs__tab'} aria-current={view === key ? 'page' : undefined} data-testid={`view-tab-${key}`}>
-          <Icon className="icon" aria-hidden="true" />
-          {label}
-        </Link>
-      ))}
-    </nav>
   )
 }
 

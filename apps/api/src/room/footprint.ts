@@ -7,7 +7,7 @@
 // same plugin data on the same sheet. Ops that do not conflict commute, so
 // applying them in either order gives the same workbook.
 
-import { roomMutationClass } from '@naf-sheets/shared'
+import { dashboardMutationProblem, roomMutationClass } from '@naf-sheets/shared'
 import type { RoomMutation } from '@naf-sheets/shared'
 
 /** Inclusive bounds; MAX stands for "to the end" (whole rows / columns). */
@@ -222,12 +222,22 @@ function compact(spans: Span[]): Span[] {
   return [...bySheet.values()]
 }
 
-/** Footprint of a whole op, or the first reason it cannot be accepted. */
-export function classifyOp(mutations: readonly RoomMutation[], unitId: string): ClassifyResult {
+/**
+ * Footprint of a whole op, or the first reason it cannot be accepted.
+ *
+ * `dashboardSheetId`: the workbook's dashboard sheet «اللوحة» (the engine's
+ * `dashboardSheetId`, '' when none). An op that would remove, rename, hide or
+ * move it, put a sheet before it, add a second one, or write into it is
+ * refused like any other invalid op (the editor refuses these before they are
+ * sent; this is the backstop). Row heights and column widths on it pass.
+ */
+export function classifyOp(mutations: readonly RoomMutation[], unitId: string, dashboardSheetId = ''): ClassifyResult {
   const fp = empty()
   for (const m of mutations) {
     const one = classifyMutation(m, unitId)
     if (!one.ok) return one
+    const problem = dashboardMutationProblem(m.id, m.params, dashboardSheetId, roomMutationClass)
+    if (problem !== null) return { ok: false, detail: `${m.id}: the dashboard sheet (${problem})` }
     fp.structural ||= one.footprint.structural
     fp.cells.push(...one.footprint.cells)
     fp.rows.push(...one.footprint.rows)

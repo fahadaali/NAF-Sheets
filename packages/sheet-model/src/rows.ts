@@ -19,6 +19,7 @@
 // OPEN: sort semantics rather than insert semantics (OPEN_QUESTIONS.md #3);
 // cached values of other formulas (#16); row settings move with the row (#17).
 
+import { isDashboardSheet } from '@naf-sheets/shared'
 import { hasFormula, rowCells, setCell, type SheetSnapshot, type WorkbookSnapshot } from './cells'
 import { fail, ok, type Result } from './errors'
 import { offsetFormula } from './formula-refs'
@@ -132,6 +133,7 @@ function expandSharedFormulas(sheet: SheetSnapshot, groups: ReadonlySet<string>)
 export function reorderRows(workbook: WorkbookSnapshot, sheetId: string, moves: readonly RowMove[]): Result<ReorderResult> {
   const sheet = workbook.sheets[sheetId]
   if (sheet === undefined) return fail('sheet_not_found')
+  if (isDashboardSheet(sheet)) return fail('dashboard_sheet')
   const source = new Map<number, number | null>()
   const dest = new Map<number, number>()
   for (const m of moves) {

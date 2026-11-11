@@ -839,14 +839,19 @@ I1. **Service tokens (§13 «محمية برموز خدمة»)**: how they are i
     and rotated is not specified. Safe default: an admin issues a named token
     (`POST /api/admin/api-tokens`, shown once, only its SHA-256 stored),
     read-only over every workbook, revocable, never deleted, `last_used_at`
-    kept. No per-system scopes, no expiry. Decide with §17-3.
+    kept. No per-system scopes, no expiry. (§17-3 is decided — I3 — so this
+    stays as built.)
 
 I2. **The optional outbound webhook** («Webhook صادر اختياري لأحداث: مهمة
     أُنجزت، مهمة تأخرت») is **not built**: no receiving system, URL, signing or
-    "became overdue" trigger is specified (§17-3 open). Nothing is sent anywhere.
+    "became overdue" trigger is specified, and §17-3 is decided with no system
+    to receive it (I3). Nothing is sent anywhere.
 
-I3. **Which other NAF systems connect (§17-3)** is open; the API serves
-    whoever holds a token.
+I3. **Which other NAF systems connect (§17-3)** — **decided by the owner,
+    2026-11-10: none need to connect.** The internal API stays as built
+    (read-only `/api/v1`, admin-issued service tokens, I1), serving whoever
+    holds a token; no system-specific integration or outbound webhook (I2) is
+    planned.
 
 I4. **"Today" for `overdue`** is the date in Asia/Riyadh; a task due today is
     `open`, due yesterday and not completed `overdue`. Status words are
@@ -986,4 +991,6 @@ D6. **Cost.** GET …/dashboard reads the latest snapshot and every row on each 
 
 D7. **Migration number.** `0007_dashboard.sql` was the next free number on 2026-11-10; if another branch adds a 0007 the later one must be renumbered before merging.
 
-D8. **Appearance** is stored in KV `SETTINGS` under `settings:appearance` (palette overrides only, `#rrggbb`); every change is in `audit_log` (`settings.appearance`). Reading it needs a signed-in member; changing it needs a platform admin.
+D8. **Appearance** is stored in KV `SETTINGS` under `settings:appearance` (palette overrides only, `#rrggbb`); every change is in `audit_log` (`settings.appearance`). Reading it needs a signed-in member; changing it needs a platform admin. **The calm palette is approved as the platform's look (owner, 2026-11-10)**: `apps/web/src/styles/theme.css`, adjustable through «المظهر».
+
+D9. **The dashboard is the workbook's first sheet tab «اللوحة»** (owner, 2026-11-10; apps/web #66). It is a real Univer worksheet, marked by platform data in its `custom` field (`nafSheetRole: 'dashboard'`, never by name or id), kept first in `sheetOrder` (`@naf-sheets/shared` dashboard-sheet.ts). The API adds it with `withDashboardSheet` when it serves a workbook (GET /api/workbooks/:id) and the room adds it with the same deterministic function when it loads one (room.ts `load`), so an editor that opened from the GET holds the same model as the room; blank workbooks, workbooks from a template and Google imports are created with it. It is never in D1 `sheets`: the files list, the link wizard, sync detection, /api/v1 and backups (D1 export) never see it, and backups copy snapshots byte for byte. Templates drop it and re-create it on instantiation. The figures and widgets skip it (a widget naming it is `sheet_missing`). sheet-model refuses it (`dashboard_sheet`) in `readTasks`, `ensureSystemColumns`, `applyInbound`, indentation, decoration and reordering. The room refuses any op that would remove, rename, hide or move it, put a sheet before it, insert a second one, or write its cells, properties or plugin data (footprint.ts `classifyOp`, as `invalid`); row heights and column widths on it pass. PUT …/snapshot stores what the editor sends unchanged (the editor always sends it); a snapshot saved without it is given it again on the next read. Confirm that a stored snapshot may lack it until its next save.

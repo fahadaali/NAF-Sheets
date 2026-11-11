@@ -16,6 +16,7 @@ import {
 } from '@naf-sheets/gsheets-import'
 import type { HierarchyDetection, StatusColumnAnalysis, TextGrid } from '@naf-sheets/gsheets-import'
 import type { ColumnPlan, LinkPlan, MappedField, ProjectChoice, SheetMeta, SheetPlan } from '@naf-sheets/shared'
+import { isDashboardSheet } from '@naf-sheets/shared'
 import type { IWorksheetData } from '@univerjs/core'
 import { columnLetters } from '../lib/cell-target'
 import { t } from '../strings'
@@ -59,7 +60,8 @@ export function wizardSheets(metas: readonly SheetMeta[], snapshot: { sheets?: R
       const data = snapshotSheets[m.univerSheetId]
       return { planId: m.id, univerSheetId: m.univerSheetId, title: m.title, grid: data ? textGridFromWorksheet(data) : [] }
     }),
-    unregistered: Object.keys(snapshotSheets).filter((id) => !known.has(id)).length,
+    // The dashboard tab «اللوحة» is no sheet to link (@naf-sheets/shared dashboard-sheet.ts).
+    unregistered: Object.keys(snapshotSheets).filter((id) => !known.has(id) && !isDashboardSheet(snapshotSheets[id])).length,
   }
 }
 

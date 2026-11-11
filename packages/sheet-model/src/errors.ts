@@ -12,6 +12,7 @@ import { ENGINE_ERROR_MESSAGES } from './engine'
 
 export type SheetErrorCode =
   | 'sheet_not_found'
+  | 'dashboard_sheet'
   | 'system_columns_missing'
   | 'system_columns_duplicated'
   | 'invalid_header_row'
@@ -51,6 +52,7 @@ export type SheetIssueCode =
 
 export const ERROR_MESSAGES: Readonly<Record<SheetErrorCode, string>> = {
   sheet_not_found: 'لم يُعثر على الورقة في الملف، فربما حُذفت أو أُعيدت تسميتها. حدّث الملف ثم أعد المحاولة.',
+  dashboard_sheet: 'هذه ورقة «اللوحة»: تعرض أرقام الملف ولا تحمل مهاماً، فلا تُقرأ ولا تُربط ولا يُكتب فيها. اختر ورقة أخرى من أوراق الملف.',
   system_columns_missing:
     'لم تُقرأ الورقة: أعمدة النظام المخفية (__uid و__parent_uid و__level) غير موجودة في صف العناوين. أعد ربط الورقة من لوحة إعدادات الورقة.',
   system_columns_duplicated:

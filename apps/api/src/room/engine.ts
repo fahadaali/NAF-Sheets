@@ -36,6 +36,7 @@ import { UniverSheetsHyperLinkPlugin } from '@univerjs/sheets-hyper-link'
 import { UniverSheetsNotePlugin } from '@univerjs/sheets-note'
 import { UniverSheetsNumfmtPlugin } from '@univerjs/sheets-numfmt'
 import { UniverSheetsSortPlugin } from '@univerjs/sheets-sort'
+import { findDashboardSheetId } from '@naf-sheets/shared'
 
 /** The Univer release this module was verified against (CLAUDE.md §2: every @univerjs/* is pinned to it). */
 export const ROOM_UNIVER_VERSION = '1.4.0'
@@ -52,6 +53,11 @@ export interface WireMutation {
 export interface HeadlessWorkbook {
   /** The Univer unit id: the snapshot's `id`. */
   readonly unitId: string
+  /**
+   * The dashboard sheet «اللوحة» of the loaded snapshot, or '' when it has
+   * none (@naf-sheets/shared dashboard-sheet.ts). Mutations cannot remove it.
+   */
+  readonly dashboardSheetId: string
   /** True when `id` is a mutation registered in this instance. */
   isMutation(id: string): boolean
   /**
@@ -134,10 +140,12 @@ export function loadHeadlessWorkbook(data: Record<string, unknown>, options: Loa
   advanceHeadlessLifecycle(univer)
 
   const unitId = workbook.getUnitId()
+  const dashboardSheetId = findDashboardSheetId(data) ?? ''
   let disposed = false
 
   return {
     unitId,
+    dashboardSheetId,
     isMutation: (id) => {
       if (!commands.hasCommand(id)) return false
       // Not in the public interface; CommandService keeps the type per id.

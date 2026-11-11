@@ -5,7 +5,7 @@
 // a create-only put *before* D1 is moved to it, so D1 never points at an
 // object that does not exist.
 
-import { DEFAULT_COLUMNS } from '@naf-sheets/shared'
+import { DEFAULT_COLUMNS, withDashboardSheet } from '@naf-sheets/shared'
 import type { Env } from './env'
 
 /** The Univer release this platform is pinned to (CLAUDE.md §2). */
@@ -53,30 +53,34 @@ export interface BlankWorkbookData {
   locale: 'arSA'
   styles: Record<string, { bl: 1 }>
   sheetOrder: string[]
-  sheets: Record<
-    string,
-    {
-      id: string
-      name: string
-      rowCount: number
-      columnCount: number
-      /** Stored for the model; the grid is mirrored by @naf-sheets/univer-rtl. */
-      rightToLeft: 1
-      /** Every cell without its own font uses Thmanyah (spec §4.1). */
-      defaultStyle: { ff: typeof GRID_FONT_FAMILY }
-      cellData: Record<number, Record<number, { v: string; s: string }>>
-    }
-  >
+  sheets: Record<string, BlankSheetData | Record<string, unknown>>
 }
 
-/** One sheet «ورقة 1» whose header row holds the default columns of spec §7.1, in order. */
+/** «ورقة 1» of a blank workbook. */
+export interface BlankSheetData {
+  id: string
+  name: string
+  rowCount: number
+  columnCount: number
+  /** Stored for the model; the grid is mirrored by @naf-sheets/univer-rtl. */
+  rightToLeft: 1
+  /** Every cell without its own font uses Thmanyah (spec §4.1). */
+  defaultStyle: { ff: typeof GRID_FONT_FAMILY }
+  cellData: Record<number, Record<number, { v: string; s: string }>>
+}
+
+/**
+ * The dashboard sheet «اللوحة» (first tab, @naf-sheets/shared dashboard-sheet.ts),
+ * then one sheet «ورقة 1» whose header row holds the default columns of spec
+ * §7.1, in order. D1 lists «ورقة 1» only.
+ */
 export function blankWorkbookSnapshot(input: { workbookId: string; title: string; univerSheetId: string }): BlankWorkbookData {
   const header: Record<number, { v: string; s: string }> = {}
   DEFAULT_COLUMNS.forEach((name, column) => {
     header[column] = { v: name, s: HEADER_STYLE_ID }
   })
 
-  return {
+  return withDashboardSheet({
     id: input.workbookId,
     name: input.title,
     appVersion: UNIVER_APP_VERSION,
@@ -94,7 +98,7 @@ export function blankWorkbookSnapshot(input: { workbookId: string; title: string
         cellData: { 0: header },
       },
     },
-  }
+  })
 }
 
 function putOptions(meta: { workbookId: string; version: number; savedBy: string }): R2PutOptions {

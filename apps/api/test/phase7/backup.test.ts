@@ -4,6 +4,7 @@
 import { env } from 'cloudflare:workers'
 import { describe, expect, it } from 'vitest'
 import type { BackupRunsResponse } from '@naf-sheets/shared'
+import { DASHBOARD_SHEET_ID } from '@naf-sheets/shared'
 import { BACKUP_CRON, handleScheduled } from '../../src/background'
 import type { Env } from '../../src/env'
 import { runBackup } from '../../src/phase7'
@@ -51,6 +52,14 @@ describe('runBackup', () => {
     expect(await bucket.head(`${prefix}/schema.json`)).not.toBeNull()
     expect(await bucket.head(`snapshots/${snapshotKey(id, 1)}`)).not.toBeNull()
     expect((await listAll(bucket, `${prefix}/r2-inventory/`)).length).toBeGreaterThan(0)
+    // The snapshot is copied byte for byte, dashboard tab «اللوحة» included (restoring it needs
+    // nothing more); D1's sheets list it nowhere, so the export holds only the content sheet.
+    const copied = await (await bucket.get(`snapshots/${snapshotKey(id, 1)}`))!.text()
+    expect(copied).toBe(await (await env.SNAPSHOTS.get(snapshotKey(id, 1)))!.text())
+    expect((JSON.parse(copied) as { sheetOrder: string[] }).sheetOrder[0]).toBe(DASHBOARD_SHEET_ID)
+    const sheetRows = (await readNdjson(bucket, await listAll(bucket, `${prefix}/sheets/`))).filter((r) => r.workbook_id === id)
+    expect(sheetRows.map((r) => r.title)).toEqual(['ورقة 1'])
+    expect(sheetRows.some((r) => r.univer_sheet_id === DASHBOARD_SHEET_ID)).toBe(false)
 
     // A second run copies nothing already there and replaces nothing.
     const firstCopy = await bucket.head(`snapshots/${snapshotKey(id, 1)}`)

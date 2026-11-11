@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { convertSpreadsheet } from '../src'
 import { gridSheet, spreadsheet, str } from './helpers/build'
+import { DASHBOARD_SHEET_TITLE, contentSheetIds, findDashboardSheetId, isDashboardSheet } from '@naf-sheets/shared'
 
 describe('sheets[].properties → worksheet', () => {
   const response = spreadsheet([
@@ -74,5 +75,19 @@ describe('sheets[].properties → worksheet', () => {
     const r = convertSpreadsheet({ ...spreadsheet([gridSheet([])]), properties: { title: 't', iterativeCalculationSettings: { maxIterations: 50, convergenceThreshold: 0.01 } } })
     expect(r.workbook.calculationSettings).toEqual({ iterativeCalculation: true, maxIterations: 50, maxChange: 0.01 })
     expect(convertSpreadsheet(spreadsheet([gridSheet([])])).workbook.calculationSettings).toBeUndefined()
+  })
+})
+
+describe('the platform dashboard sheet «اللوحة» (@naf-sheets/shared dashboard-sheet.ts)', () => {
+  it('is never created by the import: a Google sheet named «اللوحة» stays an ordinary sheet', () => {
+    const response = spreadsheet([
+      gridSheet([[str('المؤشر')]], {}, { sheetId: 1, title: DASHBOARD_SHEET_TITLE, index: 0 }),
+      gridSheet([[str('المهمة')]], {}, { sheetId: 2, title: 'المهام', index: 1 }),
+    ])
+    const { workbook } = convertSpreadsheet(response, { workbookId: 'wb-1' })
+    expect(workbook.sheetOrder).toEqual(['sheet-1', 'sheet-2'])
+    expect(findDashboardSheetId(workbook)).toBeNull()
+    expect(contentSheetIds(workbook)).toEqual(['sheet-1', 'sheet-2'])
+    expect(Object.values(workbook.sheets).some((s) => isDashboardSheet(s))).toBe(false)
   })
 })

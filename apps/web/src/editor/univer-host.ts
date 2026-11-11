@@ -22,12 +22,13 @@ import { UniverSheetsNotePreset } from '@univerjs/preset-sheets-note'
 import SheetsNoteArSA from '@univerjs/preset-sheets-note/locales/ar-SA'
 import { createUniver, LocaleType, mergeLocales } from '@univerjs/presets'
 import type { FUniver, IWorkbookData } from '@univerjs/presets'
-import { CommandType, ICommandService, IUndoRedoService } from '@univerjs/core'
+import { CommandType, ICommandService, IPermissionService, IUndoRedoService } from '@univerjs/core'
 import type { CollabCommandService } from '../collab/univer-adapter'
 import { enableRtlGrid } from '@naf-sheets/univer-rtl'
 import type { EditorTarget } from '../lib/cell-target'
 import { rangeToA1 } from '../lib/cell-target'
 import { GRID_FONT, isPersistentChange } from './workbook-data'
+import { installDashboardGuard, provideDashboardTabHost } from '../dashboard/sheet-tab'
 
 import '@univerjs/preset-sheets-core/lib/index.css'
 import '@univerjs/preset-sheets-conditional-formatting/lib/index.css'
@@ -76,6 +77,18 @@ export interface MountOptions {
   onRtlStatus(state: RtlState): void
   /** Polled between the asynchronous steps; when true, everything is torn down. */
   isCancelled(): boolean
+  /** The sheet shown first, before the RTL layer starts (Univer would show the first tab). */
+  initialSheetId?: string | null
+  /**
+   * The dashboard tab «اللوحة» (src/dashboard/sheet-tab.ts): its sheet id,
+   * Univer's host element for it while it is shown, and what is refused on it.
+   */
+  dashboard?: {
+    sheetId: string
+    onHost(element: HTMLElement | null): void
+    onHostMissing(): void
+    onRefused(message: string): void
+  } | null
 }
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
@@ -120,6 +133,9 @@ export async function mountWorkbook(host: HTMLElement, data: Partial<IWorkbookDa
     ],
   })
 
+  // Before the workbook exists: Univer asks this service to mount the dashboard tab.
+  if (options.dashboard) provideDashboardTabHost(univer.__getInjector(), host, options.dashboard)
+
   const cleanups: Array<() => void> = []
   let disposed = false
   const dispose = () => {
@@ -138,6 +154,20 @@ export async function mountWorkbook(host: HTMLElement, data: Partial<IWorkbookDa
   try {
     const workbook = univerAPI.createWorkbook(data)
     const unitId = workbook.getId()
+    if (options.dashboard) {
+      cleanups.push(
+        installDashboardGuard(univerAPI, {
+          unitId,
+          dashboardSheetId: options.dashboard.sheetId,
+          permissions: univer.__getInjector().get(IPermissionService),
+          onRefused: options.dashboard.onRefused,
+        }),
+      )
+    }
+    if (options.initialSheetId) {
+      const first = workbook.getSheetBySheetId(options.initialSheetId)
+      if (first && !first.isSheetHidden() && workbook.getActiveSheet().getSheetId() !== options.initialSheetId) workbook.setActiveSheet(first)
+    }
 
     // Listen from the start, so no edit can slip through before the editor
     // reports ready. While loading, Univer runs no mutation on the workbook
