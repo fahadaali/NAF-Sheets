@@ -132,7 +132,8 @@ Planned layout (§4.3): `apps/web`, `apps/api`, `packages/{shared,gsheets-import
 - Every sync rule and every import converter ships with tests (§0.6).
 - Pin exact versions (no `^` or `~`) for `@univerjs/*`, `lucide-react` and the font.
 - Commit messages: Conventional Commits (`feat:`, `fix:`, `docs:`, `test:`, `chore:` …).
-- Secrets only through `wrangler secret put`, never in files, logs or chat.
+- Secrets only through `wrangler secret put` or the Worker's dashboard (type Secret, the same store), never in files, logs or chat.
+- No resource id and no undecided value in `wrangler.toml` (owner, 2026-11-11): resources are created by the first deploy, and `PLATFORM_ID`, `BASECAMP_ACCOUNT_ID`, `GOOGLE_CLIENT_ID` are dashboard variables (`keep_vars = true`). Deploy: `scripts/deploy-api.sh`; setup: `docs/cloudflare-setup.md`.
 
 ---
 

@@ -15,7 +15,8 @@ export default defineConfig(async () => {
         wrangler: { configPath: './wrangler.toml' },
         miniflare: {
           // Read by test/apply-migrations.ts.
-          bindings: { TEST_MIGRATIONS: migrations },
+          // PLATFORM_ID is a dashboard variable in production (wrangler.toml keep_vars).
+          bindings: { TEST_MIGRATIONS: migrations, PLATFORM_ID: 'naf-sheets-test' },
         },
       }),
     ],

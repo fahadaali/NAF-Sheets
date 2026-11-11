@@ -2,14 +2,20 @@
 #
 # No secret in this file, ever. Secrets go through:
 #   wrangler secret put AUTH_CLIENT_SECRET
-# Every REPLACE_WITH_* below is a real resource id that does not exist yet:
-# create the resource, then paste its id (commands next to each binding).
+# No resource id here either (owner, 2026-11-11): D1, KV, R2 and the queues are
+# created by `wrangler deploy` on the first deploy (automatic provisioning) and
+# found again by name or by the deployed binding afterwards. Values not decided
+# in the code are set in the dashboard (docs/cloudflare-setup.md §3).
 
 name = "naf-sheets-api"
 main = "src/index.ts"
 compatibility_date = "2026-07-27"
 # Required by @cloudflare/vitest-pool-workers; harmless for the Worker itself.
 compatibility_flags = ["nodejs_compat"]
+# Keep the variables set in the dashboard (PLATFORM_ID, BASECAMP_ACCOUNT_ID,
+# GOOGLE_CLIENT_ID) when deploying: without this, a deploy removes every
+# variable that is not in [vars].
+keep_vars = true
 
 # ─────────────────────────────────────────────────────────────
 # Routes on the platform's host (docs/cloudflare-setup.md §6). The web app is
@@ -29,16 +35,12 @@ routes = [
 [vars]
 # naf-id issuer. Compared literally with `iss`: no trailing slash.
 AUTH_ISSUER = "https://app.naflaw.sa"
-# OPEN: not decided. Case-sensitive; must equal, character for character, the
-# platform row registered in the naf-id admin panel. Until it does, every
-# sign-in fails at naf-id. See apps/api/OPEN_QUESTIONS.md #2.
-PLATFORM_ID = "REPLACE_WITH_PLATFORM_ID"
-
-# Basecamp account linking (src/basecamp-link). NAF's Basecamp account id —
-# not decided/provided yet; no link works until it is set.
-BASECAMP_ACCOUNT_ID = "REPLACE_WITH_BASECAMP_ACCOUNT_ID"
-# Google Sheets import (src/google-import). The OAuth client id is not secret.
-GOOGLE_CLIENT_ID = "REPLACE_WITH_GOOGLE_CLIENT_ID"
+# Set in the dashboard (Worker → Settings → Variables and Secrets), not here:
+#   PLATFORM_ID          case-sensitive; equals the platform row in the naf-id
+#                        admin panel (OPEN_QUESTIONS.md #2). Until it is set,
+#                        every sign-in fails at naf-id.
+#   BASECAMP_ACCOUNT_ID  NAF's Basecamp account id; no link works until it is set.
+#   GOOGLE_CLIENT_ID     the Google OAuth client id (not secret).
 # Sync (src/sync): the public HTTPS origin Basecamp posts webhooks to (spec
 # §17-4, decided by the owner 2026-11-11). See apps/api/OPEN_QUESTIONS.md S10.
 PUBLIC_API_ORIGIN = "https://sheets.naflaw.sa"
@@ -49,32 +51,29 @@ PUBLIC_API_ORIGIN = "https://sheets.naflaw.sa"
 
 # ─────────────────────────────────────────────────────────────
 # D1 — metadata, mappings, members, audit log
-#   wrangler d1 create naf-sheets
+#   created by the first deploy: naf-sheets
 # Migrations live at the repository root (forward-only).
 # ─────────────────────────────────────────────────────────────
 [[d1_databases]]
 binding = "DB"
 database_name = "naf-sheets"
-database_id = "REPLACE_WITH_D1_ID"
 migrations_dir = "../../migrations"
 
 # ─────────────────────────────────────────────────────────────
 # KV
-#   wrangler kv namespace create AUTH_KV     (naf-auth sessions + JWKS cache)
-#   wrangler kv namespace create SETTINGS    (settings, short-lived tokens)
+#   created by the first deploy: AUTH_KV     (naf-auth sessions + JWKS cache)
+#   created by the first deploy: SETTINGS    (settings, short-lived tokens)
 # ─────────────────────────────────────────────────────────────
 [[kv_namespaces]]
 binding = "AUTH_KV"
-id = "REPLACE_WITH_AUTH_KV_ID"
 
 [[kv_namespaces]]
 binding = "SETTINGS"
-id = "REPLACE_WITH_SETTINGS_KV_ID"
 
 # ─────────────────────────────────────────────────────────────
 # R2
-#   wrangler r2 bucket create naf-sheets-snapshots
-#   wrangler r2 bucket create naf-sheets-attachments
+#   created by the first deploy: naf-sheets-snapshots
+#   created by the first deploy: naf-sheets-attachments
 # ─────────────────────────────────────────────────────────────
 [[r2_buckets]]
 binding = "SNAPSHOTS"
@@ -85,7 +84,7 @@ binding = "ATTACHMENTS"
 bucket_name = "naf-sheets-attachments"
 
 # Daily backups (spec §14; src/phase7/backup.ts, docs/backups.md).
-#   wrangler r2 bucket create naf-sheets-backups
+#   created by the first deploy: naf-sheets-backups
 # Decided 2026-11-10: the bucket stays in this Cloudflare account (B3), and
 # old runs are removed by the retention policy, in this bucket only (B2;
 # src/phase7/retention.ts, docs/backups.md §6).
@@ -95,10 +94,10 @@ bucket_name = "naf-sheets-backups"
 
 # ─────────────────────────────────────────────────────────────
 # Queues
-#   wrangler queues create bc-outbound
-#   wrangler queues create bc-outbound-dlq
-#   wrangler queues create bc-inbound
-#   wrangler queues create bc-inbound-dlq
+#   created by the first deploy: bc-outbound
+#   created by the first deploy: bc-outbound-dlq
+#   created by the first deploy: bc-inbound
+#   created by the first deploy: bc-inbound-dlq
 #
 # bc-outbound: platform → Basecamp writes (§9.2). The consumer retries with
 #              message.retry (Retry-After on 429, exponential backoff on 5xx)
@@ -121,6 +120,12 @@ queue = "bc-inbound"
 [[queues.producers]]
 binding = "BC_OUTBOUND_DLQ"
 queue = "bc-outbound-dlq"
+
+# Not used by the code: bound so that the first deploy creates the queue
+# (only bound queues are provisioned), which bc-inbound's dead_letter_queue names.
+[[queues.producers]]
+binding = "BC_INBOUND_DLQ"
+queue = "bc-inbound-dlq"
 
 # 50 per batch (was 10): the consumer loads each workbook once per batch
 # (docs/load-test.md L2), so a larger batch saves loads; 50 tasks at about

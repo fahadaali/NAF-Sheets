@@ -14,10 +14,12 @@ behaviour chosen in the absence of a rule and need only a confirmation.
    of `migrations/0001_initial.sql`. If rejected, a follow-up migration adds
    `users` and re-points the foreign keys.
 
-2. **(owner)** **`PLATFORM_ID`** is `REPLACE_WITH_PLATFORM_ID` in `wrangler.toml`. It is
+2. **(owner)** **`PLATFORM_ID`** is a dashboard variable of the Worker (decided
+   2026-11-11: no undecided value and no resource id in `wrangler.toml`;
+   `keep_vars = true` keeps it across deploys; docs/cloudflare-setup.md §3). It is
    case-sensitive and must equal the platform row in the naf-id admin panel;
-   until then every sign-in fails at naf-id. The other `REPLACE_WITH_*` values
-   (D1, two KV namespaces) are resource ids created at deploy time.
+   until it is set every sign-in fails at naf-id. D1, KV, R2 and the queues are
+   created by the first deploy (wrangler's automatic provisioning).
 
 3. **(owner)** **`/denied` and who serves the platform origin.** naf-auth sends a refused
    page navigation to `/denied?r=…`. The public paths given for this Worker are

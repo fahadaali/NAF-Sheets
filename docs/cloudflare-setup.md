@@ -2,7 +2,7 @@
 
 > **الحالة:** لم يُنشر شيء بعد. هذا الملف يصف الخطوات، ولم تُجرَّب على حساب Cloudflare حقيقي.
 > **المرجع:** المواصفات §4 «الاستضافة: Cloudflare Pages (الواجهة) + Workers (API) على نطاق فرعي من `naflaw.sa`».
-> **الإعدادات:** `apps/api/wrangler.toml` (الخادم)، و`apps/web` (الواجهة).
+> **الإعدادات:** `apps/api/wrangler.toml` و`scripts/deploy-api.sh` (الخادم)، و`apps/web` (الواجهة).
 
 ## 0. الفروع
 
@@ -15,74 +15,54 @@
 
 ## 1. قبل البدء
 
-1. يجب أن يكون النطاق `naflaw.sa` مُداراً في حساب Cloudflare نفسه (لازم لربط الواجهة والخادم على عنوان واحد، §5).
+1. يجب أن يكون النطاق `naflaw.sa` مُداراً في حساب Cloudflare نفسه (لازم لربط الواجهة والخادم على عنوان واحد، §6).
 2. النطاق الفرعي للمنصة: `sheets.naflaw.sa` (قرار المالك 2026-11-11، المواصفات §17-4). خطة الحساب مدفوعة (Workers Paid).
-3. على جهازك: Node 22، ثم `npm ci` في جذر المستودع، ثم `npx wrangler login`.
+3. لا شيء يلزم على جهازك. كل ما يلي من لوحة Cloudflare.
 
-## 2. إنشاء الموارد (مرة واحدة)
+## 2. الموارد: تُنشأ تلقائياً، ولا معرّفات في الكود
 
-من مجلد `apps/api`:
+قرار المالك 2026-11-11: لا يُكتب في المستودع أي معرّف مورد ولا أي قيمة غير مقررة.
 
-```bash
-npx wrangler d1 create naf-sheets
-npx wrangler kv namespace create AUTH_KV
-npx wrangler kv namespace create SETTINGS
-npx wrangler r2 bucket create naf-sheets-snapshots
-npx wrangler r2 bucket create naf-sheets-attachments
-npx wrangler r2 bucket create naf-sheets-backups
-npx wrangler queues create bc-outbound
-npx wrangler queues create bc-outbound-dlq
-npx wrangler queues create bc-inbound
-npx wrangler queues create bc-inbound-dlq
-```
+- **الموارد:** أول نشر للخادم (`wrangler deploy`) ينشئ ما ينقصه ويربطه بالخادم مباشرة: قاعدة D1 `naf-sheets`، ومساحتي KV ‏`AUTH_KV` و`SETTINGS`، وحاويات R2 الثلاث، والطوابير الأربعة. النشرات التالية تجدها بالاسم أو بالربط القائم، فلا يلزم إنشاء شيء يدوياً.
+- **مخطط قاعدة البيانات:** يطبّقه أمر النشر نفسه (`scripts/deploy-api.sh`). في أول نشر يطبّقه بعد إنشاء القاعدة، وفي كل نشر بعده قبل نشر الكود.
+- يبقى في `apps/api/wrangler.toml` ما قُرّر فقط: أسماء الموارد، و`AUTH_ISSUER`، و`PUBLIC_API_ORIGIN = "https://sheets.naflaw.sa"`، ومسارات النطاق.
 
-ثم في `apps/api/wrangler.toml` استبدل كل `REPLACE_WITH_*`:
+## 3. المتغيرات والأسرار: في لوحة Cloudflare
 
-| الحقل | القيمة |
-|---|---|
-| `database_id` | المعرّف الذي طبعه `d1 create` |
-| `AUTH_KV` و`SETTINGS` ← `id` | المعرّفان اللذان طبعهما `kv namespace create` |
-| `PLATFORM_ID` | اسم المنصة كما سُجّل في لوحة naf-id، حرفاً بحرف (حساس لحالة الأحرف) |
-| `BASECAMP_ACCOUNT_ID` | رقم حساب ناف في Basecamp |
-| `GOOGLE_CLIENT_ID` | معرّف تطبيق Google OAuth (ليس سرّاً) |
+تُضاف بعد أول نشر، من **Workers & Pages ← naf-sheets-api ← Settings ← Variables and Secrets**. `keep_vars = true` في `wrangler.toml` يمنع النشرات اللاحقة من حذفها.
 
-هذه القيم ليست أسراراً، فتُرفع في المستودع. ارفعها إلى `main` بطلب دمج: النشر التلقائي يفشل ما دام فيها `REPLACE_WITH_*`.
+| الاسم | النوع | القيمة |
+|---|---|---|
+| `PLATFORM_ID` | Text | اسم المنصة كما سُجّل في لوحة naf-id، حرفاً بحرف (حساس لحالة الأحرف). بدونه يفشل كل تسجيل دخول |
+| `BASECAMP_ACCOUNT_ID` | Text | رقم حساب ناف في Basecamp |
+| `GOOGLE_CLIENT_ID` | Text | معرّف تطبيق Google OAuth |
+| `AUTH_CLIENT_SECRET` | Secret | من لوحة naf-id |
+| `TOKEN_ENCRYPTION_KEY` | Secret | 32 بايتاً عشوائية بترميز base64، مثل ناتج `openssl rand -base64 32` |
+| `BASECAMP_CLIENT_ID` | Secret | من تطبيق Basecamp |
+| `BASECAMP_CLIENT_SECRET` | Secret | من تطبيق Basecamp |
+| `GOOGLE_CLIENT_SECRET` | Secret | من Google Cloud |
 
-## 3. الأسرار (لا تُكتب في أي ملف)
-
-من `apps/api`، واحداً واحداً، ويطلب كل أمر القيمة منك:
-
-```bash
-npx wrangler secret put AUTH_CLIENT_SECRET       # من لوحة naf-id
-npx wrangler secret put TOKEN_ENCRYPTION_KEY     # 32 بايتاً عشوائية بترميز base64: openssl rand -base64 32
-npx wrangler secret put BASECAMP_CLIENT_ID
-npx wrangler secret put BASECAMP_CLIENT_SECRET
-npx wrangler secret put GOOGLE_CLIENT_SECRET
-```
+النوع Secret يحفظ القيمة مشفّرة، ولا تظهر بعد حفظها، وهو المخزن نفسه الذي يكتب فيه `wrangler secret put`. لا تُكتب أي قيمة سرية في ملف أو محادثة.
 
 لا تغيّر `TOKEN_ENCRYPTION_KEY` بعد أول استخدام: تغييره يُبطل رموز Basecamp وGoogle المحفوظة، فيعيد كل شخص الربط.
 
-قد يرفض `secret put` قبل أول نشر للخادم. إن حدث ذلك فأكمل §4 أولاً، ثم عد إلى هنا.
-
 ## 4. الخادم: Worker مربوط بـ GitHub
 
-في لوحة Cloudflare: **Workers & Pages → Create → Import a repository** ← اختر `fahadaali/NAF-Sheets`.
+في لوحة Cloudflare: **Workers & Pages → Create → Import a repository** ← اختر `fahadaali/NAF-Sheets`. إن كان المشروع موجوداً فعدّل إعداداته من **Settings ← Build**.
 
 | الإعداد | القيمة |
 |---|---|
 | Project name | `naf-sheets-api` (يجب أن يطابق `name` في `wrangler.toml`) |
 | Production branch | `main` |
 | Root directory | `/` (جذر المستودع: الخادم يحتاج حزم `packages/*`) |
-| Build command | فارغ |
-| Deploy command | `npx wrangler d1 migrations apply naf-sheets --remote --config apps/api/wrangler.toml && npx wrangler deploy --config apps/api/wrangler.toml` |
+| Build command | فارغ (الخادم لا يحتاج بناء الواجهة) |
+| Deploy command | `bash scripts/deploy-api.sh` |
 | Non-production branch builds | معطّلة |
-| Environment variable (Build) | `NODE_VERSION` = `22` |
+| Build variable | `NODE_VERSION` = `22` |
 
-أمر النشر يطبّق هجرات D1 الجديدة (`migrations/`، وهي إضافية فقط) ثم ينشر. إن فشل تطبيق الهجرات بسبب الصلاحية، فأضف صلاحية **D1: Edit** إلى رمز البناء الذي أنشأته Cloudflare، أو طبّقها مرة من جهازك:
+`npx wrangler deploy` وحده من الجذر يفشل بالرسالة «application detection logic has been run in the root of a workspace»، لأن الجذر فيه أكثر من تطبيق. السكربت يمرّر `--config apps/api/wrangler.toml`.
 
-```bash
-cd apps/api && npx wrangler d1 migrations apply naf-sheets --remote
-```
+إن فشل إنشاء الموارد أو تطبيق المخطط بسبب الصلاحية، فرمز البناء الذي أنشأته Cloudflare ينقصه إذن. أضف إليه **D1: Edit** و**Workers KV Storage: Edit** و**Workers R2 Storage: Edit** و**Queues: Edit**.
 
 ## 5. الواجهة: Pages مربوطة بـ GitHub
 
@@ -132,8 +112,10 @@ routes = [
 2. فتح `https://sheets.naflaw.sa/` يحوّل إلى تسجيل الدخول في naf-id، ثم يعود إلى شاشة الملفات.
 3. كل من يدخل أول مرة يُضاف عضواً بدور `viewer`، ولا شاشة في المنصة ترقّي أول مسؤول. بعد أول دخول لك نفّذ مرة واحدة (`apps/api/OPEN_QUESTIONS.md` البند 17):
 
-   ```bash
-   cd apps/api && npx wrangler d1 execute naf-sheets --remote --command "UPDATE members SET role = 'admin' WHERE email = '<بريدك>'"
+   من **Storage & Databases ← D1 ← naf-sheets ← Console**:
+
+   ```sql
+   UPDATE members SET role = 'admin' WHERE email = '<بريدك>';
    ```
 
 4. إنشاء ملف فارغ وتحريره ثم إعادة تحميل الصفحة: يبقى التعديل محفوظاً.
@@ -147,4 +129,4 @@ routes = [
 - **معاينات Pages** للفروع الأخرى (عناوين `*.pages.dev`) لا يصلها الخادم، فتظهر الواجهة فقط.
 - **الجدولة:** المطابقة كل 15 دقيقة والنسخ الاحتياطي اليومي (`[triggers]` في `wrangler.toml`) يعملان تلقائياً بعد النشر.
 - **الخطة:** الخادم يستخدم Queues وDurable Objects وCron، وخطة الحساب المدفوعة (Workers Paid) تشملها.
-- **حجم الخادم:** حوالي 2.4 ميغابايت مضغوطاً (`wrangler deploy --dry-run`). حد الخطة المجانية 3 ميغابايت وحد المدفوعة 10.
+- **حجم الخادم:** حوالي 2.4 ميغابايت مضغوطاً (`wrangler deploy --dry-run`)، وحد الخطة المدفوعة 10.
