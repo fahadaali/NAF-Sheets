@@ -98,7 +98,12 @@ describe('core enums', () => {
   })
 
   it('match the data-validation constants', () => {
-    expect(DV_TYPE).toEqual({ LIST: DataValidationType.LIST, CHECKBOX: DataValidationType.CHECKBOX, DECIMAL: DataValidationType.DECIMAL, DATE: DataValidationType.DATE, CUSTOM: DataValidationType.CUSTOM })
+    expect(DV_TYPE).toEqual({
+      LIST: DataValidationType.LIST,
+      LIST_MULTIPLE: DataValidationType.LIST_MULTIPLE,
+      WHOLE: DataValidationType.WHOLE,
+      TEXT_LENGTH: DataValidationType.TEXT_LENGTH,
+      CHECKBOX: DataValidationType.CHECKBOX, DECIMAL: DataValidationType.DECIMAL, DATE: DataValidationType.DATE, CUSTOM: DataValidationType.CUSTOM })
     expect(DV_OPERATOR).toEqual({
       BETWEEN: DataValidationOperator.BETWEEN,
       EQUAL: DataValidationOperator.EQUAL,
@@ -109,8 +114,8 @@ describe('core enums', () => {
       NOT_BETWEEN: DataValidationOperator.NOT_BETWEEN,
       NOT_EQUAL: DataValidationOperator.NOT_EQUAL,
     })
-    expect(DV_ERROR_STYLE).toEqual({ STOP: DataValidationErrorStyle.STOP, WARNING: DataValidationErrorStyle.WARNING })
-    expect(DV_RENDER_MODE).toEqual({ TEXT: DataValidationRenderMode.TEXT, ARROW: DataValidationRenderMode.ARROW })
+    expect(DV_ERROR_STYLE).toEqual({ INFO: DataValidationErrorStyle.INFO, STOP: DataValidationErrorStyle.STOP, WARNING: DataValidationErrorStyle.WARNING })
+    expect(DV_RENDER_MODE).toEqual({ TEXT: DataValidationRenderMode.TEXT, ARROW: DataValidationRenderMode.ARROW, CUSTOM: DataValidationRenderMode.CUSTOM })
   })
 })
 

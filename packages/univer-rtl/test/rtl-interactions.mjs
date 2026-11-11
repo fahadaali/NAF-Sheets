@@ -48,7 +48,7 @@ const FILLTEXT_RECORDER = () => {
       const left = a === 'center' ? x - w / 2 : right ? x - w : x
       const t = this.getTransform()
       const xs = [t.a * left + t.c * y + t.e, t.a * (left + w) + t.c * y + t.e]
-      log.items.push({ text: String(text), canvas: this.canvas, x0: Math.min(...xs), x1: Math.max(...xs), y: t.b * left + t.d * y + t.f })
+      log.items.push({ text: String(text), canvas: this.canvas, x0: Math.min(...xs), x1: Math.max(...xs), y: t.b * left + t.d * y + t.f, fill: String(this.fillStyle).toLowerCase() })
     }
     return native.call(this, text, x, y, maxWidth)
   }
@@ -124,6 +124,9 @@ const KINDS = {
   blue: 'b > 150 && r < 90 && g < 130',
   yellow: 'r > 230 && g > 200 && b < 170',
   orange: 'r > 225 && g > 160 && g < 215 && b < 165 && r - b > 90',
+  // Excel's first two reference colours (#326ac7, #c0353e): formula outlines.
+  refBlue: 'Math.abs(r - 50) < 14 && Math.abs(g - 106) < 14 && Math.abs(b - 199) < 14',
+  refRed: 'Math.abs(r - 192) < 14 && Math.abs(g - 53) < 14 && Math.abs(b - 62) < 14',
 }
 const inkBox = async (p, clip, kind = 'dark') => {
   const png = (await p.screenshot({ clip })).toString('base64')
@@ -690,6 +693,116 @@ await check('floating image is not mirrored: arrow points right, text top-right'
   return { ok, image: imgClip, arrow, label }
 })
 
+// --- floating images: anchor, selection, handles, menu, drag, resize --------
+// (apps/api OPEN_QUESTIONS.md "Images" I15.) The harness inserts the picture
+// at E4 with no offset (harness/main.ts `imageInserted`), 160 × 60 px.
+const imageInk = async (p) => {
+  const c = await canvasBox(p)
+  return inkBox(p, { x: Math.round(c.left), y: Math.round(c.top), width: Math.round(c.right - c.left), height: 420 }, 'yellow')
+}
+const imagePlacement = (p = page) => p.evaluate(() => window.univerAPI.getActiveWorkbook().getActiveSheet().getImages()[0]?.getPlacement())
+const activeImages = (p = page) => p.evaluate(() => window.univerAPI.getActiveWorkbook().getActiveSheet().getActiveImages().length)
+// A click on an empty cell drops the image selection (Escape alone does not).
+const deselectImage = async (p = page) => { const b = await cellBox(p, 'H18', p === page); await p.mouse.click(centre(b).x, centre(b).y); await p.waitForTimeout(300) }
+
+await check('floating image sits on its anchor cell: its start (visual right) edge and top at E4’s', async () => {
+  const box = await imageInk(page)
+  const e4 = await cellBox(page, 'E4')
+  const placement = await imagePlacement()
+  const ok = Boolean(box) && placement?.from?.column === 4 && placement?.from?.row === 3 && near(box.right, e4.right, 3) && near(box.top, e4.top, 3) && near(box.right - box.left, 160, 4)
+  return { ok, box, e4, placement }
+})
+
+await check('a click on the image selects it, as in the unmirrored grid at the mirrored point', async () => {
+  const box = await imageInk(page)
+  const pbox = await imageInk(plain)
+  if (!box || !pbox) return { ok: false, reason: 'image not found' }
+  await page.mouse.click((box.left + box.right) / 2, (box.top + box.bottom) / 2)
+  await plain.mouse.click((pbox.left + pbox.right) / 2, (pbox.top + pbox.bottom) / 2)
+  await page.waitForTimeout(500)
+  await plain.waitForTimeout(500)
+  const [m, p] = [await activeImages(page), await activeImages(plain)]
+  await deselectImage(plain)
+  return { ok: m === 1 && p === 1, mirrored: m, plain: p }
+})
+
+await check('selection handles are drawn around the image where it is on screen', async () => {
+  const box = await imageInk(page)
+  await deselectImage()
+  const c = await canvasBox(page)
+  const clip = { x: Math.round(c.left), y: Math.round(c.top), width: Math.round(c.right - c.left), height: 420 }
+  const before = (await page.screenshot({ clip })).toString('base64')
+  await page.mouse.click((box.left + box.right) / 2, (box.top + box.bottom) / 2)
+  await page.waitForTimeout(500)
+  const after = (await page.screenshot({ clip })).toString('base64')
+  // Changed pixels (handles, outline, the rotation knob below, the menu button beside it).
+  const changed = await lab.evaluate(async ({ before, after, clip }) => {
+    const load = async (s) => { const i = new Image(); i.src = `data:image/png;base64,${s}`; await i.decode(); const cv = document.createElement('canvas'); cv.width = i.width; cv.height = i.height; const x = cv.getContext('2d'); x.drawImage(i, 0, 0); return { d: x.getImageData(0, 0, cv.width, cv.height).data, w: cv.width, h: cv.height } }
+    const [a, b] = [await load(before), await load(after)]
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity
+    for (let y = 0; y < a.h; y++) for (let x = 0; x < a.w; x++) {
+      const i = (y * a.w + x) * 4
+      if (Math.abs(a.d[i] - b.d[i]) + Math.abs(a.d[i + 1] - b.d[i + 1]) + Math.abs(a.d[i + 2] - b.d[i + 2]) < 60) continue
+      if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y
+    }
+    return minX === Infinity ? null : { left: clip.x + minX, right: clip.x + maxX, top: clip.y + minY, bottom: clip.y + maxY }
+  }, { before, after, clip })
+  // The handles hug the picture on both sides (the menu button may sit just past one edge); the knob sits below.
+  const ok = Boolean(changed) && changed.left >= box.left - 40 && changed.left <= box.left + 2 && changed.right <= box.right + 40 && changed.right >= box.right - 2 && near(changed.top, box.top, 8) && changed.bottom > box.bottom && changed.bottom < box.bottom + 60
+  return { ok, image: box, changed }
+})
+
+await check('the image menu opens beside the image, on its end side (visual left), not over the grid elsewhere', async () => {
+  const box = await imageInk(page)
+  // Univer's canvas popups are fixed <section>s, parked off screen when hidden.
+  const popups = await page.evaluate(() => [...document.querySelectorAll('section')]
+    .filter((e) => getComputedStyle(e).position === 'fixed')
+    .map((e) => e.getBoundingClientRect())
+    .filter((r) => r.width > 0 && r.height > 0 && r.left > -1000)
+    .map((r) => ({ left: r.left, right: r.right, top: r.top, bottom: r.bottom })))
+  await page.screenshot({ path: `${OUT}mirror-image-selected${TAG}.png` })
+  const menu = popups.find((r) => r.bottom > box.top && r.top < box.bottom)
+  const ok = Boolean(menu) && menu.right <= box.left + 4 && menu.right >= box.left - 40
+  return { ok, image: box, popups }
+})
+
+await check('drag moves the image under the pointer: two columns to the visual left anchors it two columns later', async () => {
+  const box = await imageInk(page)
+  const cx = (box.left + box.right) / 2
+  const cy = (box.top + box.bottom) / 2
+  await page.mouse.move(cx, cy)
+  await page.mouse.down()
+  await page.mouse.move(cx - 88, cy, { steps: 6 })
+  await page.mouse.move(cx - 176, cy, { steps: 6 })
+  await page.mouse.up()
+  await page.waitForTimeout(600)
+  const placement = await imagePlacement()
+  const moved = await imageInk(page)
+  const ok = placement?.from?.column === 6 && placement?.from?.row === 3 && near(placement?.from?.columnOffset ?? -1, 0, 2) && Boolean(moved) && near(moved.right, box.right - 176, 3) && near(moved.top, box.top, 3)
+  return { ok, before: box, after: moved, placement }
+})
+
+await check('resize: dragging the visual-left middle handle outwards widens the image and keeps its start edge', async () => {
+  const box = await imageInk(page)
+  const before = await imagePlacement()
+  const hx = box.left - 1
+  const hy = (box.top + box.bottom) / 2
+  await page.mouse.move(hx, hy)
+  await page.mouse.down()
+  await page.mouse.move(hx - 20, hy, { steps: 4 })
+  await page.mouse.move(hx - 40, hy, { steps: 4 })
+  await page.mouse.up()
+  await page.waitForTimeout(600)
+  const after = await imagePlacement()
+  const resized = await imageInk(page)
+  const ok = Boolean(resized) && near(resized.right, box.right, 3) && near(resized.left, box.left - 40, 4) && near(after?.width ?? 0, (before?.width ?? 0) + 40, 4) && after?.from?.column === before?.from?.column
+  // Back where it was for the checks that follow: undo the resize and the move.
+  await deselectImage()
+  for (let i = 0; i < 2; i++) await page.evaluate(() => window.univerAPI.undo())
+  await page.waitForTimeout(500)
+  return { ok, before: box, after: resized, placement: after }
+})
+
 await plain.close()
 
 // --- touch -------------------------------------------------------------------
@@ -1007,6 +1120,162 @@ await check('stored values are untouched by editing round trips (open, move, sel
 
 await tp.close()
 
+// --- formula colours (../src/formula-colours.ts) -------------------------------
+//
+// Excel's reference colours and outlines, plus the owner's extra categories.
+// The expected colour of every character is written out here by hand from the
+// rules (apps/web/OPEN_QUESTIONS.md F1–F4), independently of the module: the
+// colours really painted (fillStyle beneath the layer) in visual order must
+// equal the browser's bidi order of the same text with those colours.
+
+const fp = await openPage('?dir=rtl&grid=mirror&selftest=0', {}, { record: true })
+const FC = await fp.evaluate(() => window.__formulaColours)
+const PAL = FC?.palette
+// [text, colour] pieces of `=IF(SUM(A4:B5,A4)>=10,"نعم",'المهام'!A2)` on sheet «حالات خاصة».
+const FORMULA_PIECES = PAL ? [
+  ['=', PAL.plain], ['IF', PAL.function], ['(', PAL.plain], ['SUM', PAL.function], ['(', PAL.references[1]],
+  ['A4:B5', PAL.references[0]], [',', PAL.plain], ['A4', PAL.references[1]], [')', PAL.references[1]],
+  ['>=', PAL.comparison], ['10', PAL.number], [',', PAL.plain], ['"نعم"', PAL.string], [',', PAL.plain],
+  ["'المهام'!", PAL.sheet], ['A2', PAL.plain], [')', PAL.plain],
+] : []
+const FORMULA = FORMULA_PIECES.map(([t]) => t).join('')
+const charColours = FORMULA_PIECES.flatMap(([t, c]) => Array.from(t, () => c))
+// The browser's visual order of the formula's units (a formula paragraph is
+// left to right), each with the colour of its first character.
+const expectedColoured = async (p) => (await browserUnits(p, FORMULA, 'ltr')).map((u) => ({ text: u.text, fill: charColours[u.start] }))
+const paintedColoured = (p, unitId) => p.evaluate(async (unitId) => {
+  const unit = window.__renderManager.getRenderUnitById(unitId)
+  const canvas = unit.engine.getCanvasElement()
+  window.__fillTextLog = { canvas, items: [] }
+  unit.mainComponent.makeDirty(true)
+  for (let i = 0; i < 4; i++) await new Promise((r) => requestAnimationFrame(r))
+  const items = window.__fillTextLog.items.filter((it) => it.text.trim() && !/^[\u0000-\u001f]+$/.test(it.text))
+  window.__fillTextLog = null
+  const seen = new Map()
+  for (const it of items) seen.set(`${it.text}|${Math.round(it.x0)}|${Math.round(it.y)}`, { text: it.text, fill: it.fill, x0: it.x0 })
+  return [...seen.values()].sort((a, b) => a.x0 - b.x0).map(({ text, fill }) => ({ text, fill }))
+}, unitId)
+const sameColoured = (a, b) => JSON.stringify(a) === JSON.stringify(b)
+// Arabic goes in with insertText, the rest is typed key by key: Firefox's
+// synthetic typing of Arabic reaches Univer 1.4.0 duplicated (known-upstream.mjs),
+// which is not what these checks are about.
+const typeFormula = async (p, text) => {
+  for (const part of text.match(new RegExp(`${ARABIC_RUN}|[^\\u0600-\\u06FF]+`, 'g')) ?? []) {
+    if (new RegExp(ARABIC_RUN).test(part)) await p.keyboard.insertText(part)
+    else await p.keyboard.type(part)
+  }
+}
+
+await check('formula colours: layer applied, theme carries Excel\'s sequence, no contract problems', async () => {
+  const ok = FC?.applied === true && FC.themed === true && FC.problems.length === 0 && PAL.references.length === 7
+  return { ok, status: FC && { applied: FC.applied, themed: FC.themed, problems: FC.problems, reason: FC.reason } }
+})
+
+await sheet(fp, 'extras')
+await openEditor(fp, 'D7')
+await typeFormula(fp, FORMULA)
+await fp.waitForTimeout(700)
+
+await check('formula colours (cell editor): every token painted in its colour, in bidi order, Arabic sheet name and string joined', async () => {
+  const painted = await paintedColoured(fp, EDITOR_ID)
+  const expected = await expectedColoured(fp)
+  await fp.screenshot({ path: `${OUT}formula-colours-cell-editor${TAG}.png` })
+  return { ok: sameColoured(painted, expected), painted, expected }
+})
+
+await check('formula colours: outlines on the mirrored grid in Excel\'s colours around A4:B5 and A4', async () => {
+  const canvas = await canvasBox(fp)
+  const top = (await cellBox(fp, 'A3')).top
+  const editor = await editorTop(fp)
+  // From column C to the canvas edge: the floating image (E4:F5) has blue edges of its own.
+  const left = (await cellBox(fp, 'C3')).left
+  const clip = { x: Math.round(left), y: Math.round(top), width: Math.round(canvas.right - left), height: Math.round(editor - top - 4) }
+  const blue = await inkBox(fp, clip, 'refBlue')
+  const red = await inkBox(fp, clip, 'refRed')
+  const a4 = await cellBox(fp, 'A4')
+  const b5 = await cellBox(fp, 'B5')
+  const want = { blue: { left: b5.left, right: a4.right, top: a4.top, bottom: b5.bottom }, red: a4 }
+  const fits = (got, w) => got && ['left', 'right', 'top', 'bottom'].every((k) => near(got[k], w[k], 4))
+  await fp.screenshot({ path: `${OUT}formula-colours-outlines${TAG}.png` })
+  return { ok: fits(blue, want.blue) && fits(red, want.red), blue, red, want }
+})
+
+await cancelEdit(fp)
+await clickAway(fp)
+
+// Like Excel, Univer colours the editor in use: editing in the formula bar colours the formula bar.
+await check('formula colours (formula bar): every token painted in its colour, in bidi order, Arabic sheet name and string joined', async () => {
+  const { x, y } = centre(await cellBox(fp, 'D8'))
+  await fp.mouse.click(x, y)
+  await fp.waitForTimeout(200)
+  const bar = await fp.evaluate((id) => window.__renderManager.getRenderUnitById(id).engine.getCanvasElement().getBoundingClientRect().toJSON(), FORMULA_BAR_ID)
+  await fp.mouse.click(bar.left + bar.width / 2, bar.top + bar.height / 2)
+  await fp.waitForTimeout(300)
+  await typeFormula(fp, FORMULA)
+  await fp.waitForTimeout(700)
+  const painted = await paintedColoured(fp, FORMULA_BAR_ID)
+  const expected = await expectedColoured(fp)
+  await fp.screenshot({ path: `${OUT}formula-colours-formula-bar${TAG}.png` })
+  await cancelEdit(fp)
+  await clickAway(fp)
+  return { ok: sameColoured(painted, expected), painted, expected }
+})
+
+// The same edit at 150 % zoom, scrolled, in the mirrored and in the unmirrored
+// grid: the outlines must be each other's mirror image (getCellRect ignores
+// scroll and zoom, so the unmirrored grid is the reference here).
+const fpPlain = await openPage('?dir=rtl&selftest=0&textLayer=1')
+const outlineAfterScrollZoom = async (p) => {
+  await p.evaluate(async () => {
+    const wb = window.univerAPI.getActiveWorkbook()
+    wb.getSheetBySheetId('extras').activate()
+    await new Promise((r) => setTimeout(r, 400))
+    const ws = wb.getActiveSheet()
+    ws.zoom(1.5)
+    await new Promise((r) => setTimeout(r, 300))
+    // Scrolled down and across: the floating image (rows 4-5) is out of view.
+    ws.scrollToCell(6, 1)
+    await new Promise((r) => setTimeout(r, 300))
+    ws.getRange('E16').activate()
+    await new Promise((r) => setTimeout(r, 300))
+    document.getElementById('__editor___INTERNAL_EDITOR__DOCS_NORMAL')?.focus()
+  })
+  await p.keyboard.type('=SUM(C9:D10,D12)')
+  await p.waitForTimeout(700)
+  const canvas = await canvasBox(p)
+  const editor = await editorTop(p)
+  const clip = { x: Math.round(canvas.left), y: Math.round(canvas.top), width: Math.round(canvas.right - canvas.left), height: Math.round(editor - canvas.top - 4) }
+  const blue = await inkBox(p, clip, 'refBlue')
+  const red = await inkBox(p, clip, 'refRed')
+  return { canvas, blue, red }
+}
+await check('formula colours: after scroll and 150% zoom, the outlines mirror those of the unmirrored grid', async () => {
+  const m = await outlineAfterScrollZoom(fp)
+  const u = await outlineAfterScrollZoom(fpPlain)
+  await fp.screenshot({ path: `${OUT}formula-colours-outlines-zoom${TAG}.png` })
+  const mirror = (b) => b && { left: u.canvas.left + u.canvas.right - b.right, right: u.canvas.left + u.canvas.right - b.left, top: b.top, bottom: b.bottom }
+  const fits = (got, w) => got && w && ['left', 'right', 'top', 'bottom'].every((k) => near(got[k], w[k], 3))
+  const ok = fits(m.blue, mirror(u.blue)) && fits(m.red, mirror(u.red)) && m.blue.right - m.blue.left > 100
+  return { ok, mirrored: { blue: m.blue, red: m.red }, expected: { blue: mirror(u.blue), red: mirror(u.red) } }
+})
+await fpPlain.close()
+await fp.close()
+
+await check('safety net: a changed formula-colour hook leaves Univer\'s own colouring, with Excel\'s palette', async () => {
+  const p = await openPage('?dir=rtl&grid=mirror&selftest=0&simulateBreak=formula-contract')
+  const status = await p.evaluate(() => window.__formulaColours)
+  await sheet(p, 'extras')
+  await openEditor(p, 'D7')
+  await p.keyboard.type('=SUM(A4)')
+  await p.waitForTimeout(600)
+  const runs = await p.evaluate((id) => (window.__renderManager.getRenderUnitById(id).mainComponent.getSkeleton().getViewModel().getDataModel().getBody().textRuns ?? []).map((r) => [r.st, r.ed, r.ts?.cl?.rgb?.toLowerCase() ?? null]), EDITOR_ID)
+  await p.close()
+  const sumColour = runs.find(([st]) => st === 1)?.[2] ?? null
+  const refColour = runs.find(([st]) => st === 5)?.[2] ?? null
+  const ok = status?.applied === false && /resetSelectionsByModelData/.test(status.reason ?? '') && status.themed === true && sumColour !== status.palette.function && refColour === status.palette.references[0]
+  return { ok, status: { applied: status?.applied, reason: status?.reason }, runs }
+})
+
 // --- safety nets --------------------------------------------------------------
 
 await check('safety net: a changed Univer hook leaves the stock grid untouched and working', async () => {
@@ -1148,6 +1417,112 @@ await check('safety net: document text painted around the hook withdraws the tex
   const ok = status?.mirrored === true && flipped && status.text?.applied === false && /heartbeat/.test(status.text?.reason ?? '')
   return { ok, status, flipped }
 })
+
+// --- imported dropdowns (apps/api OPEN_QUESTIONS.md "Google import" G32) ---------
+// Sheet «قوائم» of the harness: rules as the import writes them (chip colours
+// by position, a multiple selection), Arabic items.
+
+const hexKind = (hex, tol = 10) => {
+  const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16))
+  return `Math.abs(r - ${r}) <= ${tol} && Math.abs(g - ${g}) <= ${tol} && Math.abs(b - ${b}) <= ${tol}`
+}
+Object.assign(KINDS, { chipBlue: hexKind('#bfe1f6'), chipGreen: hexKind('#d4edbc'), chipRed: hexKind('#ffcfc9') })
+// Mean per-channel difference of two same-size regions as they are, and with the second flipped horizontally.
+const orientationDiff = async (pa, clipA, pb, clipB) => {
+  const a = (await pa.screenshot({ clip: clipA })).toString('base64')
+  const b = (await pb.screenshot({ clip: clipB })).toString('base64')
+  return lab.evaluate(async ({ a, b }) => {
+    const load = async (s) => { const i = new Image(); i.src = `data:image/png;base64,${s}`; await i.decode(); const c = document.createElement('canvas'); c.width = i.width; c.height = i.height; const x = c.getContext('2d'); x.drawImage(i, 0, 0); return { d: x.getImageData(0, 0, c.width, c.height).data, w: c.width, h: c.height } }
+    const [A, B] = [await load(a), await load(b)]
+    let asIs = 0
+    let flipped = 0
+    for (let y = 0; y < A.h; y++) for (let x = 0; x < A.w; x++) for (let k = 0; k < 3; k++) {
+      const v = A.d[(y * A.w + x) * 4 + k]
+      asIs += Math.abs(v - B.d[(y * B.w + x) * 4 + k])
+      flipped += Math.abs(v - B.d[(y * B.w + (B.w - 1 - x)) * 4 + k])
+    }
+    const n = A.w * A.h * 3
+    return { asIs: asIs / n, flipped: flipped / n }
+  }, { a, b })
+}
+const boxOf = (ink) => ink && { left: ink.left, right: ink.right, top: ink.top, bottom: ink.bottom, width: ink.right - ink.left + 1, height: ink.bottom - ink.top + 1 }
+const dd = await openPage('?dir=rtl&grid=mirror&selftest=0')
+await sheet(dd, 'lists')
+const ddPlain = await openPage('?dir=rtl&selftest=0')
+await sheet(ddPlain, 'lists')
+
+await check('dropdown chips: each at its cell start, in its colour, Arabic text as in the unmirrored grid', async () => {
+  const out = {}
+  let ok = true
+  for (const [a1, kind] of [['A2', 'chipBlue'], ['A3', 'chipGreen'], ['A4', 'chipRed']]) {
+    const mc = await cellBox(dd, a1)
+    const pc = await cellBox(ddPlain, a1, false)
+    const mChip = boxOf(await inkBox(dd, clipOf(mc, 1), kind))
+    const pChip = boxOf(await inkBox(ddPlain, clipOf(pc, 1), kind))
+    if (!mChip || !pChip) {
+      out[a1] = { mChip, pChip }
+      ok = false
+      continue
+    }
+    // Mirrored, the chip keeps its distance from the cell's start: the right edge on screen.
+    const placed = near(mc.right - mChip.right, pChip.left - pc.left, 2) && near(mChip.width, pChip.width, 2)
+    // The text only: the arrow sits in the chip's last 22 px, its end (visual left mirrored, right stock).
+    const ARROW = 22
+    const mText = await inkBox(dd, clipOf({ ...mChip, left: mChip.left + ARROW, width: mChip.width - ARROW }, 1), 'dark')
+    const pText = await inkBox(ddPlain, clipOf({ ...pChip, width: pChip.width - ARROW }, 1), 'dark')
+    // Same glyphs, not mirrored: same extent and ink, and the same picture once aligned on the ink.
+    const same = Boolean(mText && pText) && near(mText.right - mText.left, pText.right - pText.left, 2) && mText.count / pText.count > 0.85 && mText.count / pText.count < 1.15
+    const w = Math.round(Math.min(mText?.right - mText?.left, pText?.right - pText?.left)) + 1
+    const h = Math.round(Math.min(mText?.bottom - mText?.top, pText?.bottom - pText?.top)) + 1
+    // Not mirrored: the text matches the stock text clearly better as it is than flipped
+    // (pixel-identical is too strict: glyphs rasterised under a flipped transform antialias differently).
+    // The two ink boxes may differ by a pixel: the best alignment within ±1 px, for both comparisons.
+    let orient = null
+    if (same) {
+      for (const dx of [-1, 0, 1]) {
+        const o = await orientationDiff(dd, { x: Math.round(mText.left) + dx, y: Math.round(mText.top), width: w, height: h }, ddPlain, { x: Math.round(pText.left), y: Math.round(pText.top), width: w, height: h })
+        orient = orient === null ? o : { asIs: Math.min(orient.asIs, o.asIs), flipped: Math.min(orient.flipped, o.flipped) }
+      }
+    }
+    out[a1] = { placed, same, orient, mText, pText }
+    ok = ok && placed && same && orient !== null && orient.asIs < orient.flipped * 0.7
+  }
+  await dd.screenshot({ path: `${OUT}mirror-dropdown-chips${TAG}.png` })
+  return { ok, cells: out }
+})
+
+await check('multiple-selection chips read from the cell start: the first item at the visual right', async () => {
+  const mc = await cellBox(dd, 'B2')
+  const pc = await cellBox(ddPlain, 'B2', false)
+  const [mFirst, mSecond] = [await inkBox(dd, clipOf(mc, 1), 'chipBlue'), await inkBox(dd, clipOf(mc, 1), 'chipRed')]
+  const [pFirst, pSecond] = [await inkBox(ddPlain, clipOf(pc, 1), 'chipBlue'), await inkBox(ddPlain, clipOf(pc, 1), 'chipRed')]
+  // فهد (blue) then سارة (red): left to right in the unmirrored grid, right to left mirrored.
+  const ok = Boolean(mFirst && mSecond && pFirst && pSecond) && mFirst.meanX > mSecond.meanX && pFirst.meanX < pSecond.meanX
+  return { ok, mirrored: { first: mFirst?.meanX, second: mSecond?.meanX }, plain: { first: pFirst?.meanX, second: pSecond?.meanX } }
+})
+
+await check('a dropdown in the lower half opens below its cell when it fits there, as stock "vertical" does', async () => {
+  // Univer resolves "vertical-right" (the mirrored "vertical") by the roomier side; the
+  // layer asks for "bottom-right" when the list fits below (rtl-grid.ts mirroredVerticalDirection).
+  const vh = dd.viewportSize().height
+  let target = null
+  for (let r = 2; r <= 30 && !target; r++) {
+    const b = await cellBox(dd, `A${r}`)
+    if (b.top >= vh - b.bottom && vh - b.bottom >= 320) target = { a1: `A${r}`, box: b }
+  }
+  if (!target) return { ok: false, reason: 'no row in the lower half with room below' }
+  const { box } = target
+  await dd.mouse.click(box.left + box.width * 0.6, box.top + box.height / 2)
+  await dd.waitForTimeout(600)
+  const panel = await domBoxWithText(['قيد التنفيذ', 'منجز', 'متأخر', 'تحرير'], dd)
+  await dd.screenshot({ path: `${OUT}mirror-dropdown-lower${TAG}.png` })
+  await clickAway(dd)
+  const ok = Boolean(panel) && near(panel.top, box.bottom, 12) && near(panel.right, box.right, 6)
+  return { ok, cell: target, panel }
+})
+
+await dd.close()
+await ddPlain.close()
 
 await page.screenshot({ path: `${OUT}mirror-final${TAG}.png` })
 await browser.close()

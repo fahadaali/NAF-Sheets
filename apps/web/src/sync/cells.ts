@@ -44,7 +44,14 @@ export function snapshotReader(sheet: Partial<IWorksheetData> | undefined): Cell
 export function cellText(cell: ICellData | null | undefined): string {
   if (!cell) return ''
   const stream = cell.p?.body?.dataStream
-  if (stream) return stream.replace(/\r\n$/, '').replace(/\r/g, '\n')
+  if (stream) {
+    const text = stream.replace(/\r\n$/, '').replace(/\r/g, '\n')
+    // A picture in the cell (`\b`, a custom block) is never text (sheet-model cell-images.ts).
+    if (!text.includes('\b')) return text
+    const withoutPictures = text.split('\b').join('')
+    const drawings = (cell.p as { drawings?: Record<string, unknown> }).drawings
+    return drawings && Object.keys(drawings).length > 0 ? withoutPictures.replace(/^\n+/, '').replace(/\n+$/, '') : withoutPictures
+  }
   const v = cell.v
   if (v === undefined || v === null) return ''
   if (cell.t === 3 || typeof v === 'boolean') return v === true || v === 1 || String(v).toUpperCase() === 'TRUE' || v === '1' ? 'TRUE' : 'FALSE'

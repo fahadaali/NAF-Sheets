@@ -192,6 +192,37 @@
   --swatch-size: 2.25rem;
   --swatch-size-sm: 0.75rem;
   --appearance-preview-width: 26rem;
+
+  /*
+   * Formula colours while a formula is edited (cell editor, formula bar and
+   * the outlines on the grid; @naf-sheets/univer-rtl formula-colours.ts, read
+   * with getComputedStyle by src/editor/univer-host.ts).
+   *
+   * References: Excel's own fixed sequence of seven, in Excel's order
+   * (apps/web/OPEN_QUESTIONS.md F1–F4). Deliberately NOT editable in «المظهر»
+   * (not in APPEARANCE_TOKENS): they must stay Excel's. Do not change them.
+   */
+  --formula-ref-1: #326ac7;
+  --formula-ref-2: #c0353e;
+  --formula-ref-3: #8157b7;
+  --formula-ref-4: #007c20;
+  --formula-ref-5: #b03e84;
+  --formula-ref-6: #b64900;
+  --formula-ref-7: #267392;
+  /*
+   * What Excel leaves black (owner, 2026-11-11): one calm colour each, muted
+   * so the references stay the loudest. Each ≥ 5.4:1 on the surface, and at
+   * least ΔE2000 12.8 from every reference colour and 14 from each other.
+   */
+  --formula-text: var(--color-text);
+  --formula-function: #8a5a00;
+  --formula-sheet: #55606a;
+  --formula-string: #6b6e12;
+  --formula-number: #0d6e60;
+  --formula-boolean: #3b4a8a;
+  --formula-comparison: #7a2350;
+  --formula-operator: #6b6355;
+  --formula-error: #8b1a1a;
 }
 
 /*

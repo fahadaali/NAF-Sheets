@@ -400,6 +400,8 @@ export const t = {
       hyperlinks: 'الروابط',
       richTextCells: 'خلايا بنص منسّق',
       definedNames: 'النطاقات المسمّاة',
+      floatingImages: 'صور فوق الخلايا',
+      cellImages: 'صور داخل الخلايا',
     },
     itemsTitle: 'ما لم يُنقل كما هو',
     itemsSummary: (notTransferred: number, valueOnly: number, converted: number) =>
@@ -445,6 +447,7 @@ export const t = {
       theme_color: 'ألوان السمة',
       checkbox: 'مربع اختيار',
       drawing_image: 'صورة فوق الخلايا',
+      cell_image: 'صورة داخل خلية',
       drawing_shape: 'شكل أو عنصر تحكم',
       unsupported_feature: 'ميزة غير مدعومة',
       cell_format: 'تنسيق خلايا',
@@ -1168,6 +1171,14 @@ export const t = {
     title: 'الصفحة غير موجودة',
     body: 'الرابط الذي فتحته لا يقود إلى صفحة في المنصة. عُد إلى قائمة الملفات واختر منها.',
     home: 'الذهاب إلى الملفات',
+  },
+
+  // Pictures over and in cells (src/images; apps/web OPEN_QUESTIONS.md I1–I8).
+  images: {
+    typeNotAllowed: 'نوع الملف غير مقبول صورةً، فلم يُدرج. المقبول: PNG وJPEG وGIF وWebP. حوّل الصورة إلى أحد هذه الأنواع ثم أعد إدراجها.',
+    tooLarge: (mb: number) => `حجم الصورة أكبر من ${mb} ميغابايت، فلم تُدرج. صغّر الصورة أو اضغطها ثم أعد إدراجها.`,
+    uploadFailed: 'تعذّر رفع الصورة إلى المنصة، فلم تُدرج. تحقّق من اتصالك ثم أعد المحاولة.',
+    backgroundRefused: 'صورة خلفية الورقة غير متاحة في المنصة. أدرج الصورة فوق الخلايا بدلاً منها.',
   },
 
   errors: {

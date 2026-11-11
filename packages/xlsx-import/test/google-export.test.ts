@@ -175,7 +175,8 @@ describe('Google-export structures rebuilt from the real files (synthesised, use
     expect(r.read.origin.kind).toBe('google_export')
     expect(r.read.origin.evidence).toContain('DUMMYFUNCTION')
     const kinds = r.report.items.map((i) => `${i.kind}:${i.location?.ref}`)
-    expect(kinds).toEqual(["unsupported_formula:'المهام'!D1:D3", "checkbox:'المهام'!B2:B3"])
+    // An uploaded Google export carries no chip colours or display style (G32): said once.
+    expect(kinds).toEqual(["unsupported_formula:'المهام'!D1:D3", "checkbox:'المهام'!B2:B3", 'data_validation:undefined'])
     const dv = Object.values(resource(r, 'SHEET_DATA_VALIDATION_PLUGIN')).flat() as Array<{ type: string; ranges: unknown[] }>
     expect(dv.map((x) => x.type).sort()).toEqual(['checkbox', 'date', 'list'])
   })

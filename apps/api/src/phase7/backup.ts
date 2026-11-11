@@ -12,6 +12,8 @@
 //   snapshots/templates/{id}/snapshot.json        each live template's snapshot
 //   d1/{run}/r2-inventory/{page}.ndjson      key, size, etag, uploaded of every SNAPSHOTS object
 //   d1/{run}/snapshot-copies.ndjson          the snapshot copies this run relies on (copied or already there)
+//   images/workbooks/{id}/images/{imageId}   each picture over or in a cell (ATTACHMENTS, src/images),
+//                                            copied once: a picture never changes (OPEN_QUESTIONS.md "Images" I9)
 //   d1/{run}/manifest.json                   counts, written last (a run without it is incomplete)
 //
 // Nothing is ever overwritten: every put is create-only, and a snapshot
@@ -48,6 +50,9 @@ export interface BackupDetails {
   inventoryObjects: number
   /** Entries of `snapshot-copies.ndjson`. */
   snapshotCopiesListed: number
+  /** Pictures (src/images) copied by this run, and already in the bucket from an earlier run. */
+  imagesCopied?: number
+  imagesPresent?: number
   /** The retention policy applied after this run succeeded. */
   retention?: PruneOutcome
 }
@@ -130,6 +135,41 @@ async function inventory(env: Env, bucket: R2Bucket, prefix: string): Promise<nu
   return count
 }
 
+/**
+ * Pictures of the workbooks (ATTACHMENTS `workbooks/{id}/images/{imageId}`,
+ * src/images/store.ts) into `images/…` of the backup bucket. A picture is
+ * written once and never changed, so a copy already there is kept; the
+ * retention policy never removes them (it removes `d1/{run}/` files and
+ * snapshot copies only).
+ */
+async function copyImages(env: Env, bucket: R2Bucket): Promise<{ copied: number; present: number }> {
+  let cursor: string | undefined
+  let copied = 0
+  let present = 0
+  do {
+    const listed = await env.ATTACHMENTS.list({ prefix: 'workbooks/', limit: INVENTORY_PAGE, ...(cursor ? { cursor } : {}) })
+    for (const o of listed.objects) {
+      if (!/^workbooks\/[^/]+\/images\/[0-9a-f]{32}$/.test(o.key)) continue
+      const target = `images/${o.key}`
+      if (await bucket.head(target)) {
+        present++
+        continue
+      }
+      const object = await env.ATTACHMENTS.get(o.key)
+      if (!object) continue
+      const done = await bucket.put(target, object.body.pipeThrough(new FixedLengthStream(object.size)), {
+        httpMetadata: object.httpMetadata,
+        customMetadata: { ...(object.customMetadata ?? {}), sourceEtag: object.etag },
+        onlyIf: { etagDoesNotMatch: '*' },
+      })
+      if (done) copied++
+      else present++
+    }
+    cursor = listed.truncated ? listed.cursor : undefined
+  } while (cursor)
+  return { copied, present }
+}
+
 /** The daily backup. Records its run in D1 `backup_runs`; never throws. */
 export async function runBackup(env: Env, at: Date = new Date()): Promise<BackupResult> {
   const runId = backupRunId(at)
@@ -176,6 +216,9 @@ export async function runBackup(env: Env, at: Date = new Date()): Promise<Backup
     if (!listed) throw new Error('backup snapshot list already exists')
     details.snapshotCopiesListed = relied.length
     details.inventoryObjects = await inventory(env, bucket, prefix)
+    const images = await copyImages(env, bucket)
+    details.imagesCopied = images.copied
+    details.imagesPresent = images.present
 
     const finishedAt = new Date().toISOString()
     await putOnce(bucket, `${prefix}/manifest.json`, JSON.stringify({ runId, startedAt, finishedAt, ...details }), JSON_TYPE)

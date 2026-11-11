@@ -394,6 +394,38 @@ export interface GsDataValidationRule {
   inputMessage?: string
   strict?: boolean
   showCustomUi?: boolean
+  /**
+   * NOT part of the Sheets API: the discovery document (revision 20261109)
+   * has no field for chip colours, display style or multiple selection.
+   * Filled only by @naf-sheets/xlsx-import from what an .xlsx carries (and,
+   * for a public Google link, from Google's own rendering of the sheet).
+   * apps/api OPEN_QUESTIONS.md "Google import" G32.
+   */
+  naf?: GsValidationExtras
+}
+
+/** Dropdown and validation details an .xlsx (or Google's rendering) carries beyond the API model. */
+export interface GsValidationExtras {
+  /**
+   * How a list shows in the cell. CHIP only on evidence (Google rendered the
+   * cell as a chip); PLAIN_TEXT for Excel's hidden arrow (`showDropDown="1"`).
+   * Absent: `showCustomUi` decides (arrow or plain text).
+   */
+  displayStyle?: 'CHIP' | 'ARROW' | 'PLAIN_TEXT'
+  /** Chip colour per item text, `#rrggbb` (Google colours an item, not a position). */
+  itemColors?: Record<string, string>
+  /** Excel's three error styles; `strict` keeps meaning STOP. */
+  errorStyle?: 'STOP' | 'WARNING' | 'INFORMATION'
+  /** False: Excel raised no alert at all for invalid input (`showErrorMessage` off). */
+  showErrorMessage?: boolean
+  errorTitle?: string
+  errorMessage?: string
+  /** Title of the input message (`inputMessage` holds its text). */
+  inputTitle?: string
+  /** Excel "Ignore blank" unchecked (`allowBlank` off). */
+  rejectBlank?: boolean
+  /** NUMBER_* conditions that Excel applies to whole numbers or to the length of text. */
+  numberKind?: 'WHOLE' | 'TEXT_LENGTH'
 }
 
 export interface GsConditionalFormatRule {

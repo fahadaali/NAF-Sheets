@@ -33,11 +33,11 @@
 
 import type { DateSystem, ICellData, ISheetDataValidationRule, IObjectArrayPrimitiveType, IObjectMatrixPrimitiveType, IRange, IRowData, IColumnData, IStyleData, IWorkbookData, IWorksheetData, LocaleType } from '@univerjs/core'
 import type { GridSize } from './a1'
-import { absoluteA1Range, cellRange, cellsToRanges, gridRangeToRange, quoteSheetName } from './a1'
+import { absoluteA1Range, cellRange, cellsToRanges, gridRangeToRange, parseListReference, quoteSheetName } from './a1'
 import { bandedFills } from './banding'
 import { ColorResolver } from './color'
 import { convertConditionalFormat } from './conditional-format'
-import { convertDataValidation } from './data-validation'
+import { convertDataValidation, GOOGLE_DEFAULT_CHIP_COLOR, looksLikeMultipleSelection } from './data-validation'
 import { convertBasicFilter } from './filter'
 import { findUnsupportedFunctions, UNIVER_SUPPORTED_FUNCTIONS } from './formula'
 import type { GsCellData, GsDataValidationRule, GsDimensionProperties, GsErrorType, GsExtendedValue, GsNumberFormat, GsSheet, GsSpreadsheet } from './google-types'
@@ -50,6 +50,7 @@ import {
   DEFAULT_ITERATION,
   DEFAULT_NOTE_SIZE,
   DEFINED_NAME_WORKBOOK_SCOPE,
+  DV_TYPE,
   LOCALE_AR_SA,
   RESOURCE,
   UNIVER_VERSION,
@@ -178,6 +179,10 @@ interface SheetContext {
   styles: StyleRegistry
   counts: ImportCounts
   items: ImportReportItem[]
+  /** Items of a range list (see `listItemsOf`), null when only Univer can compute them. */
+  listItems: (formula: string, sheetName: string) => string[] | null
+  /** Recognise Google's multiple-selection dropdowns from the cells' values (Google origins only). */
+  detectMultipleSelection: boolean
 }
 
 interface ConvertedSheet {
@@ -498,9 +503,25 @@ function convertGridSheet(sheet: GsSheet, ctx: SheetContext): ConvertedSheet {
   const dv: ISheetDataValidationRule[] = []
   for (const group of dvGroups.values()) {
     const ranges = cellsToRanges(group.cells)
-    const result = convertDataValidation(group.rule, ctx.supported)
-    if (result.ok) dv.push({ ...result.rule, uid: `dv-${sheetId}-${dv.length}`, ranges })
-    else {
+    const condition = group.rule.condition
+    const isList = condition?.type === 'ONE_OF_LIST' || condition?.type === 'ONE_OF_RANGE'
+    let listItems: string[] | null = null
+    if (condition?.type === 'ONE_OF_LIST') listItems = (condition.values ?? []).map((v) => v.userEnteredValue ?? '').filter((v) => v !== '')
+    else if (condition?.type === 'ONE_OF_RANGE') listItems = ctx.listItems(condition.values?.[0]?.userEnteredValue ?? '', name)
+    const multiple = isList && ctx.detectMultipleSelection && listItems !== null && looksLikeMultipleSelection(group.cells.map(([r, c]) => cellDisplayText(cellAt(r, c))), listItems)
+    const result = convertDataValidation(group.rule, ctx.supported, { listItems, multiple })
+    if (result.ok) {
+      dv.push({ ...result.rule, uid: `dv-${sheetId}-${dv.length}`, ranges })
+      const observed = group.rule.naf?.itemColors
+      if (isList && observed && listItems) {
+        const unseen = listItems.filter((item) => !(item in observed))
+        const coloured = Object.values(observed).some((c) => c.toLowerCase() !== GOOGLE_DEFAULT_CHIP_COLOR)
+        if (coloured && unseen.length > 0) result.notes.push({ outcome: 'not_transferred', message: MESSAGES.dvColorsPartial(unseen) })
+      }
+      for (const note of result.notes) {
+        for (const range of ranges) items.push({ kind: 'data_validation', outcome: note.outcome, location: here(range), message: note.message, detail: condition?.type })
+      }
+    } else {
       for (const range of ranges) {
         items.push({
           kind: 'data_validation',
@@ -605,6 +626,74 @@ function convertGridSheet(sheet: GsSheet, ctx: SheetContext): ConvertedSheet {
   return { data, cf, dv, filter, notes }
 }
 
+/** The text a cell shows, as list validation compares it. */
+function cellDisplayText(cell: GsCellData | undefined): string {
+  if (!cell) return ''
+  if (typeof cell.formattedValue === 'string') return cell.formattedValue
+  const v = cell.effectiveValue ?? cell.userEnteredValue
+  if (!v) return ''
+  if (typeof v.stringValue === 'string') return v.stringValue
+  if (typeof v.numberValue === 'number') return String(v.numberValue)
+  if (typeof v.boolValue === 'boolean') return v.boolValue ? 'TRUE' : 'FALSE'
+  return ''
+}
+
+/** Cells a range list may read to learn its items; larger sources are left to Univer. */
+const LIST_SOURCE_CELL_LIMIT = 20_000
+
+/**
+ * The items of a range list as Univer lists them (sheets-data-validation
+ * DataValidationListCacheService: unique non-empty cell texts, row by row):
+ * a plain reference or a named range on any sheet. Null for formulas
+ * (INDIRECT, OFFSET…), unknown sheets and very large sources.
+ */
+function listItemsOf(response: GsSpreadsheet, formula: string, currentSheet: string, grids: Map<GsSheet, Map<string, GsCellData>>): string[] | null {
+  const ref = parseListReference(formula)
+  if (!ref) return null
+  let sheet: GsSheet | undefined
+  let range: { startRow: number; startColumn: number; endRow: number | null; endColumn: number | null }
+  if (ref.kind === 'name') {
+    const named = (response.namedRanges ?? []).find((n) => n.name === ref.name)
+    if (!named?.range) return null
+    sheet = (response.sheets ?? []).find((s) => s.properties?.sheetId === named.range?.sheetId)
+    const g = named.range
+    range = {
+      startRow: g.startRowIndex ?? 0,
+      startColumn: g.startColumnIndex ?? 0,
+      endRow: g.endRowIndex !== undefined ? g.endRowIndex - 1 : null,
+      endColumn: g.endColumnIndex !== undefined ? g.endColumnIndex - 1 : null,
+    }
+  } else {
+    const wanted = ref.sheet ?? currentSheet
+    sheet = (response.sheets ?? []).find((s) => s.properties?.title === wanted)
+    range = ref.range
+  }
+  if (!sheet) return null
+  const size = sheetSize(sheet)
+  const endRow = Math.min(range.endRow ?? size.rowCount - 1, size.rowCount - 1)
+  const endColumn = Math.min(range.endColumn ?? size.columnCount - 1, size.columnCount - 1)
+  if ((endRow - range.startRow + 1) * (endColumn - range.startColumn + 1) > LIST_SOURCE_CELL_LIMIT) return null
+  let grid = grids.get(sheet)
+  if (!grid) {
+    const built = new Map<string, GsCellData>()
+    for (const block of sheet.data ?? []) {
+      const r0 = block.startRow ?? 0
+      const c0 = block.startColumn ?? 0
+      block.rowData?.forEach((row, i) => row.values?.forEach((cell, j) => built.set(`${r0 + i}:${c0 + j}`, cell)))
+    }
+    grids.set(sheet, built)
+    grid = built
+  }
+  const seen = new Set<string>()
+  for (let r = range.startRow; r <= endRow; r++) {
+    for (let c = range.startColumn; c <= endColumn; c++) {
+      const text = cellDisplayText(grid.get(`${r}:${c}`))
+      if (text !== '') seen.add(text)
+    }
+  }
+  return [...seen]
+}
+
 /** Grid size: the declared one, grown to hold every cell and metadata entry in the response. */
 function sheetSize(sheet: GsSheet): GridSize {
   let rows = 0
@@ -627,6 +716,12 @@ export function convertSpreadsheet(response: GsSpreadsheet, options: ConvertOpti
   const counts = emptyCounts()
   const items: ImportReportItem[] = []
   const supported = options.supportedFunctions ?? UNIVER_SUPPORTED_FUNCTIONS
+  const originKind = options.origin?.kind ?? 'google_api'
+  // Google's "Allow multiple selections" is visible only in the values; Excel has no such option.
+  const googleOrigin = originKind === 'google_api' || originKind === 'google_export'
+  // Range lists read their source cells once per sheet and once per formula.
+  const listGrids = new Map<GsSheet, Map<string, GsCellData>>()
+  const listCache = new Map<string, string[] | null>()
 
   const ordered = (response.sheets ?? [])
     .map((sheet, i) => ({ sheet, i }))
@@ -676,6 +771,12 @@ export function convertSpreadsheet(response: GsSpreadsheet, options: ConvertOpti
       styles,
       counts,
       items,
+      listItems: (formula, sheetName) => {
+        const key = `${sheetName}\u0000${formula}`
+        if (!listCache.has(key)) listCache.set(key, listItemsOf(response, formula, sheetName, listGrids))
+        return listCache.get(key) ?? null
+      },
+      detectMultipleSelection: googleOrigin,
     })
     if (p.sheetType === 'DATA_SOURCE') {
       items.push({ kind: 'data_source_sheet', outcome: 'value_only', location: location(id, name, null), message: MESSAGES.dataSourceSheet() })
@@ -714,6 +815,9 @@ export function convertSpreadsheet(response: GsSpreadsheet, options: ConvertOpti
     // Threads without an anchor in a converted sheet are reported at workbook level.
     const anchored = (response.sheets ?? []).some((s) => (s.commentAnchors ?? []).some((a) => a.anchorId && a.anchorId === thread.anchorId))
     if (!anchored) items.push({ kind: 'comment', outcome: 'not_transferred', location: null, message: MESSAGES.comment(), detail: thread.headPost?.content })
+  }
+  if (originKind === 'google_api' && Object.values(dvResource).some((rules) => rules.some((r) => r.type === DV_TYPE.LIST || r.type === DV_TYPE.LIST_MULTIPLE))) {
+    items.push({ kind: 'data_validation', outcome: 'not_transferred', location: null, message: MESSAGES.dvApiLimits() })
   }
   if (colors.unresolved.size > 0) {
     items.push({ kind: 'theme_color', outcome: 'not_transferred', location: null, message: MESSAGES.themeColor([...colors.unresolved]) })

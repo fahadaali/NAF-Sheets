@@ -11,8 +11,9 @@
 //   ?grid=mirror            mirror the grid (and apply the document-text layer)
 //   ?textLayer=1            unmirrored grid with only the document-text layer
 //                           (the reference for comparisons with the mirrored grid)
-//   ?simulateBreak=contract|heartbeat|text-contract|text-heartbeat
+//   ?simulateBreak=contract|heartbeat|text-contract|text-heartbeat|formula-contract
 //                           break the layer on purpose to prove its safety nets
+//   ?formulaColours=0       Univer's own formula colouring (no formula-colours layer)
 
 import { UniverSheetsCorePreset } from '@univerjs/preset-sheets-core'
 import SheetsCoreArSA from '@univerjs/preset-sheets-core/locales/ar-SA'
@@ -36,11 +37,13 @@ import { createUniver, LocaleType, mergeLocales } from '@univerjs/presets'
 import type { IWorkbookData } from '@univerjs/presets'
 import { InterceptorEffectEnum, LifecycleStages } from '@univerjs/core'
 import { INTERCEPTOR_POINT, SheetInterceptorService } from '@univerjs/sheets'
-import { enableRtlGrid, enableRtlText, textLayerCounters, textLayerState } from '../src/index'
+import { enableFormulaColours, enableRtlGrid, enableRtlText, formulaColourCounters, textLayerCounters, textLayerState } from '../src/index'
+import type { FormulaPalette } from '../src/index'
 import type { RtlGridStatus } from '../src/index'
 import { Documents, IRenderManagerService } from '@univerjs/engine-render'
 import { NodePositionConvertToCursor } from '@univerjs/docs-ui'
 import { IPlatformService } from '@univerjs/ui'
+import { RefSelectionsRenderService } from '@univerjs/sheets-formula-ui'
 
 import '@univerjs/preset-sheets-core/lib/index.css'
 import '@univerjs/preset-sheets-conditional-formatting/lib/index.css'
@@ -123,6 +126,10 @@ const bidiRows = [
   'إعداد خطة الاتصال',
 ]
 
+// Sheet "lists": the items and chip colours of its status dropdown.
+const LIST_STATUSES = ['قيد التنفيذ', 'منجز', 'متأخر']
+const LIST_COLOURS = ['#bfe1f6', '#d4edbc', '#ffcfc9']
+
 const hAlign = forceAlign ? { ht: 3 } : {} // HorizontalAlign.RIGHT = 3
 
 const workbook: Partial<IWorkbookData> = {
@@ -130,7 +137,7 @@ const workbook: Partial<IWorkbookData> = {
   name: 'اختبار الجدوى',
   appVersion: '1.4.0',
   locale: LocaleType.AR_SA,
-  sheetOrder: ['tasks', 'summary', 'extras', 'bidi'],
+  sheetOrder: ['tasks', 'summary', 'extras', 'bidi', 'lists'],
   styles: {
     hdr: { ff: FONT, fs: 12, bl: 1, bg: { rgb: '#E8F0FE' }, ...hAlign },
     body: { ff: FONT, fs: 11, ...hAlign },
@@ -192,7 +199,39 @@ const workbook: Partial<IWorkbookData> = {
       columnData: { 0: { w: 420 }, 1: { w: 200 } },
       cellData: Object.fromEntries(bidiRows.map((v, r) => [r, { 0: { v, s: 'body' } }])),
     },
+    // Dropdowns as the Google Sheets / Excel import writes them (apps/api
+    // OPEN_QUESTIONS.md "Google import" G32): coloured chips with Arabic items
+    // in A, a multiple selection in B (Google's "a, b" text), on enough rows
+    // that a list can open in the lower half of the screen.
+    lists: {
+      id: 'lists',
+      name: 'قوائم',
+      rowCount: 40,
+      columnCount: 6,
+      rightToLeft: dir === 'rtl' ? 1 : 0,
+      columnData: { 0: { w: 160 }, 1: { w: 220 } },
+      cellData: Object.fromEntries(
+        Array.from({ length: 30 }, (_, r): [number, Record<number, Cell>] => {
+          if (r === 0) return [r, { 0: { v: 'الحالة', s: 'hdr' }, 1: { v: 'الفريق', s: 'hdr' } }]
+          const line: Record<number, Cell> = { 0: { v: LIST_STATUSES[(r - 1) % 3] as string, s: 'body' } }
+          if (r === 1) line[1] = { v: 'فهد, سارة', s: 'body' }
+          return [r, line]
+        }),
+      ),
+    },
   },
+  resources: [
+    {
+      name: 'SHEET_DATA_VALIDATION_PLUGIN',
+      data: JSON.stringify({
+        lists: [
+          // renderMode 2 = chip; formula2 = colours by position (sheets-data-validation computeAndCache).
+          { uid: 'dv-status', type: 'list', formula1: JSON.stringify(LIST_STATUSES), formula2: LIST_COLOURS.join(','), renderMode: 2, errorStyle: 1, allowBlank: true, ranges: [{ startRow: 1, endRow: 29, startColumn: 0, endColumn: 0 }] },
+          { uid: 'dv-team', type: 'listMultiple', formula1: JSON.stringify(['فهد', 'سارة', 'خالد']), formula2: '#bfe1f6,#ffcfc9,#d4edbc', renderMode: 2, errorStyle: 1, allowBlank: true, ranges: [{ startRow: 1, endRow: 29, startColumn: 1, endColumn: 1 }] },
+        ],
+      }),
+    },
+  ],
 }
 
 const { univerAPI } = createUniver({
@@ -281,6 +320,27 @@ async function run() {
     tick()
   })
   const ws = fWorkbook.getSheetBySheetId('tasks')!
+
+  // Formula colours (../src/formula-colours.ts), on unless ?formulaColours=0.
+  // The palette is test data copied from apps/web/src/styles/theme.css
+  // (--formula-*): the application reads it from there.
+  if (params.get('formulaColours') !== '0') {
+    if (params.get('simulateBreak') === 'formula-contract') {
+      // A hooked internal with a changed signature, as an upgrade might bring.
+      const proto = RefSelectionsRenderService.prototype as unknown as { resetSelectionsByModelData: (...a: unknown[]) => unknown }
+      const original = proto.resetSelectionsByModelData
+      proto.resetSelectionsByModelData = function (this: unknown, ...a: unknown[]) {
+        return original.apply(this, a)
+      }
+    }
+    const palette: FormulaPalette = {
+      references: ['#326ac7', '#c0353e', '#8157b7', '#007c20', '#b03e84', '#b64900', '#267392'],
+      plain: '#1f2a2e', function: '#8a5a00', sheet: '#55606a', string: '#6b6e12', number: '#0d6e60',
+      boolean: '#3b4a8a', comparison: '#7a2350', operator: '#6b6355', error: '#8b1a1a',
+    }
+    const status = enableFormulaColours(univerAPI, palette)
+    ;(window as unknown as { __formulaColours: unknown }).__formulaColours = { palette, applied: status.applied, themed: status.themed, reason: status.reason, problems: status.problems, counters: formulaColourCounters }
+  }
 
   // Diagnostic handles for the performance script (rtl-perf.mjs) and the
   // interaction suite: the sheet scene, and the render manager (the cell

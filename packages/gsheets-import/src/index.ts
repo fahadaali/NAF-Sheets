@@ -1,7 +1,20 @@
 export { convertSpreadsheet, univerSheetId, rewriteSheetLink, type ConvertOptions, type ConvertResult } from './convert'
+export { GOOGLE_DEFAULT_CHIP_COLOR, looksLikeMultipleSelection, splitMultipleSelection } from './data-validation'
 export type * from './google-types'
 export * from './report'
 export { colorToHex } from './color'
+export {
+  applyImportedImages,
+  cellImageDocument,
+  CELL_DOCUMENT_STYLE,
+  sheetImageOf,
+  SHEET_DRAWING_RESOURCE,
+  type ApplyImagesResult,
+  type CellOffset,
+  type ImageAnchor,
+  type ImportedImage,
+  type SkippedImage,
+} from './images'
 export { stableStringify } from './style'
 export { mapHorizontalAlignment, mapLeftRightSides } from './rtl-open'
 export {

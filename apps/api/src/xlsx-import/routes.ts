@@ -17,6 +17,7 @@
 import type { Context, Hono } from 'hono'
 import { XLSX_MAX_FILE_BYTES, type ImportXlsxResponse } from '@naf-sheets/shared'
 import { importXlsx, XlsxImportError, type XlsxLimits } from '@naf-sheets/xlsx-import'
+import { importPictureStore } from '../images/import'
 import type { AppEnv } from '../auth'
 import { canCreateWorkbooks } from '../access'
 import { ApiFailure } from '../errors'
@@ -26,6 +27,7 @@ import { DEFAULT_LIMITS as GOOGLE_LIMITS } from '../google-import/config'
 import { callerOf, isPlainObject, readJson } from '../request'
 import { fromReaderError, XlsxRouteFailure, xlsxErrorResponse } from './errors'
 import { downloadGoogleExport, type FetchLike } from './google-export'
+import { DEFAULT_RENDERING_LIMITS, readGoogleRendering, type GoogleRenderingLimits } from './google-html'
 
 const MAX_TITLE_LENGTH = 200
 const MAX_FILE_NAME_LENGTH = 255
@@ -44,6 +46,8 @@ export interface XlsxImportLimits {
   downloadTimeoutMs: number
   reader: Partial<XlsxLimits>
   maxInlineReportBytes: number
+  /** Google's rendering of the dropdown sheets (chip colours, display style; G32). */
+  rendering: GoogleRenderingLimits
 }
 
 // OPEN: apps/api/OPEN_QUESTIONS.md "Google import" G22 — calibrate.
@@ -52,6 +56,7 @@ export const DEFAULT_XLSX_IMPORT_LIMITS: XlsxImportLimits = {
   downloadTimeoutMs: 30_000,
   reader: {},
   maxInlineReportBytes: GOOGLE_LIMITS.maxInlineReportBytes,
+  rendering: DEFAULT_RENDERING_LIMITS,
 }
 
 type Ctx = Context<AppEnv>
@@ -144,7 +149,7 @@ export function registerXlsxImportRoutes(app: Hono<AppEnv>, options: XlsxImportO
 
       const workbookId = crypto.randomUUID()
       const nameTitle = fileTitle(fileName?.replace(/\.(xlsx|xlsm)$/i, ''))
-      const result = await importXlsx(bytes, { workbookId, via: 'upload', fileName, limits: readerLimits })
+      const result = await importXlsx(bytes, { workbookId, via: 'upload', fileName, limits: readerLimits, storePicture: importPictureStore(c.env, workbookId, caller.id) })
       const title = wanted ?? nameTitle ?? fileTitle(result.read.title) ?? FALLBACK_TITLE
       const digest = await sha256Hex(bytes)
       const stored = await persistImport(c.env, {
@@ -159,7 +164,7 @@ export function registerXlsxImportRoutes(app: Hono<AppEnv>, options: XlsxImportO
         maxInlineReportBytes: limits.maxInlineReportBytes,
         audit: {
           action: 'workbook.import.xlsx',
-          details: { sha256: digest, bytes: bytes.byteLength, unpackedBytes: result.read.unpackedBytes, origin: result.read.origin.kind, application: result.read.origin.application, evidence: result.read.origin.evidence },
+          details: { sha256: digest, bytes: bytes.byteLength, unpackedBytes: result.read.unpackedBytes, origin: result.read.origin.kind, application: result.read.origin.application, evidence: result.read.origin.evidence, pictures: result.pictures },
         },
       })
       return c.json<ImportXlsxResponse>({ workbookId: stored.workbookId, reportId: stored.reportId }, 201)
@@ -180,7 +185,18 @@ export function registerXlsxImportRoutes(app: Hono<AppEnv>, options: XlsxImportO
 
       const download = await downloadGoogleExport(fetcher, spreadsheetId, { maxBytes: limits.maxFileBytes, timeoutMs: limits.downloadTimeoutMs })
       const workbookId = crypto.randomUUID()
-      const result = await importXlsx(download.bytes, { workbookId, via: 'google_link', limits: readerLimits })
+      let renderingRequests = 0
+      const result = await importXlsx(download.bytes, {
+        workbookId,
+        via: 'google_link',
+        limits: readerLimits,
+        storePicture: importPictureStore(c.env, workbookId, caller.id),
+        googleRendering: async (names) => {
+          const read = await readGoogleRendering(fetcher, spreadsheetId, names, limits.rendering)
+          renderingRequests = read.requests
+          return read.rendering
+        },
+      })
       const title = wanted ?? fileTitle(download.title) ?? fileTitle(result.read.title) ?? FALLBACK_TITLE
       const report = { ...result.report, source: { ...result.report.source, spreadsheetId, title } }
       const stored = await persistImport(c.env, {
@@ -193,7 +209,7 @@ export function registerXlsxImportRoutes(app: Hono<AppEnv>, options: XlsxImportO
         maxInlineReportBytes: limits.maxInlineReportBytes,
         audit: {
           action: 'workbook.import.gsheets_link',
-          details: { spreadsheetId, downloadRequests: download.requests, bytes: download.bytes.byteLength, unpackedBytes: result.read.unpackedBytes, origin: result.read.origin.kind, evidence: result.read.origin.evidence },
+          details: { spreadsheetId, downloadRequests: download.requests, renderingRequests, bytes: download.bytes.byteLength, unpackedBytes: result.read.unpackedBytes, origin: result.read.origin.kind, evidence: result.read.origin.evidence, pictures: result.pictures },
         },
       })
       return c.json<ImportXlsxResponse>({ workbookId: stored.workbookId, reportId: stored.reportId }, 201)

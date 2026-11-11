@@ -5,7 +5,7 @@
 // way the server writes a snapshot.
 
 import type { Assignee, InboundAction, LocalTask, SheetPlan, SyncedBase } from '@naf-sheets/shared'
-import { applyInbound, readTasks } from '@naf-sheets/sheet-model'
+import { applyInbound, imageOnlyFields, readTasks } from '@naf-sheets/sheet-model'
 import type { ActionOutcome, ApplyInboundOptions, ReadTasksResult, Result, SheetError, SheetIssue, WorkbookSnapshot } from '@naf-sheets/sheet-model'
 import { DEFAULT_AUTO_ASSIGN_SETTINGS } from '@naf-sheets/sync-engine'
 import type { DiffContext } from '@naf-sheets/sync-engine'
@@ -174,10 +174,32 @@ const TITLE_MISSING = 'لا يوجد في مطابقة الأعمدة عمود �
  * Fingerprints keep reading the sheet itself (`readSheet`), unchanged.
  */
 export function diffLocal(state: WorkbookState, sheet: SheetRow, task: LocalTask, base: SyncedBase | null): LocalTask {
-  if (task.level !== 0) return task
+  const local = withImageOnlyFieldsFromBase(task, base)
+  if (local.level !== 0) return local
   const plan = state.plans.get(sheet.id)
-  if (!plan || plan.columns.some((c) => c.field === 'notes')) return task
-  return { ...task, notesHtml: base?.notesHtml ?? null }
+  if (!plan || plan.columns.some((c) => c.field === 'notes')) return local
+  return { ...local, notesHtml: base?.notesHtml ?? null }
+}
+
+/**
+ * A cell that holds only pictures (sheet-model `imageOnlyFields`) cannot be
+ * sent to its Basecamp field: the field follows Basecamp's last value, so the
+ * picture is skipped without clearing anything or raising an error (apps/api
+ * OPEN_QUESTIONS.md "Images" I5). Assignees are handled by sheet-model (the
+ * stored ones are kept).
+ */
+export function withImageOnlyFieldsFromBase(task: LocalTask, base: SyncedBase | null): LocalTask {
+  const fields = imageOnlyFields(task)
+  if (fields.length === 0 || base === null) return task
+  const out: LocalTask = { ...task }
+  for (const f of fields) {
+    if (f === 'title') out.title = base.title
+    else if (f === 'due_on') out.dueOn = base.dueOn
+    else if (f === 'starts_on') out.startsOn = base.startsOn
+    else if (f === 'completed') out.completed = base.completed
+    else if (f === 'notes') out.notesHtml = base.notesHtml
+  }
+  return out
 }
 
 /** The engine's context for one row of a synced sheet. */

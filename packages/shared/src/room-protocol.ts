@@ -426,6 +426,12 @@ export const ROOM_MUTATIONS: Readonly<Record<string, RoomMutationClass>> = {
   'sheet.mutation.remove-note': 'resource',
   'sheet.mutation.update-note-position': 'resource',
   'sheet.mutation.toggle-note-popup': 'resource',
+  // Floating images (@univerjs/sheets-drawing): insert, move, resize, order and
+  // remove are all this one mutation (a json1 op on the sheet's drawings). They
+  // live in the plugin resource SHEET_DRAWING_PLUGIN, never in a cell, so no
+  // task row changes and outbound sync sends nothing (apps/api OPEN_QUESTIONS
+  // "Images" I3). An image inside a cell is cell content (set-range-values).
+  'sheet.mutation.set-drawing-apply': 'resource',
   // Structural
   'sheet.mutation.insert-row': 'structural',
   'sheet.mutation.remove-rows': 'structural',

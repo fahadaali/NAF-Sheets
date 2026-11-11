@@ -341,7 +341,8 @@ their first stop; one workbook-level `cell_format` item says so. Diagonal
 borders and indents are dropped (no Univer counterpart used yet); shrink-to-
 fit is ignored.
 
-G27. **Validation.** "Whole number" becomes Univer's decimal rule (the
+G27. **Validation.** *(Superseded by G32 on 2026-11-11: whole numbers and text
+length now have their own Univer rules.)* "Whole number" becomes Univer's decimal rule (the
 whole-number restriction is lost); `time` and `textLength` rules are reported
 as not transferred; `strict` = `showErrorMessage` with error style `stop`;
 `showDropDown="1"` hides the arrow (§18.3.1.32 semantics).
@@ -362,7 +363,8 @@ G30. **Filters.** The filter range is transferred; Excel's criteria are not
 read (reported per column) and the rows they hid are shown again. Google's
 export of filter criteria was not observed.
 
-G31. **Other reported, never silent:** pictures, shapes, form controls and
+G31. **Other reported, never silent:** (pictures are imported since
+2026-11-11, see "Images" I10–I14; only those that cannot be are reported) shapes, form controls and
 charts in drawings; chart sheets; pivot tables (their values stay); Excel
 tables (data and formats stay, formulas with structured references keep
 their values); sparklines; sheet protection and protected ranges; outline
@@ -370,6 +372,96 @@ groups; macros (`vbaProject.bin`); links to other workbooks (formulas keep
 their values); data connections; Excel 365 checkboxes; threaded comments (a
 legacy note becomes a cell note). Smart chips in an export are plain text
 (nothing marks them).
+
+### Dropdowns and validation, complete (owner, 2026-11-11: «يجب دعم استيراد القائمة المنسدلة بشكل كامل»)
+
+G32. **Every dropdown and validation feature, per origin.** Built 2026-11-11.
+Sources read, not remembered: the Sheets API discovery document (revision
+20261109: `DataValidationRule` = `condition`, `inputMessage`, `strict`,
+`showCustomUi`, nothing else; tables have `columnProperties[].dataValidationRule`
+for DROPDOWN columns); ECMA-376 §18.3.1.32–33 and MS-XLSX x14; Univer 1.4.0 in
+`node_modules/@univerjs/{core,data-validation,sheets,sheets-data-validation,sheets-data-validation-ui,engine-render}`.
+Univer behaviours the rules rely on are pinned by
+`packages/gsheets-import/test/probe-dv.test.ts` (headless engine).
+**Real** = a file Google wrote, exported 2026-11-11 from public sheets
+(`packages/xlsx-import/test/fixtures/`: `google-dropdowns.xlsx`,
+`google-dropdowns-advanced.xlsx` 1dUjG8hNj9BAT42xRucaXUmuJzbl6pxefz-8QQFcDdgU,
+`google-colored-dropdowns.xlsx` 1lL8K942Vj67ESDgeqOKvCED3yo6IOqerSoP9fbG8JJc,
+`google-table-dropdowns.xlsx` 1L6tJGLG2S1qrRY1n11RYgfnFnA0LLAox8PmfrBEBaD0, and
+Google's rendering of them in `fixtures/htmlview/`); two more public exports
+were inspected and not kept (Sheetrix task tracker, Spreadsheet Point
+assignment tracker: plain lists plus authored conditional formats).
+**Synth** = synthesised (`fixtures/excel-dropdowns.ts`; no Excel here).
+**API** = hand-made `spreadsheets.get` responses (the OAuth path is unused).
+
+| Feature | Excel .xlsx | Google export (.xlsx) | Sheets API | Univer 1.4.0 | Handling | Verified |
+|---|---|---|---|---|---|---|
+| Items typed in the rule | `type="list"`, `<formula1>"a,b"</formula1>`; the file always separates with `,` whatever the author's locale showed; `""` is a quote | the same | `ONE_OF_LIST` values | `list`, `formula1` = JSON array | exact; items trimmed | real (3 files) + synth |
+| Range on the same sheet | `$K$2:$K$4` | `$I$6:$I20` (fixed for every cell) | `ONE_OF_RANGE` `=A2:A9` | `formula1` `=range`, evaluated | exact | real + synth + probe |
+| Range on another sheet | `<extLst>` x14 rule, `<xm:f>` | plain rule, `'Sheet'!$A:$A` | `='Sheet'!A2:A` | evaluated, whole columns too | exact | real + synth + probe |
+| Named range | `<formula1>Statuses</formula1>` + defined name | not seen | `=Name` | `=Name` evaluated (needs the defined name, G28) | exact | synth + probe |
+| Dependent list (INDIRECT) | `INDIRECT($A2)`: relative, Excel moves it per cell | Google allows no formula in a range dropdown; its dependent lists read a FILTER-fed range (real) | — | INDIRECT evaluated, but **list formulas are not moved per cell** (`ListValidator.offsetFormulaByRange = false`, probe) | Excel-like files: one rule per cell with its own shifted formula, up to 2,000 cells per sheet (`DEPENDENT_LIST_CELL_LIMIT`), then the first formula + a report item; Google: one fixed rule (Google does not move it) | synth + probe; real (Google side) |
+| Relative plain range (Excel) | `K2:K4` moves per cell | — | — | not moved | per cell, as INDIRECT | synth |
+| Dynamic list (OFFSET) | `OFFSET(Lists!$A$1,0,0,COUNTA(Lists!$A:$A),1)` (x14) | — | — | evaluated | exact | synth + probe |
+| Arrow shown or hidden | `showDropDown="1"` **hides** it (inverted name) | Google writes `showDropDown="1"` on its date-picker rule (real); on a "plain text" dropdown not observed | `showCustomUi` false | `renderMode` TEXT | hidden → TEXT (plain), else ARROW | synth; Google plain-text **(verify live)** |
+| Display style chip / arrow / plain (Google) | — | **not in the file** (real) | **not in the API** | CUSTOM (chip) / ARROW / TEXT | public link: Google's own page `…/htmlview/sheet?gid=` draws every chip as a span → CHIP; without chips: ARROW. Upload: ARROW + one report item | real (pages + files) |
+| Chip colour per item | — | **not in the file**: no conditional format, no dxf (real: green/amber/red chips of the Ablebits sample) | **not in the API** | `formula2` = colours aligned with the items by position; chip **text** colour is the cell's font colour | link: background read from the page (`#d4edbc` …; `#e8eaed` = none) → `formula2`; reported per rule: text colour not kept, and for range lists that colours follow position; items no cell shows have no known colour (reported by name); computed lists: not transferred, reported. Upload: one report item | real |
+| Multiple selection (Google) | no such feature; a cell "a, b" stays invalid | plain list rule; the cell holds `Product B, Product D` (real); the page shows one grey chip | **no field**; same text in the values | `listMultiple` reads "a, b" (split on commas); a new pick is stored as JSON `["a","b"]` | Google origins: detected when a cell joins ≥ 2 items with commas and is not an item itself → `listMultiple`; values kept; reported (JSON form for new picks) | real + API + probe |
+| Reject / warn (Google) | — | `showErrorMessage="1"` = reject; absent = warning (real) | `strict` | STOP rejects (dialog), WARNING accepts and marks the cell | exact | real + API |
+| Error style stop / warning / information (Excel) | `errorStyle` | — | — | STOP / WARNING / INFO; INFO behaves as WARNING in the UI | stored as given; warning and information (Excel asks before accepting) reported | synth |
+| No alert at all (Excel) | `showErrorMessage` absent | (means "warning" for Google) | — | invalid cells are marked | WARNING + reported | synth |
+| Error title and message | `errorTitle`, `error` | not seen | — | shows `error` only (`errorTitle` stored, never shown) | `error` = "title: message", both stored | synth |
+| Help text / input message | `prompt`, `promptTitle` (`showInputMessage`) | not seen in the real files **(verify live)** | `inputMessage` | stored, **never shown** (nothing reads `prompt`) | stored; **apps/web shows it** when the cell is selected (`src/editor/validation-prompt.ts`, Univer's cell alert) | synth + API + e2e |
+| Blank allowed | `allowBlank` | always `1` (real) | always allowed | `allowBlank: false` marks every empty cell invalid | always `true`; Excel's "Ignore blank" off reported **(OPEN, below)** | synth |
+| List from a Google table column | — | `<formula1>#REF!</formula1>` (real) | `tables[].columnProperties[].dataValidationRule` | — | not transferred, reported with the reason (values stay) | real |
+| Whole number / text length / time (Excel) | `whole`, `textLength`, `time` | — | — | `whole`, `textLength` validators exist; no `time` validator | whole → `whole`, text length → `textLength` (G27's decimal fallback and its report are gone); time reported | synth + probe |
+| Coloured dropdown column by conditional format | `cellIs` rules (authored) | `cellIs equal "Completed"` rules (real, Sheetrix) | `booleanRule` | conditional formatting | transferred as conditional formats (G29), independent of chips | real |
+
+What Univer 1.4.0 cannot do, and what the import does instead: per-item chip
+**text** colour (cell font colour); a colour tied to an item's **text** in a
+range list (it is tied to its position); moving a list formula per cell
+(per-cell rules); showing the input message or the error title (the app shows
+the message; the title is folded into `error`); a TIME rule; asking "continue?"
+on invalid input (Excel warning / information: accepted and marked); a
+multiple pick in Google's `a, b` form (Univer writes JSON).
+
+**In the RTL grid** (checked in Chromium on the apps/web e2e,
+`test/e2e/dropdowns.test.ts`, and the univer-rtl interaction suite, sheet
+«قوائم» of the harness): chips sit at the cell start (visual right) with the
+arrow at the end; their Arabic text is painted per line through the layer's
+`fillText` flip-back with the first-strong direction, glyph for glyph as in
+the unmirrored grid; a multiple selection's chips read from the start; the
+list opens under its cell aligned with its right edge, with the item colours;
+a multiple list opens from its arrow (the 14 px at the cell's end, its visual
+left) as in stock Univer; the help text opens beside the cell, towards the
+next column. **Fixed in `packages/univer-rtl`:** Univer's "vertical" popup was
+mirrored to "vertical-right", which Univer resolves by the roomier side, so a
+list in the lower half of the screen opened above its cell although it fitted
+below (seen at 375 px). Now "bottom-right" when the room below is at least
+`MIRRORED_POPUP_ROOM` (320 px, the tallest cell popup), else "vertical-right"
+(`mirroredVerticalDirection`). The choice is made when the popup opens; a
+popup kept open while scrolling keeps it **(OPEN)**. Not RTL: in a narrow
+column a multiple selection's chips wrap onto two lines and Univer does not
+grow a row whose height the file fixed (Google's 21 px rows), so the second
+line is clipped — as in the unmirrored grid.
+
+**Sync columns** (task: leave them alone). Nothing in the link wizard or the
+sync engine reads or writes validation rules; `ensureSystemColumns` adds the
+hidden columns after the last used column and does not touch the workbook's
+rules (`packages/sheet-model/test/imported-dropdowns.test.ts`). An imported
+status list is read through `completedValues` as before; an assignee column
+with Google's multiple selection reads both `a, b` and Univer's JSON
+(`splitAssigneeText`); a rule wide enough to cover the system columns' cells
+changes nothing (hidden columns; the server writes them as plain values).
+
+**Decisions taken as the safest, open for the owner:**
+- **(owner)** Excel "Ignore blank" off: blanks stay allowed (else Univer marks every empty cell of the range with a red triangle). Reported per rule. Keep, or honour it?
+- **(owner)** A Google multiple-selection dropdown none of whose cells holds two items is not recognisable (no file, API or page marks it): it imports as a single list.
+- **(owner)** Univer stores a new multiple pick as `["a","b"]`, not Google's `a, b`; formulas that split such cells on ", " stop matching after an edit. Reported; change Univer's write (a hook) or accept?
+- **(verify live)** Google's htmlview page is not an API. It is read defensively (no table, no chip → nothing; any non-200 → a report item, the import goes on). If Google changes it, colours and the chip style silently fall back to arrow and grey **and the report says they could not be read** only when the page is unreadable, not when it reads but looks different. Re-check with the real NAF file.
+- **(owner)** Fetching htmlview makes 1 + (sheets with dropdowns, ≤ 20) extra requests to docs.google.com per link import (audited as `renderingRequests`); pages ≤ 8 MiB each (`DEFAULT_RENDERING_LIMITS`).
+- **(owner)** The new real fixtures (three Google exports and seven htmlview pages of public third-party samples) are in the repository like G20's. Confirm.
+- An item colour chosen as Google's default grey (`#e8eaed`) is read as "no colour".
 
 ## Basecamp link
 
@@ -1197,3 +1289,228 @@ P7. **Basecamp match column** is read from `bc_person_matches` and the account
     shows «غير مطابَق» until the people-matching screen (which refreshes and
     matches by email) has been opened. States: auto (email), manual, declined
     (admin recorded no person), none.
+
+## Images
+
+Owner, 2026-11-11: «دعم اضافة صورة وكذلك استيرادها بحيث تكون على الخلية ولا
+تؤثر على بيسكامب، إلا اذا كانت داخل خلية فتكون تابعة لها مثل الملاحظات ونحوها
+بشرط دعم بيسكامب لها في الخانة». Code: `src/images/` (routes, store, import,
+notes pictures), the room (`src/room/engine.ts`, `footprint.ts`), sync
+(`src/sync/detect.ts`, `state.ts` `diffLocal`, `outbound/consumer.ts`), the
+backup (`src/phase7/backup.ts`); sheet-model `src/cell-images.ts`;
+`@naf-sheets/xlsx-import` `src/images.ts`, `src/import-images.ts`;
+`@naf-sheets/gsheets-import` `src/images.ts`; `@naf-sheets/shared`
+`src/api-images.ts`; the editor `apps/web/src/images/` (apps/web
+`OPEN_QUESTIONS.md` I1–I8); the RTL layer (I15). **Nothing here ran against
+real Basecamp** (as P18): the fake Basecamp only.
+
+I1. **Univer packages.** Univer 1.4.0's drawing packages are open source
+    (Apache-2.0, checked in each installed `package.json`) and were already in
+    the lockfile through the RTL harness: `@univerjs/drawing`, `drawing-ui`,
+    `docs-drawing`, `sheets-drawing`, `sheets-drawing-ui`, and
+    `@univerjs/preset-sheets-drawing`, which registers them. Added at exactly
+    1.4.0: `@univerjs/preset-sheets-drawing` to apps/web, `@univerjs/drawing`
+    and `@univerjs/sheets-drawing` (model only, no UI) to apps/api;
+    `npm run check:pins` passes. In-cell pictures are part of the open-source
+    sheets-drawing-ui («صورة خلية», `InsertCellImageCommand`): a cell document
+    with a drawing, no Pro package. The editor uses Univer's own «إدراج ← صورة»
+    menu («صورة عائمة» / «صورة خلية») and its image service is replaced by one
+    that uploads to the platform (apps/web I1). The worksheet background
+    picture is hidden and refused (its mutation is not in the room's list).
+
+I2. **Storage and access.** A picture is stored once in R2 `ATTACHMENTS`
+    under `workbooks/{workbookId}/images/{imageId}` (32 hex) with its
+    recognised type and the uploader, create-only; the snapshot keeps only
+    `/api/workbooks/{id}/images/{imageId}` (`imageSourceType: URL`), never
+    base64. `POST /api/workbooks/:id/images` (raw body, `Content-Length`
+    required, ≤ `IMAGE_MAX_BYTES` = 10 MiB, refused before a byte is read when
+    declared larger, counted while reading otherwise) accepts **PNG, JPEG, GIF
+    and WebP, recognised from the bytes**; SVG (script risk), BMP, HTML and
+    anything else answer 415 `image_type_not_allowed`, whatever the declared
+    type. Editors and admins only: a viewer gets 403 `forbidden`; someone
+    outside the workbook 404. `GET …/images/:imageId` serves the picture to
+    anyone who may open that workbook (404 `image_not_found` otherwise, and for
+    an id of another workbook), with `X-Content-Type-Options: nosniff`,
+    `Content-Security-Policy: default-src 'none'; sandbox` and
+    `Cross-Origin-Resource-Policy: same-origin`. Every upload is audited
+    (`image.upload`: size, type, sha-256). **Open:** the API's `no-store`
+    header applies (every page load reads the pictures again); the limit of
+    10 MiB is this module's choice (Univer's default is 5 MB).
+
+I3. **The room.** `sheet.mutation.set-drawing-apply` (insert, move, resize,
+    order, group and remove of floating pictures: one json1 op on the sheet's
+    drawings) is accepted as `resource` data of one sheet: footprint key
+    `drawing:<sheet>`, so two people's picture edits on one sheet are
+    serialised and a picture edit never conflicts with cell edits. The headless
+    room registers `UniverDrawingPlugin` and `UniverSheetsDrawingPlugin`
+    (model only), so the room's saves keep resource `SHEET_DRAWING_PLUGIN`
+    (without them the first save would have dropped every picture). A picture
+    in a cell is cell content (`set-range-values`). `sheet.operation.clear-
+    drawing-transformer` (type MUTATION, params an array) is never sent by the
+    adapter (params not an object); the background-picture mutation is
+    refused. The dashboard sheet «اللوحة» refuses the drawing mutation like any
+    plugin data (`dashboardMutationProblem`), and the editor refuses the insert
+    commands there before anything is uploaded. Viewers' ops are refused as
+    before. Drawing mutations never touch a task row: detection reads the
+    snapshot's rows, and floating pictures live in a plugin resource, so
+    outbound sends nothing (tested: insert, move, remove → no message, no
+    Basecamp write).
+
+I4. **Per column: can the Basecamp field hold a picture?** (spec §8 table,
+    Appendix A; `basecamp/bc-api` rich_text.md: a to-do's `description` is rich
+    text whose `<bc-attachment sgid>` elements carry files; `content`, people,
+    dates and completion are plain values; subtasks have only `title`,
+    `due_on`, `assignees`, `completed`, `position`.)
+
+    | Column (mapping) | Basecamp field | Picture inside the cell |
+    |---|---|---|
+    | المهمة (`title`) | to-do `content` / subtask `title`: plain text | **skipped**: the text beside it is the title; a cell holding only a picture keeps Basecamp's title (I5) |
+    | المسؤول (`assignees`) | `assignee_ids` | **skipped**; picture-only: the stored assignees stay |
+    | تاريخ البدء (`starts_on`) | `starts_on` (to-do only) | **skipped**; picture-only: Basecamp's date stays |
+    | تاريخ الاستحقاق (`due_on`) | `due_on` | **skipped**; picture-only: Basecamp's date stays |
+    | الحالة (`completed`) | completion endpoint | **skipped**; picture-only: Basecamp's state stays |
+    | ملاحظات (`notes`), to-do | `description`: rich text, takes attachments | **sent as a file of the description** (phase 5 path, I6); the cell's text stays the person's part of the description |
+    | ملاحظات (`notes`), subtask | none (no description) | **kept in the platform** |
+    | المرفقات (`attachments`) | files of the description | display-only cell (P13): a picture there is skipped |
+    | free column, «إلحاق بالوصف» | a line of the managed block (text) | **skipped**; the line carries the cell's text (I17) |
+    | free column | none | stays in the platform |
+    | floating picture (any column) | none | never sent (I3) |
+
+    "Skipped" is never a sync error, never a conflict, never clears the field,
+    and the cell keeps showing its picture.
+
+I5. **Picture-only cells follow Basecamp.** A picture is never text
+    (sheet-model `cellText` leaves its placeholder out). A mapped cell holding
+    only pictures is marked image-only (`imageOnlyFields`) and its field takes
+    the synced base's value in every diff (`withImageOnlyFieldsFromBase` in
+    `diffLocal`); assignees keep the stored ones. So nothing is sent and
+    nothing cleared, and a change made in Basecamp later is still applied
+    (inbound writes the text next to the picture). A row not in Basecamp yet
+    (no `bc_recording_id`) whose title is only a picture is still
+    `empty_title` (a to-do cannot be created without a title); a row with no
+    text title never receives a uid anyway. **Open:** the row's fingerprint
+    changes when the text is replaced by a picture, which moves
+    `last_local_change_at` (LWW timestamp) although nothing is sent.
+
+I6. **Notes pictures → files of the description.** After a commit, detection
+    (`notesImagesOf`, `tasksWithUnsentNotesImages`) finds to-do rows whose
+    notes cell holds a picture of this workbook never sent before (no
+    `attachments` row with key `attachments/{wb}/{uid}/cell-image-{imageId}`,
+    removed or not) and queues the task with the person whose edit touched the
+    row (spec §3; never the server). The `bc-outbound` consumer, after the
+    task's step and **outside its lease** (the description write takes the
+    lease itself), copies the picture into that key, inserts an `attachments`
+    row (origin `local`, `uploading`, created by that person) and runs phase
+    5's `sendToBasecamp` unchanged: upload with the person's token,
+    `<bc-attachment>` added to the description, `attached`, or `failed` with
+    the Arabic reason and «إعادة المحاولة». A file a person removed from the
+    chips is not sent again while the picture stays in the cell. Only pictures
+    of the same workbook (`parseImagePath`) are sent; a copied URL of another
+    workbook, a data URL or an external address is skipped. The to-do must be
+    synced, active and in a synced sheet (`fileMode` = basecamp). The
+    attachments cell then names the file.
+
+I7. **(owner)** **A picture removed from the notes cell stays in Basecamp.**
+    Removing it from the description would write to Basecamp on an
+    interpretation of an edit; the file stays a chip of the row and is removed
+    through the attachment editor, after confirmation (§10). Decide whether
+    removing the picture from the cell should remove the file.
+
+I8. **Inbound never removes a picture.** Every inbound write goes through
+    sheet-model `writeValue`, which, for a cell holding pictures, keeps them
+    (`withImagesKept`): the pictures first, then Basecamp's text as plain
+    paragraphs, `v`/`t` kept for readers of the value (checkbox, status). A
+    date written into a picture cell is `YYYY-MM-DD` text. The text's own
+    formatting in such a cell is not kept. The same value twice is
+    `unchanged` (no server change).
+
+I9. **(owner)** **Nothing deletes a picture object** (CLAUDE.md §3).
+    Pictures uploaded and then removed from the sheet, undone inserts, and
+    the pictures of an import that failed after they were stored stay in R2.
+    The daily backup copies every picture once into `images/workbooks/…` of
+    the backup bucket (create-only, never replaced) and the retention policy
+    never removes them (it removes `d1/{run}/` files and snapshot copies only);
+    docs/backups.md says so. Decide on a clean-up (pictures no snapshot
+    version references) and whether backups should keep removed pictures.
+
+I10. **Import, floating pictures** (`xl/drawings`, both origins). Anchors →
+    Univer `anchorType`: `twoCellAnchor` (default) → `1` (moves and sizes with
+    cells); `editAs="oneCell"` → `0` (moves only); `editAs="absolute"` and
+    `absoluteAnchor` → `2` (neither, position in pixels; reported `converted`
+    for `absoluteAnchor`); `oneCellAnchor` → `0`, size from `ext`. EMU / 9525
+    = pixels. `transform` is computed with Univer's header sizes (46 × 20 px)
+    and the converted column widths and row heights; Univer recomputes it from
+    `sheetTransform` when it draws, except for anchor `2`. Alt text: `title`,
+    `descr`. Pictures inside a group shape are reported as shapes (sheet.ts).
+
+I11. **Import, in-cell pictures.** Excel 365's "Place in cell": `vm` cells →
+    `xl/metadata.xml` (`XLRICHVALUE`) → `xl/richData/rdrichvalue.xml`
+    `_localImage` (`_rvRel:LocalImageIdentifier`, `Text` as alt text) →
+    `richValueRel.xml` and its rels → `xl/media`. The cell becomes the
+    document Univer's own cell-image command writes (sheets-drawing-ui
+    `_insertCellImage`), sized to fit the cell; its `#VALUE!` placeholder value
+    goes, its style stays. A `_webimage` (the cached picture of `IMAGE(url)`)
+    has no bytes in the file: **reported, never fetched** (the server loads no
+    pictures from the internet; SSRF and privacy). An `IMAGE()` formula keeps
+    its current treatment (value and a note, "Google import" `imageFormula`).
+
+I12. **(verify) Google's export.** 111 public Google Sheets were exported on
+    2026-11-11 (ids found on GitHub); 16 exports held pictures, every one an
+    `oneCellAnchor` with `ext` and `editAs` absent, PNG or JPEG in `xl/media`.
+    Real fixtures: `packages/xlsx-import/test/fixtures/google-floating-image.xlsx`
+    (public "Polyglot Gamedev" master sheet, 17f0dQawb-s_Fd7DHgmVvJoEGDMH_yoSd8EYigrb0zmM)
+    and the existing `google-checkboxes.xlsx`. **No export held an in-cell
+    picture or `vm` cells, so how Google writes "image in cell" was not
+    observed**; the reader handles Excel's rich data whatever the origin. The
+    Excel side (all anchor kinds, rich data, a web picture, EMF) is
+    **synthesised** (`test/fixtures/excel-pictures.ts`): no Excel was available.
+
+I13. **Import limits.** At most 200 pictures and 40 MiB of picture bytes per
+    file (`MAX_IMPORTED_PICTURES`, `MAX_PICTURE_BYTES_TOTAL`), each ≤ 10 MiB
+    and of an accepted type; a part used several times is stored once. The
+    rest is reported, the import goes on. To calibrate with real files.
+
+I14. **The report.** `counts.floatingImages` / `counts.cellImages` (optional:
+    absent in reports stored before 2026-11-11) count what was imported; only
+    pictures not imported are items (`drawing_image` / new `cell_image`,
+    `not_transferred`, with the reason: type, size, missing, external, limit),
+    plus `converted` for an absolute picture. The web report shows both counts
+    when present.
+
+I15. **The RTL grid layer** (`packages/univer-rtl`). Checked in Chromium on
+    the harness: the picture is drawn not mirrored (existing check); its start
+    (visual right) edge and top sit on its anchor cell; a click selects it as
+    in the unmirrored grid at the mirrored point; the selection handles are
+    drawn around it where it is; dragging two columns to the visual left
+    anchors it two columns later; dragging the visual-left middle handle widens
+    it and keeps its start edge. All by construction (the flipped canvas, mouse
+    hit testing in the element's own coordinates), with no new hook. **Found
+    and fixed:** the image menu opened on the picture's start side: Univer
+    1.4.0 already asks `'left'` for a right-to-left UI
+    (`DrawingPopupMenuController`), and the layer mirrored it again. The layer
+    now keeps the side of the popups listed in `RTL_AWARE_POPUPS`
+    (`COMPONENT_IMAGE_POPUP_MENU`), and `test/images-contract.test.ts` checks
+    that Univer's source still asks for it. 6 checks added to the interaction
+    suite (now 65 with the other changes in progress).
+
+I16. **Found and fixed: a cell document without its document style blanks
+    the grid.** Univer 1.4.0's cell renderer writes into
+    `documentStyle.pageSize`; an in-cell picture document without it threw on
+    every frame and the grid stayed empty (and the RTL heartbeat withdrew the
+    mirror). Imported pictures and inbound writes now carry the style Univer's
+    own documents carry (`CELL_DOCUMENT_STYLE`).
+
+I17. A free column appended to the description: a picture-only cell has no
+    text, so its line leaves the managed block (the block is the platform's,
+    rewritten whole, §8.2). Open: keep the last text instead?
+
+I18. Pictures of a subtask's notes, of a sheet that does not sync, or of a
+    to-do not yet in Basecamp stay in the platform; the last are sent once the
+    to-do exists and the row is next queued.
+
+I19. **Open:** a picture copied from another workbook keeps that workbook's
+    URL, which this workbook's members may not be allowed to read (404, the
+    picture is not shown). Copying the object on paste is not built.
+
+I20. **(verify live)** Basecamp accepting an image as a description file is
+    the phase 5 path (P18): not tried against real Basecamp.

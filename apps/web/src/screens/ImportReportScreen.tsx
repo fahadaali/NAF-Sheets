@@ -17,7 +17,7 @@ import { AppBar } from '../components/AppBar'
 import { Notice } from '../components/Notice'
 import { api, errorMessage, isAbortError } from '../lib/api'
 import { formatCount, formatDateTime } from '../lib/format'
-import { COUNT_KEYS, groupReportItems, itemTarget, originFacts, outcomeCounts, parseImportReport } from '../lib/import-report'
+import { COUNT_KEYS, OPTIONAL_COUNT_KEYS, groupReportItems, itemTarget, originFacts, outcomeCounts, parseImportReport } from '../lib/import-report'
 import type { OriginFacts, ReportGroup } from '../lib/import-report'
 import { Link } from '../lib/router'
 import { pathFor } from '../lib/routes'
@@ -138,6 +138,17 @@ function Report({ id, response, report, actions }: { id: string; response: Impor
               </dd>
             </div>
           ))}
+          {OPTIONAL_COUNT_KEYS.map((key) => {
+            const value = (report.counts as Partial<Record<(typeof OPTIONAL_COUNT_KEYS)[number], number>>)[key]
+            return typeof value === 'number' ? (
+              <div key={key} className="counts__item" data-count={key}>
+                <dt>{t.report.counts[key]}</dt>
+                <dd>
+                  <bdi className="num">{formatCount(value)}</bdi>
+                </dd>
+              </div>
+            ) : null
+          })}
         </dl>
         <div className="card__actions">
           {actions}

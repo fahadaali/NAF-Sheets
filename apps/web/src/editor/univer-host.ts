@@ -20,11 +20,15 @@ import { UniverSheetsHyperLinkPreset } from '@univerjs/preset-sheets-hyper-link'
 import SheetsLinkArSA from '@univerjs/preset-sheets-hyper-link/locales/ar-SA'
 import { UniverSheetsNotePreset } from '@univerjs/preset-sheets-note'
 import SheetsNoteArSA from '@univerjs/preset-sheets-note/locales/ar-SA'
+import SheetsDrawingArSA from '@univerjs/preset-sheets-drawing/locales/ar-SA'
+import { installImageGuard, nafDrawingPreset } from '../images/univer-images'
 import { createUniver, LocaleType, mergeLocales } from '@univerjs/presets'
 import type { FUniver, IWorkbookData } from '@univerjs/presets'
 import { CommandType, ICommandService, IPermissionService, IUndoRedoService } from '@univerjs/core'
 import type { CollabCommandService } from '../collab/univer-adapter'
-import { enableRtlGrid } from '@naf-sheets/univer-rtl'
+import { enableFormulaColours, enableRtlGrid } from '@naf-sheets/univer-rtl'
+import { formulaPalette } from './formula-palette'
+import { enableValidationPrompts } from './validation-prompt'
 import type { EditorTarget } from '../lib/cell-target'
 import { rangeToA1 } from '../lib/cell-target'
 import { GRID_FONT, isPersistentChange } from './workbook-data'
@@ -37,6 +41,7 @@ import '@univerjs/preset-sheets-sort/lib/index.css'
 import '@univerjs/preset-sheets-data-validation/lib/index.css'
 import '@univerjs/preset-sheets-hyper-link/lib/index.css'
 import '@univerjs/preset-sheets-note/lib/index.css'
+import '@univerjs/preset-sheets-drawing/lib/index.css'
 
 /** The Facade workbook and worksheet types, as `createWorkbook` returns them. */
 export type FWorkbook = ReturnType<FUniver['createWorkbook']>
@@ -75,6 +80,10 @@ export interface MountedWorkbook {
 
 export interface MountOptions {
   onRtlStatus(state: RtlState): void
+  /** The platform's workbook id: where inserted pictures are uploaded (POST /api/workbooks/:id/images). */
+  workbookId?: string
+  /** A picture could not be inserted (type, size, rights, network): the Arabic reason. */
+  onImageRefused?(message: string): void
   /** Polled between the asynchronous steps; when true, everything is torn down. */
   isCancelled(): boolean
   /** The sheet shown first, before the RTL layer starts (Univer would show the first tab). */
@@ -109,7 +118,7 @@ export async function mountWorkbook(host: HTMLElement, data: Partial<IWorkbookDa
     locale: LocaleType.AR_SA,
     direction: 'rtl',
     locales: {
-      [LocaleType.AR_SA]: mergeLocales(SheetsCoreArSA, SheetsCfArSA, SheetsFilterArSA, SheetsSortArSA, SheetsDvArSA, SheetsLinkArSA, SheetsNoteArSA),
+      [LocaleType.AR_SA]: mergeLocales(SheetsCoreArSA, SheetsCfArSA, SheetsFilterArSA, SheetsSortArSA, SheetsDvArSA, SheetsLinkArSA, SheetsNoteArSA, SheetsDrawingArSA),
     },
     presets: [
       UniverSheetsCorePreset({
@@ -130,6 +139,8 @@ export async function mountWorkbook(host: HTMLElement, data: Partial<IWorkbookDa
       UniverSheetsDataValidationPreset(),
       UniverSheetsHyperLinkPreset(),
       UniverSheetsNotePreset(),
+      // Pictures over and in cells, uploaded to the platform (src/images/univer-images.ts).
+      nafDrawingPreset({ workbookId: options.workbookId ?? String(data.id ?? ''), onRefused: (message) => options.onImageRefused?.(message) }),
     ],
   })
 
@@ -154,6 +165,15 @@ export async function mountWorkbook(host: HTMLElement, data: Partial<IWorkbookDa
   try {
     const workbook = univerAPI.createWorkbook(data)
     const unitId = workbook.getId()
+    cleanups.push(installImageGuard(univerAPI, (message) => options.onImageRefused?.(message)))
+    // Formula colours while editing: Excel's reference colours and outlines,
+    // plus the theme's calm colours for the other tokens (OPEN_QUESTIONS.md F1–F4).
+    // A contract problem leaves Univer's own colouring and is logged by the layer.
+    const palette = formulaPalette()
+    if (palette) cleanups.push(enableFormulaColours(univerAPI, palette).dispose)
+    else console.error('[editor] formula colours left stock: the --formula-* tokens of theme.css are missing')
+    // The help text of a validation rule, which Univer stores but never shows (validation-prompt.ts).
+    cleanups.push(enableValidationPrompts(univerAPI, univer.__getInjector(), unitId))
     if (options.dashboard) {
       cleanups.push(
         installDashboardGuard(univerAPI, {

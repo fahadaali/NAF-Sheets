@@ -21,6 +21,15 @@ const LINK = `https://docs.google.com/spreadsheets/d/${ID}/edit#gid=0`
 const EXPORT = `https://docs.google.com/spreadsheets/d/${ID}/export?format=xlsx`
 const DOWNLOAD = `https://doc-08-4o-sheets.googleusercontent.com/export/abc/def/1794400970000/100630705629414352418/*/${ID}?format=xlsx`
 const XLSX_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+const HTMLVIEW = `https://docs.google.com/spreadsheets/d/${ID}/htmlview`
+const HTMLVIEW_SHEET = `${HTMLVIEW}/sheet?headers=true&gid=0`
+const HTML = { 'content-type': 'text/html; charset=utf-8' }
+// Google's rendering, shaped like the real pages (packages/xlsx-import/test/fixtures/htmlview/):
+// the index lists the sheet with JavaScript escapes («المهام»); the sheet page draws the
+// dropdown cells C2:C3 of the Google-style fixture as chips, C2 coloured.
+const INDEX_PAGE = `<script>var items = [];items.push({name: "\\u0627\\u0644\\u0645\\u0647\\u0627\\u0645", pageUrl: "https:\\/\\/docs.google.com\\/spreadsheets\\/d\\/${ID}\\/htmlview\\/sheet?headers\\x3dtrue&gid=0", gid: "0"});</script>`
+const chip = (bg: string, fg: string, text: string) => `<td class="s3"><span class="s4" style="background-color: ${bg}; color: ${fg}; width: 90.0px; max-width: 90.0px; margin-left: 6.0px;  padding: 1.0px 5.0px 1.0px 5.0px ; ">${text}</span></td>`
+const SHEET_PAGE = `<table class="waffle" cellspacing="0" cellpadding="0"><thead><tr><th class="row-header freezebar-origin-ltr"></th><th id="0C0">A</th><th id="0C1">B</th><th id="0C2">C</th></tr></thead><tbody><tr><th id="0R0"><div>1</div></th><td>المهمة</td><td>منجزة</td><td>الحالة</td></tr><tr><th id="0R1"><div>2</div></th><td>إعداد الخطة</td><td></td>${chip('#bfe1f6', '#0a53a8', 'قيد التنفيذ')}</tr><tr><th id="0R2"><div>3</div></th><td>تصميم الهوية</td><td></td>${chip('#e8eaed', '#000000', 'منجز')}</tr></tbody></table>`
 
 interface FakeCall {
   url: string
@@ -45,6 +54,8 @@ async function publicFile(bytes?: Uint8Array, disposition = `attachment; filenam
   return fakeGoogle({
     [EXPORT]: () => new Response(null, { status: 307, headers: { location: DOWNLOAD } }),
     [DOWNLOAD]: () => new Response(body, { status: 200, headers: { 'content-type': XLSX_TYPE, 'content-disposition': disposition, 'content-length': String(body.byteLength) } }),
+    [HTMLVIEW]: () => new Response(INDEX_PAGE, { status: 200, headers: HTML }),
+    [HTMLVIEW_SHEET]: () => new Response(SHEET_PAGE, { status: 200, headers: HTML }),
   })
 }
 
@@ -129,7 +140,9 @@ describe('POST /api/import/xlsx', () => {
     const report = await reportOf(app, editor, workbookId)
     expect(report.source.title).toBe('خطة')
     expect(report.source.origin).toMatchObject({ kind: 'google_export', via: 'upload' })
-    expect(report.items.map((i) => i.kind)).toEqual(['unsupported_formula', 'checkbox'])
+    // An uploaded export carries no chip colours or display style (G32): said once.
+    expect(report.items.map((i) => i.kind)).toEqual(['unsupported_formula', 'checkbox', 'data_validation'])
+    expect(report.items[2]).toMatchObject({ outcome: 'not_transferred', location: null })
   })
 
   it('lets admins import and refuses viewers in the route, before reading the file', async () => {
@@ -220,7 +233,8 @@ describe('POST /api/import/gsheets-link', () => {
     expect(res.status).toBe(201)
     const { workbookId } = await json<ImportXlsxResponse>(res)
 
-    expect(google.calls.map((c) => c.url)).toEqual([EXPORT, DOWNLOAD])
+    // The export, then Google's rendering of the one sheet that holds a dropdown (G32).
+    expect(google.calls.map((c) => c.url)).toEqual([EXPORT, DOWNLOAD, HTMLVIEW, HTMLVIEW_SHEET])
     for (const c of google.calls) {
       expect(c.init?.redirect).toBe('manual')
       const headers = new Headers(c.init?.headers)
@@ -235,7 +249,26 @@ describe('POST /api/import/gsheets-link', () => {
     expect(report.items.find((i) => i.kind === 'unsupported_formula')?.detail).toBe('=QUERY(A1:C3,"select A",1)')
     const { results: audit } = await env.DB.prepare('SELECT action, details_json FROM audit_log WHERE entity_id = ?1 ORDER BY id').bind(workbookId).all<Record<string, string>>()
     expect(audit.map((a) => a.action)).toEqual(['workbook.create', 'workbook.import.gsheets_link'])
-    expect(JSON.parse(audit[1]!.details_json!)).toMatchObject({ spreadsheetId: ID, downloadRequests: 2, origin: 'google_export' })
+    expect(JSON.parse(audit[1]!.details_json!)).toMatchObject({ spreadsheetId: ID, downloadRequests: 2, renderingRequests: 2, origin: 'google_export' })
+    // The chip colours Google showed reached the dropdown; nothing says they are missing.
+    const snapshot = (await (await env.SNAPSHOTS.get(`workbooks/${workbookId}/snapshots/1.json`))!.json()) as { resources: Array<{ name: string; data: string }> }
+    const dv = Object.values(JSON.parse(snapshot.resources.find((r) => r.name === 'SHEET_DATA_VALIDATION_PLUGIN')!.data) as Record<string, Array<{ type: string; renderMode: number; formula2?: string }>>).flat()
+    expect(dv.find((r) => r.type === 'list')).toMatchObject({ renderMode: 2, formula2: '#bfe1f6,' })
+    expect(report.items.filter((i) => i.kind === 'data_validation' && i.location === null)).toEqual([])
+  })
+
+  it("imports without colours, and says so, when Google's rendering cannot be read", async () => {
+    const google = await publicFile()
+    const app = setup({
+      fetch: async (input, init) => (input.startsWith(HTMLVIEW) ? new Response('<html>Sign in</html>', { status: 401, headers: HTML }) : google.fetch(input, init)),
+    })
+    const editor = await seedMember('editor')
+    const res = await linkImport(app, editor, { source: LINK })
+    expect(res.status).toBe(201)
+    const report = await reportOf(app, editor, (await json<ImportXlsxResponse>(res)).workbookId)
+    const note = report.items.find((i) => i.kind === 'data_validation' && i.location === null)
+    expect(note).toMatchObject({ outcome: 'not_transferred', detail: 'المهام' })
+    expect(isArabic(note?.message ?? '')).toBe(true)
   })
 
   it('takes the title from the request when given', async () => {

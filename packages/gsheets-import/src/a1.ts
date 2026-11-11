@@ -111,3 +111,83 @@ export function cellsToRanges(cells: ReadonlyArray<readonly [number, number]>): 
   done.push(...open.values())
   return done.sort((a, b) => a.startRow - b.startRow || a.startColumn - b.startColumn)
 }
+
+/** 'A' → 0, 'AA' → 26. */
+function columnIndexOf(letters: string): number {
+  let n = 0
+  for (const ch of letters.toUpperCase()) n = n * 26 + (ch.charCodeAt(0) - 64)
+  return n - 1
+}
+
+/** A range a list formula names; open sides (whole columns or rows) are `null`. */
+export interface ListReferenceRange {
+  startRow: number
+  startColumn: number
+  endRow: number | null
+  endColumn: number | null
+}
+
+export type ListReference =
+  | { kind: 'range'; sheet: string | null; range: ListReferenceRange }
+  | { kind: 'name'; name: string }
+
+const CELL_A1 = /^\$?([A-Za-z]{1,3})\$?(\d{1,7})$/
+const COLS_A1 = /^\$?([A-Za-z]{1,3}):\$?([A-Za-z]{1,3})$/
+const ROWS_A1 = /^\$?(\d{1,7}):\$?(\d{1,7})$/
+const NAME = /^[\p{L}_\\][\p{L}\p{N}_.]*$/u
+
+/**
+ * A list source that is a plain reference: `=A2:A9`, `='القوائم'!$A:$A`,
+ * `=Sheet1!$B$2:$B`, or a defined name `=Statuses`. Anything else (INDIRECT,
+ * OFFSET, a constant) is null: its items are only known once computed.
+ */
+export function parseListReference(formula: string): ListReference | null {
+  let text = formula.trim()
+  if (text.startsWith('=')) text = text.slice(1).trim()
+  if (text === '') return null
+  let sheet: string | null = null
+  const bang = text.lastIndexOf('!')
+  if (bang > 0) {
+    const prefix = text.slice(0, bang)
+    text = text.slice(bang + 1)
+    if (/^'(?:[^']|'')+'$/.test(prefix)) sheet = prefix.slice(1, -1).replace(/''/g, "'")
+    else if (/^[^'"!:()\s]+$/.test(prefix)) sheet = prefix
+    else return null
+  }
+  const parts = text.split(':')
+  if (parts.length > 2) return null
+  const cols = COLS_A1.exec(text)
+  if (cols) {
+    const a = columnIndexOf(cols[1] as string)
+    const b = columnIndexOf(cols[2] as string)
+    return { kind: 'range', sheet, range: { startRow: 0, startColumn: Math.min(a, b), endRow: null, endColumn: Math.max(a, b) } }
+  }
+  const rows = ROWS_A1.exec(text)
+  if (rows) {
+    const a = Number(rows[1]) - 1
+    const b = Number(rows[2]) - 1
+    return { kind: 'range', sheet, range: { startRow: Math.min(a, b), startColumn: 0, endRow: Math.max(a, b), endColumn: null } }
+  }
+  const first = CELL_A1.exec(parts[0] as string)
+  if (first) {
+    const r1 = Number(first[2]) - 1
+    const c1 = columnIndexOf(first[1] as string)
+    if (parts.length === 1) return { kind: 'range', sheet, range: { startRow: r1, startColumn: c1, endRow: r1, endColumn: c1 } }
+    const second = parts[1] as string
+    const cell = CELL_A1.exec(second)
+    if (cell) {
+      const r2 = Number(cell[2]) - 1
+      const c2 = columnIndexOf(cell[1] as string)
+      return { kind: 'range', sheet, range: { startRow: Math.min(r1, r2), startColumn: Math.min(c1, c2), endRow: Math.max(r1, r2), endColumn: Math.max(c1, c2) } }
+    }
+    // Google's open-ended `A2:A` (to the end of the column).
+    const col = /^\$?([A-Za-z]{1,3})$/.exec(second)
+    if (col) {
+      const c2 = columnIndexOf(col[1] as string)
+      return { kind: 'range', sheet, range: { startRow: r1, startColumn: Math.min(c1, c2), endRow: null, endColumn: Math.max(c1, c2) } }
+    }
+    return null
+  }
+  if (sheet === null && parts.length === 1 && NAME.test(text) && !/^(TRUE|FALSE)$/i.test(text)) return { kind: 'name', name: text }
+  return null
+}

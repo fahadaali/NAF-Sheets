@@ -118,6 +118,8 @@ const PLUGIN_PREFIX: Record<string, string> = {
   'sheet.mutation.remove-note': 'note',
   'sheet.mutation.update-note-position': 'note',
   'sheet.mutation.toggle-note-popup': 'note',
+  // Floating images of one sheet (not cells: never a task row's change).
+  'sheet.mutation.set-drawing-apply': 'drawing',
 }
 
 function pluginOf(id: string): string | null {

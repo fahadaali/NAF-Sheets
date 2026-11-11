@@ -13,6 +13,7 @@ import type {
   GsConditionValue,
   GsConditionType,
   GsDataValidationRule,
+  GsValidationExtras,
   GsDimensionProperties,
   GsEmbeddedChart,
   GsExtendedValue,
@@ -69,6 +70,8 @@ export interface SheetResult {
   sawGoogleDummy: boolean
   /** Cells holding a literal boolean (for checkbox restoration). */
   booleanCells: Array<[number, number]>
+  /** Cells with a value-metadata index (`vm`): Excel's in-cell pictures (read by ./images.ts). */
+  valueMetadataCells: Array<{ row: number; col: number; vm: number }>
 }
 
 /** Minimum grid, like a blank workbook (and a new Google sheet): 1000 × 26. */
@@ -161,6 +164,9 @@ const DV_DATE: Record<string, GsConditionType> = {
   greaterThanOrEqual: 'DATE_ON_OR_AFTER',
 }
 
+/** Cells per sheet that get their own copy of a dependent list (see the data-validation read). */
+export const DEPENDENT_LIST_CELL_LIMIT = 2000
+
 const PLAIN_NUMBER = /^[+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?$/
 const QUOTED = /^"((?:[^"]|"")*)"$/
 
@@ -187,6 +193,7 @@ export async function readSheet(ctx: SheetContext): Promise<SheetResult> {
 
   // ---- streaming read ---------------------------------------------------------
   const raw: RawCell[] = []
+  const valueMetadataCells: SheetResult['valueMetadataCells'] = []
   const rowInfo = new Map<number, XmlAttributes>()
   const top: XmlNode = { name: 'worksheet', qname: 'worksheet', attrs: {}, children: [], text: '' }
   const treeStack: XmlNode[] = []
@@ -228,6 +235,7 @@ export async function readSheet(ctx: SheetContext): Promise<SheetResult> {
         nextCol = ref.col + 1
         ctx.countCell()
         cell = { row: ref.row, col: ref.col, s: Number(attrs.s ?? 0) || 0, t: attrs.t ?? 'n', f: null, v: null, inline: null }
+        if (attrs.vm !== undefined && /^\d+$/.test(attrs.vm)) valueMetadataCells.push({ row: ref.row, col: ref.col, vm: Number(attrs.vm) })
       } else if (cell && name === 'f') {
         textTarget = 'f'
         fAttrs = attrs
@@ -570,22 +578,41 @@ export async function readSheet(ctx: SheetContext): Promise<SheetResult> {
     }
   }
   const validated = new Set<string>()
+  let dependentCells = 0
   for (const { node, formula1, formula2, sqref } of dvNodes) {
-    const ranges = parseSqref(sqref).map(clipped).filter((r): r is NonNullable<typeof r> => r !== null)
+    const declared = parseSqref(sqref)
+    const ranges = declared.map(clipped).filter((r): r is NonNullable<typeof r> => r !== null)
     if (ranges.length === 0) continue
     const result = dataValidationRule(node.attrs, formula1, formula2, family)
     if ('reason' in result) {
       for (const range of ranges) items.push({ kind: 'data_validation', outcome: 'not_transferred', range, message: MESSAGES.dataValidation(result.reason), detail: node.attrs.type })
       continue
     }
+    // A list source with relative references (`INDIRECT($A2)`, `OFFSET(…,$A2…)`) moves with
+    // each cell in Excel (relative to the first cell of sqref). Univer 1.4.0 does not move list
+    // formulas (ListValidator.offsetFormulaByRange = false), so each cell gets its own,
+    // the way the Sheets API stores a rule per cell. Google's export is not shifted: its
+    // range dropdowns are one fixed range for every cell (see G32).
+    const source = result.rule.condition?.type === 'ONE_OF_RANGE' ? result.rule.condition.values?.[0]?.userEnteredValue : undefined
+    const base = declared[0]
+    const dependent = family === 'excel_like' && source !== undefined && base !== undefined && shiftFormula(source, 1, 1) !== source
+    let overflow: NonNullable<PendingItem['range']> | null = null
     for (const range of ranges) {
       for (let r = range.startRow; r <= range.endRow; r++) {
         for (let k = range.startCol; k <= range.endCol; k++) {
-          ;(cellAt(r, k) as GsCellData).dataValidation = result.rule
+          let rule = result.rule
+          if (dependent && (r !== base.startRow || k !== base.startCol)) {
+            if (dependentCells < DEPENDENT_LIST_CELL_LIMIT) {
+              dependentCells++
+              rule = { ...result.rule, condition: { type: 'ONE_OF_RANGE', values: [{ userEnteredValue: shiftFormula(source, r - base.startRow, k - base.startCol) }] } }
+            } else overflow ??= range
+          }
+          ;(cellAt(r, k) as GsCellData).dataValidation = rule
           validated.add(`${r}:${k}`)
         }
       }
     }
+    if (overflow) items.push({ kind: 'data_validation', outcome: 'converted', range: overflow, message: MESSAGES.dvDependentLimit(DEPENDENT_LIST_CELL_LIMIT), detail: source })
   }
 
   // ---- Google checkboxes: TRUE/FALSE literals without a rule ------------------------
@@ -682,7 +709,7 @@ export async function readSheet(ctx: SheetContext): Promise<SheetResult> {
       } else if (descendants(anchor, 'slicer').length > 0) {
         slicers.push({ position, spec: {} })
       } else if (descendants(anchor, 'pic').length > 0) {
-        items.push({ kind: 'drawing_image', outcome: 'not_transferred', range: at, message: MESSAGES.drawingImage(), detail: descendants(anchor, 'cNvPr')[0]?.attrs.descr || undefined })
+        // Pictures are read by ./images.ts (imported, or reported there when they cannot be).
       } else if (descendants(anchor, 'sp').length > 0 || descendants(anchor, 'grpSp').length > 0 || descendants(anchor, 'cxnSp').length > 0) {
         items.push({ kind: 'drawing_shape', outcome: 'not_transferred', range: at, message: MESSAGES.drawingShape() })
       }
@@ -753,7 +780,7 @@ export async function readSheet(ctx: SheetContext): Promise<SheetResult> {
   }
   if (tab) (sheet.properties as NonNullable<GsSheet['properties']>).tabColorStyle = { rgbColor: hexToGsColor(tab) }
   if (basicFilter) sheet.basicFilter = basicFilter
-  return { sheet, items, sawGoogleDummy, booleanCells }
+  return { sheet, items, sawGoogleDummy, booleanCells, valueMetadataCells }
 }
 
 /** `Sheet 2!A1` / `'Sheet 2'!A1` → `#gid=<id>&range=A1`; other targets (defined names) as `#name`. */
@@ -822,9 +849,31 @@ function dataValidationRule(
 ): { rule: GsDataValidationRule } | { reason: string } {
   const type = a.type ?? 'none'
   const rule: GsDataValidationRule = {}
-  const showError = a.showErrorMessage === '1' || a.showErrorMessage === 'true'
-  rule.strict = showError && (a.errorStyle ?? 'stop') === 'stop'
-  if (a.prompt && (a.showInputMessage === '1' || a.showInputMessage === 'true')) rule.inputMessage = a.prompt
+  const extra: GsValidationExtras = {}
+  const on = (v: string | undefined) => v === '1' || v === 'true'
+  const showError = on(a.showErrorMessage)
+  const style = a.errorStyle ?? 'stop'
+  rule.strict = showError && style === 'stop'
+  if (family === 'excel_like') {
+    // Google's export writes showErrorMessage="1" for "reject input" and leaves it out for
+    // "show a warning" (real files): only Excel-like writers mean "no alert at all" by its absence.
+    if (!showError) extra.showErrorMessage = false
+    else extra.errorStyle = style === 'warning' ? 'WARNING' : style === 'information' ? 'INFORMATION' : 'STOP'
+    // §18.3.1.32: allowBlank off = "Ignore blank" unchecked. Google always writes allowBlank="1".
+    if (!on(a.allowBlank)) extra.rejectBlank = true
+  }
+  if (showError) {
+    if (a.errorTitle?.trim()) extra.errorTitle = a.errorTitle.trim()
+    if (a.error?.trim()) extra.errorMessage = a.error.trim()
+  }
+  if (a.prompt && on(a.showInputMessage)) {
+    rule.inputMessage = a.prompt
+    if (a.promptTitle?.trim()) extra.inputTitle = a.promptTitle.trim()
+  }
+  const done = () => {
+    if (Object.keys(extra).length > 0) rule.naf = extra
+    return { rule }
+  }
   const operator = a.operator ?? 'between'
   const f1 = formula1?.trim()
   const f2 = formula2?.trim()
@@ -833,16 +882,20 @@ function dataValidationRule(
       return { reason: 'القاعدة تقبل أي قيمة' }
     case 'list': {
       if (!f1) return { reason: 'القائمة فارغة' }
-      // showDropDown="1" HIDES the in-cell arrow (§18.3.1.32).
-      rule.showCustomUi = !(a.showDropDown === '1' || a.showDropDown === 'true')
+      // showDropDown="1" HIDES the in-cell arrow (§18.3.1.32): the inverted meaning of the name.
+      const hidden = on(a.showDropDown)
+      rule.showCustomUi = !hidden
+      if (hidden) extra.displayStyle = 'PLAIN_TEXT'
       const quoted = QUOTED.exec(f1)
       if (quoted) {
+        // The file always separates inline items with a comma, whatever separator the
+        // author's Excel showed (a ';' locale writes ',' too); "" is a literal quote.
         const values = (quoted[1] as string).replace(/""/g, '"').split(',').map((v) => v.trim()).filter((v) => v !== '')
         rule.condition = { type: 'ONE_OF_LIST', values: values.map((v) => ({ userEnteredValue: v })) }
       } else {
         rule.condition = { type: 'ONE_OF_RANGE', values: [{ userEnteredValue: `=${stripFuturePrefixes(f1)}` }] }
       }
-      return { rule }
+      return done()
     }
     case 'whole':
     case 'decimal':
@@ -859,22 +912,36 @@ function dataValidationRule(
         values.push(v2)
       }
       rule.condition = { type: condType, values }
-      // OPEN: G27 — "whole number" becomes "number": Univer's decimal rule.
-      return { rule }
+      if (type === 'whole') extra.numberKind = 'WHOLE'
+      return done()
     }
     case 'custom': {
       if (!f1) return { reason: 'معادلة الشرط مفقودة' }
       if (family === 'google_export' && GOOGLE_VALID_DATE.test(f1)) {
         rule.condition = { type: 'DATE_IS_VALID' }
-        return { rule }
+        return done()
       }
       rule.condition = { type: 'CUSTOM_FORMULA', values: [{ userEnteredValue: `=${stripFuturePrefixes(f1)}` }] }
-      return { rule }
+      return done()
     }
     case 'time':
+      // Univer 1.4.0 declares DataValidationType.TIME but registers no validator for it.
       return { reason: 'شروط الوقت غير مدعومة في التحقق من البيانات' }
-    case 'textLength':
-      return { reason: 'شروط طول النص غير مدعومة في التحقق من البيانات' }
+    case 'textLength': {
+      const condType = DV_NUMBER[operator]
+      if (!condType) return { reason: `العامل ${operator} غير مدعوم لطول النص` }
+      const v1 = operand(f1)
+      if (!v1) return { reason: 'قيمة الشرط مفقودة' }
+      const values = [v1]
+      if (operator === 'between' || operator === 'notBetween') {
+        const v2 = operand(f2)
+        if (!v2) return { reason: 'قيمة الشرط الثانية مفقودة' }
+        values.push(v2)
+      }
+      rule.condition = { type: condType, values }
+      extra.numberKind = 'TEXT_LENGTH'
+      return done()
+    }
     default:
       return { reason: `نوع الشرط ${type} غير مدعوم` }
   }

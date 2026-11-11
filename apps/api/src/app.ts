@@ -6,6 +6,7 @@ import { handleBackchannelLogout, handleCallback, handleLogout } from 'naf-auth'
 import type { AppEnv, AuthMiddleware } from './auth'
 import { authConfig, nafAuthMiddleware } from './auth'
 import { ApiFailure, errorBody } from './errors'
+import { imageRoutes } from './images/routes'
 import { adminTemplateRoutes, apiTokenRoutes, backupRoutes, internalApiRoutes, templateRoutes } from './phase7'
 import { meRoutes } from './routes/me'
 import type { AccessReporter } from './routes/platform-members'
@@ -58,6 +59,8 @@ export function createApp(options: AppOptions = {}): Hono<AppEnv> {
 
   app.route('/api/me', meRoutes())
   app.route('/api/workbooks', workbookRoutes({ snapshotOrphanAgeMs: options.snapshotOrphanAgeMs ?? DEFAULT_SNAPSHOT_ORPHAN_AGE_MS }))
+  // Pictures over and in cells (src/images): R2 only, never Basecamp.
+  app.route('/api/workbooks', imageRoutes())
   // Phase 7: templates (§7.1), service tokens (§13), backups (§14).
   app.route('/api/templates', templateRoutes())
   app.route('/api/admin/templates', adminTemplateRoutes())

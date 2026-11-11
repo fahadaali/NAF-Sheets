@@ -26,6 +26,7 @@
     "@univerjs/preset-sheets-filter": "1.4.0",
     "@univerjs/preset-sheets-hyper-link": "1.4.0",
     "@univerjs/preset-sheets-note": "1.4.0",
+    "@univerjs/preset-sheets-drawing": "1.4.0",
     "@univerjs/preset-sheets-sort": "1.4.0",
     "@univerjs/presets": "1.4.0",
     "@univerjs/sheets": "1.4.0",

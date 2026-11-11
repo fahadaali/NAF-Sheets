@@ -30,6 +30,9 @@ export const COUNT_KEYS = [
   'definedNames',
 ] as const satisfies ReadonlyArray<keyof ImportCounts>
 
+/** Counts shown only when the report has them (pictures: .xlsx imports since 2026-11-11). */
+export const OPTIONAL_COUNT_KEYS = ['floatingImages', 'cellImages'] as const satisfies ReadonlyArray<keyof ImportCounts>
+
 function isItem(value: unknown): value is ImportReportItem {
   if (!isObject(value)) return false
   if (typeof value.kind !== 'string' || typeof value.message !== 'string' || !OUTCOMES.has(value.outcome as string)) return false

@@ -109,6 +109,12 @@ export type ApiErrorCode =
   | 'cannot_change_self'
   | 'last_active_admin'
   | 'member_changed'
+  // Images over and in cells (apps/api/src/images/, contract ./api-images.ts)
+  | 'image_length_required'
+  | 'image_empty'
+  | 'image_too_large'
+  | 'image_type_not_allowed'
+  | 'image_not_found'
 
 /** Every non-2xx JSON response. `message` is Arabic: what happened and what to do (spec §12.2). */
 export interface ApiError {

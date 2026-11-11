@@ -4,7 +4,7 @@
 import { HorizontalAlign } from '@univerjs/core'
 import type { RectPopupDirection } from '@univerjs/ui'
 import { describe, expect, it } from 'vitest'
-import { firstStrongDirection, mirrorPopupDirection, mirrorRect, swapHorizontalAlign, textBoxLeft } from '../src/index'
+import { firstStrongDirection, MIRRORED_POPUP_ROOM, mirroredVerticalDirection, mirrorPopupDirection, mirrorRect, swapHorizontalAlign, textBoxLeft } from '../src/index'
 
 describe('firstStrongDirection', () => {
   it.each([
@@ -152,6 +152,23 @@ describe('mirrorPopupDirection', () => {
     // Plain vertical/top/bottom mean "aligned left"; horizontal means "to the right".
     const canonical = (d: string) => ({ vertical: 'vertical-left', top: 'top-left', bottom: 'bottom-left', horizontal: 'right' })[d] ?? d.replace(/^horizontal-/, 'right-')
     for (const d of ALL) expect(canonical(mirrorPopupDirection(mirrorPopupDirection(d))), d).toBe(canonical(d))
+  })
+})
+
+describe('mirroredVerticalDirection', () => {
+  it('opens below, right-aligned, when the popup fits there (stock "vertical" opens below unless it does not fit)', () => {
+    expect(mirroredVerticalDirection(MIRRORED_POPUP_ROOM)).toBe('bottom-right')
+    expect(mirroredVerticalDirection(600)).toBe('bottom-right')
+  })
+
+  it("lets Univer take the roomier side when it does not fit below, or when the anchor is unknown", () => {
+    expect(mirroredVerticalDirection(MIRRORED_POPUP_ROOM - 1)).toBe('vertical-right')
+    expect(mirroredVerticalDirection(0)).toBe('vertical-right')
+    expect(mirroredVerticalDirection(null)).toBe('vertical-right')
+  })
+
+  it("leaves room for Univer's tallest cell popup, the data-validation list (about 300 px with the 16 px gap)", () => {
+    expect(MIRRORED_POPUP_ROOM).toBeGreaterThanOrEqual(300 + 16)
   })
 })
 

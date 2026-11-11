@@ -121,11 +121,14 @@ describe('Excel origin', () => {
       expect.arrayContaining([
         expect.objectContaining({ type: 'list', formula1: JSON.stringify(['قيد التنفيذ', 'منجز', 'متأخر']), prompt: 'اختر الحالة', errorStyle: 1 }),
         expect.objectContaining({ type: 'list', formula1: "='القوائم'!$A$1:$A$3" }),
-        expect.objectContaining({ type: 'decimal', operator: 'greaterThanOrEqual', formula1: '0' }),
+        // G32: Univer 1.4.0 registers a whole-number validator (WholeValidator); G27's decimal fallback is gone.
+        expect.objectContaining({ type: 'whole', operator: 'greaterThanOrEqual', formula1: '0' }),
+        expect.objectContaining({ type: 'textLength', operator: 'lessThan', formula1: '100' }),
         expect.objectContaining({ type: 'date', operator: 'between', formula1: String(serial('2026-01-01')), formula2: String(serial('2026-12-31')), errorStyle: 2 }),
       ]),
     )
-    expect(r.report.items).toContainEqual(expect.objectContaining({ kind: 'data_validation', detail: 'textLength', location: expect.objectContaining({ ref: "'المهام'!A2:A6" }) }))
+    // Text length has a Univer validator (TextLengthValidator) since G32: no longer reported.
+    expect(r.report.items.filter((i) => i.kind === 'data_validation' && i.outcome === 'not_transferred')).toEqual([])
   })
 
   it('orders conditional formats by priority, turns formula operands into custom formulas, colour scales into gradients', () => {

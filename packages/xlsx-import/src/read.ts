@@ -12,6 +12,7 @@ import { parseSheetRef, toGridRange } from './ref'
 import { readSharedStrings, type SharedString } from './shared-strings'
 import { readSheet, type OriginFamily, type PendingItem } from './sheet'
 import { readStyleSheet, type DefaultFont } from './styles'
+import { cellPicturesOf, MAX_PICTURE_BYTES_TOTAL, readCellPictureIndex, readSheetPictures, type XlsxPicture } from './images'
 import { child, children, deepText } from './xml'
 import { ZipArchive } from './zip'
 
@@ -35,6 +36,14 @@ export interface XlsxReadResult {
   title: string | null
   /** Unpacked bytes read, for the audit. */
   unpackedBytes: number
+  /** Pictures over the grid and in cells (./images.ts), in sheet order; their bytes through `readPicture`. */
+  pictures: XlsxPicture[]
+  /**
+   * The bytes of a picture part, or null when the file does not hold it or
+   * the pictures read so far reached `MAX_PICTURE_BYTES_TOTAL` (the part is
+   * then reported, not imported).
+   */
+  readPicture: (part: string) => Promise<Uint8Array | null>
 }
 
 const MAX_NAME = 200
@@ -103,6 +112,8 @@ export async function readXlsx(bytes: Uint8Array, options: ReadOptions = {}): Pr
 
   const sheets: GsSheet[] = []
   const items: LocatedItem[] = []
+  const pictures: XlsxPicture[] = []
+  const vmCells: Array<{ sheet: { gid: number; name: string }; cells: Array<{ row: number; col: number; vm: number }> }> = []
   let sawGoogleDummy = false
   for (const e of entries) {
     const rel = wbRels.find((r) => r.id === (e.node.attrs['r:id'] ?? e.node.attrs.id))
@@ -132,6 +143,8 @@ export async function readXlsx(bytes: Uint8Array, options: ReadOptions = {}): Pr
     props.hidden = hidden
     sheets.push(result.sheet)
     for (const item of result.items) items.push({ sheet: { gid: e.gid, name: e.name }, item })
+    pictures.push(...(await readSheetPictures(pkg, rel.target, { gid: e.gid, name: e.name })))
+    if (result.valueMetadataCells.length > 0) vmCells.push({ sheet: { gid: e.gid, name: e.name }, cells: result.valueMetadataCells })
   }
   if (!sheets.some((s) => s.properties?.sheetType === 'GRID')) throw new XlsxImportError('no_sheets')
 
@@ -189,6 +202,24 @@ export async function readXlsx(bytes: Uint8Array, options: ReadOptions = {}): Pr
     ;(spreadsheet.properties as NonNullable<GsSpreadsheet['properties']>).iterativeCalculationSettings = settings
   }
 
+  if (vmCells.length > 0) {
+    const index = await readCellPictureIndex(pkg)
+    for (const v of vmCells) pictures.push(...cellPicturesOf(v.sheet, v.cells, index))
+  }
+  let pictureBytes = 0
+  const readPicture = async (part: string): Promise<Uint8Array | null> => {
+    const entry = zip.entries.get(part.toLowerCase())
+    if (!entry || pictureBytes + entry.uncompressedSize > MAX_PICTURE_BYTES_TOTAL) return null
+    try {
+      const bytes = await zip.read(part)
+      if (bytes) pictureBytes += bytes.byteLength
+      return bytes
+    } catch {
+      // Over a limit or unreadable: this picture is reported, the import goes on.
+      return null
+    }
+  }
+
   const origin = detectOrigin({ ...signals, googleDummyFunction: sawGoogleDummy })
   const title = core ? deepText(child(core, 'title')).trim() || null : null
   return {
@@ -199,5 +230,7 @@ export async function readXlsx(bytes: Uint8Array, options: ReadOptions = {}): Pr
     items,
     title,
     unpackedBytes: zip.unpackedBytes,
+    pictures,
+    readPicture,
   }
 }

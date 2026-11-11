@@ -111,6 +111,9 @@ Mapped as is; matters only for Latin text.
   `TEXT_CONTAINS`, `TEXT_NOT_CONTAINS`, `TEXT_EQ`, `TEXT_IS_EMAIL`, `TEXT_IS_URL`,
   relative dates, and a checkbox with a single value.
 - `allowBlank: true` on every rule: Google has no such option and accepts blanks.
+- Dropdowns (2026-11-11): multiple selection, chip colours, display style,
+  Excel's error styles, titles and dependent lists are mapped as apps/api
+  `OPEN_QUESTIONS.md` "Google import" G32 records, with its open points.
 
 **Needed:** should the text conditions become `custom` formulas
 (e.g. `=ISNUMBER(SEARCH(...))`)? That changes their meaning slightly.

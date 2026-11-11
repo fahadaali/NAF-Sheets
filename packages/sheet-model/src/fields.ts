@@ -5,6 +5,7 @@ import type { Assignee, IsoDate, MappedField, SheetPlan } from '@naf-sheets/shar
 import { columnIndex } from './a1'
 import { cellText, getCell, hasFormula, isTruthyBoolean, nafData, ownStyle, sameJson, setCell, withNafData, type SheetSnapshot, type WorkbookSnapshot } from './cells'
 import { ISO_DATE_PATTERN, isoToSerial, readDateValue, type DateRead } from './dates'
+import { hasCellImages, withImagesKept } from './cell-images'
 import { attachmentElementsOf, escapeHtml, htmlToComparableText, withoutAttachments } from './engine'
 import { fail, ok, type Result } from './errors'
 import { validationRulesAt } from './resources'
@@ -271,6 +272,14 @@ export function writeValue(
     next.t = value.t
   }
   if (adjust !== undefined) next = adjust(next)
+  if (hasCellImages(current)) {
+    // Pictures in the cell are the platform's own: Basecamp's value replaces the text only (cell-images.ts).
+    const text = value === null ? '' : cellText({ v: value.v, t: value.t })
+    const { p: _currentDoc, ...currentRest } = current as ICellData
+    if (cellText(current) === text && sameJson(currentRest, next)) return 'unchanged'
+    setCell(sheet, row, column, withImagesKept(current, next, text))
+    return 'written'
+  }
   if (current !== undefined && sameJson(current, next)) return 'unchanged'
   setCell(sheet, row, column, Object.keys(next).length > 0 ? next : undefined)
   return 'written'
@@ -298,7 +307,8 @@ export function writeDate(
   if (date === null) return writeValue(sheet, row, column, null)
   const current = getCell(sheet, row, column)
   const serial = isoToSerial(date, workbook.dateSystem)
-  if (serial === null || (typeof current?.v === 'string' && current.v.trim() !== '')) {
+  // A cell holding a picture shows the date as text beside it (a serial would read as a number).
+  if (serial === null || hasCellImages(current) || (typeof current?.v === 'string' && current.v.trim() !== '')) {
     return writeValue(sheet, row, column, { v: date, t: CELL_TYPE.STRING })
   }
   return writeValue(sheet, row, column, { v: serial, t: CELL_TYPE.NUMBER }, (cell) => {

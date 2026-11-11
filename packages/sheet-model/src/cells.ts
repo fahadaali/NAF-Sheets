@@ -4,6 +4,7 @@
 // workbook once (`cloneWorkbook`) and work on the copy with the helpers below,
 // which mutate the copy in place.
 
+import { hasCellImages, textWithoutImages } from './cell-images'
 import { CELL_TYPE, type ICellData, type IStyleData, type IWorkbookData, type IWorksheetData } from './univer'
 
 /** What the platform stores and the editor saves: `sheets` is always there, the rest may be missing. */
@@ -62,7 +63,8 @@ export function rowIndexes(sheet: SheetSnapshot): number[] {
 export function cellText(cell: ICellData | undefined): string {
   if (cell === undefined || cell === null) return ''
   const stream = cell.p?.body?.dataStream
-  if (stream) return stream.replace(/\r\n$/, '').replace(/\r/g, '\n')
+  // Pictures in the cell are never text (cell-images.ts).
+  if (stream) return textWithoutImages(stream.replace(/\r\n$/, '').replace(/\r/g, '\n'), hasCellImages(cell))
   const v = cell.v
   if (v === undefined || v === null) return ''
   if (cell.t === CELL_TYPE.BOOLEAN || typeof v === 'boolean') return isTruthyBoolean(v) ? 'TRUE' : 'FALSE'

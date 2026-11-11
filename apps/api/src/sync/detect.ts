@@ -27,6 +27,7 @@ import type { SheetError, SheetIssue } from '@naf-sheets/sheet-model'
 import { findSystemColumns } from '@naf-sheets/sheet-model'
 import { diffTask } from '@naf-sheets/sync-engine'
 import type { BcOutboundMessage, Env } from '../env'
+import { notesImagesOf, tasksWithUnsentNotesImages } from '../images/notes-images'
 import { localFingerprint } from './fingerprint'
 import { ROW_MESSAGES } from './messages'
 import { diffContextFor, diffLocal, loadWorkbookState, readSheet, syncedSheets } from './state'
@@ -312,6 +313,20 @@ export async function detectOutboundChanges(env: Env, input: DetectionInput, now
     // §9.2.7: never deleted in Basecamp without the person's confirmation.
     if (row.sync_state === 'error' && row.last_error_code === 'row_missing') continue
     hold(uid, 'row_missing', ROW_MESSAGES.row_missing)
+  }
+
+  // --- Pictures in a to-do's notes cell that were never sent (src/images/notes-images.ts):
+  // the row's text did not change, so it is queued for its picture alone; the
+  // consumer sends it as a file of the description after the task's step.
+  const notesImages = notesImagesOf(state)
+  for (const uid of [...notesImages.keys()]) {
+    const row = state.taskRows.get(uid)
+    if (!present.has(uid) || !row || row.level !== 0 || row.bc_recording_id === null || row.trashed_at !== null || row.remote_status !== 'active') notesImages.delete(uid)
+  }
+  for (const uid of await tasksWithUnsentNotesImages(db, wb.id, notesImages)) {
+    if (queue.has(uid)) continue
+    const author = actorFor(uid)
+    if (author !== null) queue.set(uid, author)
   }
 
   await runBatches(db, statements)

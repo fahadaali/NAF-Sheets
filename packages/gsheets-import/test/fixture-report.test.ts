@@ -54,6 +54,8 @@ describe('import report for the synthetic NAF workbook', () => {
       ['row_group', 'not_transferred', "'تحليل'!A2:F5"],
       ['comment', 'not_transferred', "'تحليل'!B6"],
       ['object_sheet', 'not_transferred', "'مخطط'"],
+      // The Sheets API has no chip colours or display style (G32): said once for the workbook.
+      ['data_validation', 'not_transferred', null],
     ])
   })
 
@@ -61,6 +63,7 @@ describe('import report for the synthetic NAF workbook', () => {
     for (const item of report.items) {
       expect(item.message).toMatch(/[؀-ۿ]/)
       if (item.kind === 'object_sheet') continue // its sheet is not in the workbook
+      if (item.kind === 'data_validation' && item.location === null) continue // the workbook-level dropdown note
       expect(item.location).not.toBeNull()
       expect(workbook.sheets[item.location?.sheetId ?? '']?.name).toBe(item.location?.sheetName)
       expect(item.location?.range).not.toBeNull()

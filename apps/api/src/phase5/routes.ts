@@ -124,7 +124,7 @@ function failureOf(error: unknown): AttachmentFailureCode | null {
  * caller's token. Never throws for a Basecamp or link problem: the file is then
  * `failed` with the reason (it stays in the platform, §10).
  */
-async function sendToBasecamp(env: Env, deps: SyncDeps, ctx: LinkContext, wb: WorkbookSyncRow, row: AttachmentRow, caller: Caller): Promise<void> {
+export async function sendToBasecamp(env: Env, deps: SyncDeps, ctx: LinkContext, wb: WorkbookSyncRow, row: AttachmentRow, caller: Caller): Promise<void> {
   const db = env.DB
   try {
     await withUserToken(ctx, caller.id, async (token) => {

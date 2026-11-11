@@ -79,6 +79,8 @@ export function guardDashboardCommand(id: string, params: Params, ctx: Dashboard
     default:
       // Worksheet and range protection on it (the sheet bar's «حماية ورقة العمل» and friends).
       if (onDashboard && id.includes('protection')) return refuse(ts.readOnly)
+      // Pictures: refused before anything is uploaded (their mutations are refused too, as plugin data).
+      if (onDashboard && (id === 'sheet.command.insert-float-image' || id === 'sheet.command.insert-cell-image')) return refuse(ts.readOnly)
       return ALLOW
   }
 }

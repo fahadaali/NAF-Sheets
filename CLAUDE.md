@@ -117,6 +117,7 @@ Planned layout (§4.3): `apps/web`, `apps/api`, `packages/{shared,gsheets-import
   3. CI (`.github/workflows/rtl-grid.yml`) runs the interaction suite in Chromium, Firefox and WebKit; a Univer bump merges only when it is green.
   4. At runtime `checkUniverContract()` verifies every hooked internal before applying anything. A missing or changed hook leaves the stock grid untouched and reports why (`RtlGridStatus`). A heartbeat withdraws the mirror if plain text stops flowing through the flip-back path. Both are covered by tests.
 - Never mutate a command's `params` object to change behaviour: shortcut parameters are shared between key presses. Wrap the handler and pass a copy.
+- **Formula colours** (owner, 2026-11-11; `packages/univer-rtl/src/formula-colours.ts`, apps/web `OPEN_QUESTIONS.md` F1–F4): Excel's reference sequence and outlines plus theme colours (`--formula-*`) for the other tokens. Hooks `ThemeService` `loop-color`, `ReplaceTextRunsCommand.handler` and `RefSelectionsRenderService.prototype.resetSelectionsByModelData`, guarded by `checkFormulaColourContract()` and a live lexer check: re-check them with any Univer bump.
 - Univer's automatic row height depends on timing (whether the cell editor is initialised before data is written). Tests and the app must wait for lifecycle `Steady` before mutating, or row heights differ between runs.
 - `FRange.getCellRect()` is raw skeleton geometry: it ignores scroll and zoom. Do not position anything with it after scrolling or zooming.
 - Sheet services and the render unit are created asynchronously after `createWorkbook`; resolve them after it.
@@ -159,10 +160,10 @@ cd apps/web && npx vitest run && npm run test:e2e
 
 # packages/univer-rtl — the RTL grid layer
 cd packages/univer-rtl
-npm test                   # 238 unit tests (pure helpers, UAX #9 bidi, text geometry, known-upstream rules, Univer contract)
+npm test                   # 266 unit tests (pure helpers, UAX #9 bidi, text geometry, known-upstream rules, formula colours, Univer contract)
 npm run check:pins         # every @univerjs/* == VERIFIED_UNIVER_VERSION
 npm run harness:build && (npm run harness:preview &)   # test page on :4175
-npm run test:rtl           # 50 interaction checks (BROWSER=chromium|firefox|webkit; USER_AGENT for the Mac key map)
+npm run test:rtl           # 65 interaction checks (BROWSER=chromium|firefox|webkit; USER_AGENT for the Mac key map)
 npm run perf:rtl           # frame cost with and without the mirror
 
 # packages/gsheets-import — regenerate the Univer function list after a Univer bump

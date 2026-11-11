@@ -93,6 +93,10 @@ export const LOCALE_AR_SA = 'arSA' as LocaleType
 
 export const DV_TYPE = {
   LIST: 'list' as DataValidationType,
+  /** Several items per cell; Univer stores a pick as a JSON array (sheets serializeListOptions). */
+  LIST_MULTIPLE: 'listMultiple' as DataValidationType,
+  WHOLE: 'whole' as DataValidationType,
+  TEXT_LENGTH: 'textLength' as DataValidationType,
   CHECKBOX: 'checkbox' as DataValidationType,
   DECIMAL: 'decimal' as DataValidationType,
   DATE: 'date' as DataValidationType,
@@ -111,6 +115,8 @@ export const DV_OPERATOR = {
 } as const
 
 export const DV_ERROR_STYLE = {
+  /** Stored; sheets-data-validation-ui 1.4.0 treats it as WARNING (only STOP rejects). */
+  INFO: 0 as DataValidationErrorStyle,
   STOP: 1 as DataValidationErrorStyle,
   WARNING: 2 as DataValidationErrorStyle,
 } as const
@@ -118,6 +124,8 @@ export const DV_ERROR_STYLE = {
 export const DV_RENDER_MODE = {
   TEXT: 0 as DataValidationRenderMode,
   ARROW: 1 as DataValidationRenderMode,
+  /** The chip: a rounded fill in the item's colour (sheets-data-validation-ui DropdownWidget). */
+  CUSTOM: 2 as DataValidationRenderMode,
 } as const
 
 /** `name` of each entry in `IWorkbookData.resources`. */

@@ -47,7 +47,9 @@ export {
   type SystemColumns,
 } from './system-columns'
 export { normalizeName, splitAssigneeText, type AssigneeDirectory } from './fields'
-export { readTasks, type ReadTasksOptions, type ReadTasksResult, type RowState } from './read'
+export { readTasks, imageOnlyFields, type ImageOnlyField, type ReadTasksOptions, type ReadTasksResult, type RowState } from './read'
+export { cellImages, hasCellImages, IMAGE_PLACEHOLDER, type CellImage } from './cell-images'
+export { cellText } from './cells'
 export { UNSYNCED_NOTE, UNSYNCED_SUBTASK_FIELDS, type DecorationOptions } from './decorate'
 export {
   applyInbound,

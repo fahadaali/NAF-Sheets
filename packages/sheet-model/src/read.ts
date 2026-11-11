@@ -3,6 +3,7 @@
 import { isDashboardSheet } from '@naf-sheets/shared'
 import type { AssignMode, Assignee, AttachmentRef, IsoDateTime, LocalTask, SheetPlan, TaskUid } from '@naf-sheets/shared'
 import { columnLetters } from './a1'
+import { hasCellImages } from './cell-images'
 import { cellText, getCell, nafData, type WorkbookSnapshot } from './cells'
 import { isValidHierarchy, renumber } from './engine'
 import { fail, issue, ok, type Result, type SheetIssue } from './errors'
@@ -26,6 +27,22 @@ export interface RowState {
   /** Stored assignees: a name in the cell that matches one of them keeps its kind, source and e-mail setting. */
   assignees?: Assignee[]
   deletedRemotely?: boolean
+}
+
+/**
+ * Fields of a task whose cell holds only pictures (no text). A picture cannot
+ * go to the title, assignees, dates, status or notes of a Basecamp record, so
+ * such a field must follow Basecamp's last value instead of reading as empty:
+ * never cleared, never an error (owner 2026-11-11; apps/api OPEN_QUESTIONS.md
+ * "Images" I5). The notes cell's pictures go out as files on their own path.
+ */
+export type ImageOnlyField = 'title' | 'assignees' | 'due_on' | 'starts_on' | 'completed' | 'notes'
+
+const imageOnly = new WeakMap<LocalTask, ImageOnlyField[]>()
+
+/** The image-only fields of a task `readTasks` returned (empty for any other object). */
+export function imageOnlyFields(task: LocalTask): readonly ImageOnlyField[] {
+  return imageOnly.get(task) ?? []
 }
 
 export interface ReadTasksOptions {
@@ -98,11 +115,23 @@ export function readTasks(
     const state = options.rowState?.(row.uid)
     if (misplaced.has(row.uid)) issues.push(issue('invalid_hierarchy', at))
 
+    const onlyImages: ImageOnlyField[] = []
+    const pictureOnly = (column: number | undefined): boolean => {
+      if (column === undefined) return false
+      const cell = getCell(sheet, row.row, column)
+      return hasCellImages(cell) && cellText(cell).trim() === ''
+    }
+    for (const f of ['title', 'assignees', 'due_on', 'starts_on', 'completed', 'notes'] as const) if (pictureOnly(field[f])) onlyImages.push(f)
+
     const titleText = cellText(getCell(sheet, row.row, title)).trim()
-    if (titleText === '') issues.push(issue('empty_title', { ...at, column: title }))
+    // A title that is only a picture keeps Basecamp's title (a row not in Basecamp yet still needs one).
+    const keepsRemoteTitle = onlyImages.includes('title') && (state?.bcId ?? null) !== null
+    if (titleText === '' && !keepsRemoteTitle) issues.push(issue('empty_title', { ...at, column: title }))
 
     const assignees: Assignee[] = []
-    if (field.assignees !== undefined) {
+    // Pictures only: the stored assignees stay (a picture is not a person).
+    if (onlyImages.includes('assignees')) assignees.push(...(state?.assignees ?? []))
+    else if (field.assignees !== undefined) {
       const known = state?.assignees ?? []
       for (const name of splitAssigneeText(cellText(getCell(sheet, row.row, field.assignees)))) {
         const resolved = resolveAssignee(name, plan, options.directory, known)
@@ -156,6 +185,7 @@ export function readTasks(
       bcId: state?.bcId ?? null,
       deletedRemotely: state?.deletedRemotely ?? nafData(uidCell).deletedRemotely !== undefined,
     }
+    if (onlyImages.length > 0) imageOnly.set(task, onlyImages)
     return task
   })
   return ok({ tasks, issues })

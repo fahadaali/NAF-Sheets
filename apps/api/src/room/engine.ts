@@ -7,7 +7,8 @@
 // Why the model plugins and not only core + sheets + formula: a plugin's
 // resource (notes, data validation, conditional formats, filter, links) is
 // saved only by a registered plugin. Without them, the room's first save
-// would silently drop every note and validation rule of the workbook.
+// would silently drop every note and validation rule of the workbook (and,
+// since 2026-11-11, every floating image).
 //
 // The headless instance is a cache. The room's durable state is the last
 // committed snapshot plus its own op log; this instance can always be rebuilt
@@ -26,10 +27,12 @@ import {
 import type { IWorkbookData, Workbook } from '@univerjs/core'
 import { UniverDataValidationPlugin } from '@univerjs/data-validation'
 import { UniverDocsPlugin } from '@univerjs/docs'
+import { UniverDrawingPlugin } from '@univerjs/drawing'
 import { GlobalComputingStatusService, UniverFormulaEnginePlugin } from '@univerjs/engine-formula'
 import { UniverSheetsPlugin } from '@univerjs/sheets'
 import { UniverSheetsConditionalFormattingPlugin } from '@univerjs/sheets-conditional-formatting'
 import { UniverSheetsDataValidationPlugin } from '@univerjs/sheets-data-validation'
+import { UniverSheetsDrawingPlugin } from '@univerjs/sheets-drawing'
 import { UniverSheetsFilterPlugin } from '@univerjs/sheets-filter'
 import { UniverSheetsFormulaPlugin } from '@univerjs/sheets-formula'
 import { UniverSheetsHyperLinkPlugin } from '@univerjs/sheets-hyper-link'
@@ -103,6 +106,13 @@ export function createModelUniver(plugins: PluginSet = 'model'): Univer {
     univer.registerPlugin(UniverSheetsSortPlugin)
     univer.registerPlugin(UniverSheetsHyperLinkPlugin)
     univer.registerPlugin(UniverSheetsNotePlugin)
+    // Floating images (resource SHEET_DRAWING_PLUGIN): without the model
+    // plugins, the room's first save would drop every picture of the workbook,
+    // and their mutation would not be registered (apps/api OPEN_QUESTIONS.md
+    // "Images" I3). Model only: the render-side transformer operation is
+    // never sent by the editors (its params are not an object).
+    univer.registerPlugin(UniverDrawingPlugin)
+    univer.registerPlugin(UniverSheetsDrawingPlugin)
   }
   return univer
 }

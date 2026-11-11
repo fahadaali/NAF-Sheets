@@ -1,8 +1,8 @@
 {
   "browser": "chromium",
-  "passed": 50,
+  "passed": 65,
   "knownUpstream": 0,
-  "total": 50,
+  "total": 65,
   "pageErrors": [],
   "checks": [
     {
@@ -491,6 +491,161 @@
       }
     },
     {
+      "name": "floating image sits on its anchor cell: its start (visual right) edge and top at E4’s",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "box": {
+          "left": 574,
+          "right": 733,
+          "top": 252,
+          "bottom": 311,
+          "meanX": 652.4260216642049,
+          "count": 8124
+        },
+        "e4": {
+          "left": 646,
+          "right": 734,
+          "top": 252,
+          "bottom": 276,
+          "width": 88,
+          "height": 24
+        },
+        "placement": {
+          "kind": "0",
+          "from": {
+            "column": 4,
+            "columnOffset": 0,
+            "row": 3,
+            "rowOffset": 0
+          },
+          "width": 160,
+          "height": 60
+        }
+      }
+    },
+    {
+      "name": "a click on the image selects it, as in the unmirrored grid at the mirrored point",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "mirrored": 1,
+        "plain": 1
+      }
+    },
+    {
+      "name": "selection handles are drawn around the image where it is on screen",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "image": {
+          "left": 574,
+          "right": 733,
+          "top": 252,
+          "bottom": 311,
+          "meanX": 652.4191030723489,
+          "count": 8072
+        },
+        "changed": {
+          "left": 546,
+          "right": 741,
+          "top": 244,
+          "bottom": 362
+        }
+      }
+    },
+    {
+      "name": "the image menu opens beside the image, on its end side (visual left), not over the grid elsewhere",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "image": {
+          "left": 574,
+          "right": 733,
+          "top": 252,
+          "bottom": 311,
+          "meanX": 652.4191030723489,
+          "count": 8072
+        },
+        "popups": [
+          {
+            "left": 546,
+            "right": 572,
+            "top": 252,
+            "bottom": 278
+          }
+        ]
+      }
+    },
+    {
+      "name": "drag moves the image under the pointer: two columns to the visual left anchors it two columns later",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "before": {
+          "left": 574,
+          "right": 733,
+          "top": 252,
+          "bottom": 311,
+          "meanX": 652.4191030723489,
+          "count": 8072
+        },
+        "after": {
+          "left": 398,
+          "right": 556,
+          "top": 252,
+          "bottom": 311,
+          "meanX": 475.9013452914798,
+          "count": 8028
+        },
+        "placement": {
+          "kind": "0",
+          "from": {
+            "row": 3,
+            "rowOffset": 0,
+            "column": 6,
+            "columnOffset": 0.4000000000005457
+          },
+          "width": 160,
+          "height": 60
+        }
+      }
+    },
+    {
+      "name": "resize: dragging the visual-left middle handle outwards widens the image and keeps its start edge",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "before": {
+          "left": 398,
+          "right": 556,
+          "top": 252,
+          "bottom": 311,
+          "meanX": 475.9013452914798,
+          "count": 8028
+        },
+        "after": {
+          "left": 358,
+          "right": 556,
+          "top": 252,
+          "bottom": 311,
+          "meanX": 455.66756005558864,
+          "count": 10074
+        },
+        "placement": {
+          "kind": "0",
+          "from": {
+            "row": 3,
+            "rowOffset": 0,
+            "column": 6,
+            "columnOffset": 0.39999999999997726
+          },
+          "width": 200,
+          "height": 60
+        }
+      }
+    },
+    {
       "name": "touch: a tap selects the cell under the finger",
       "ok": true,
       "detail": {
@@ -637,45 +792,32 @@
       "ok": true,
       "detail": {
         "ok": true,
-        "macKeys": true,
+        "macKeys": false,
         "got": {
-          "rtlLeft": {
+          "rtlHome": {
+            "offset": 0,
+            "caret": 1232,
+            "left": 1122.0922546386719,
+            "right": 1232
+          },
+          "rtlEnd": {
             "offset": 17,
             "caret": 1122.0922546386719,
             "left": 1122.0922546386719,
             "right": 1232
           },
-          "rtlRight": {
-            "offset": 0,
-            "caret": 1232,
-            "left": 1122.0922546386719,
-            "right": 1232
-          },
-          "ltrLeft": {
+          "ltrHome": {
             "offset": 0,
             "caret": 1111.437255859375,
             "left": 1111.437255859375,
             "right": 1228.3505859375
           },
-          "ltrRight": {
+          "ltrEnd": {
             "offset": 15,
             "caret": 1228.3505859375,
             "left": 1111.437255859375,
             "right": 1228.3505859375
-          },
-          "mixedLeft": {
-            "offset": 27,
-            "caret": 1057.5460205078125,
-            "left": 1057.5460205078125,
-            "right": 1232
-          },
-          "mixedRight": {
-            "offset": 0,
-            "caret": 1232,
-            "left": 1057.5460205078125,
-            "right": 1232
-          },
-          "selectWholeLine": "Y"
+          }
         }
       }
     },
@@ -813,6 +955,679 @@
       }
     },
     {
+      "name": "formula colours: layer applied, theme carries Excel's sequence, no contract problems",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "status": {
+          "applied": true,
+          "themed": true,
+          "problems": []
+        }
+      }
+    },
+    {
+      "name": "formula colours (cell editor): every token painted in its colour, in bidi order, Arabic sheet name and string joined",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "painted": [
+          {
+            "text": "=",
+            "fill": "#1f2a2e"
+          },
+          {
+            "text": "I",
+            "fill": "#8a5a00"
+          },
+          {
+            "text": "F",
+            "fill": "#8a5a00"
+          },
+          {
+            "text": "(",
+            "fill": "#1f2a2e"
+          },
+          {
+            "text": "S",
+            "fill": "#8a5a00"
+          },
+          {
+            "text": "U",
+            "fill": "#8a5a00"
+          },
+          {
+            "text": "M",
+            "fill": "#8a5a00"
+          },
+          {
+            "text": "(",
+            "fill": "#c0353e"
+          },
+          {
+            "text": "A",
+            "fill": "#326ac7"
+          },
+          {
+            "text": "4",
+            "fill": "#326ac7"
+          },
+          {
+            "text": ":",
+            "fill": "#326ac7"
+          },
+          {
+            "text": "B",
+            "fill": "#326ac7"
+          },
+          {
+            "text": "5",
+            "fill": "#326ac7"
+          },
+          {
+            "text": ",",
+            "fill": "#1f2a2e"
+          },
+          {
+            "text": "A",
+            "fill": "#c0353e"
+          },
+          {
+            "text": "4",
+            "fill": "#c0353e"
+          },
+          {
+            "text": ")",
+            "fill": "#c0353e"
+          },
+          {
+            "text": ">",
+            "fill": "#7a2350"
+          },
+          {
+            "text": "=",
+            "fill": "#7a2350"
+          },
+          {
+            "text": "1",
+            "fill": "#0d6e60"
+          },
+          {
+            "text": "0",
+            "fill": "#0d6e60"
+          },
+          {
+            "text": ",",
+            "fill": "#1f2a2e"
+          },
+          {
+            "text": "\"",
+            "fill": "#6b6e12"
+          },
+          {
+            "text": "المهام",
+            "fill": "#55606a"
+          },
+          {
+            "text": "'",
+            "fill": "#55606a"
+          },
+          {
+            "text": ",",
+            "fill": "#1f2a2e"
+          },
+          {
+            "text": "\"",
+            "fill": "#6b6e12"
+          },
+          {
+            "text": "نعم",
+            "fill": "#6b6e12"
+          },
+          {
+            "text": "'",
+            "fill": "#55606a"
+          },
+          {
+            "text": "!",
+            "fill": "#55606a"
+          },
+          {
+            "text": "A",
+            "fill": "#1f2a2e"
+          },
+          {
+            "text": "2",
+            "fill": "#1f2a2e"
+          },
+          {
+            "text": ")",
+            "fill": "#1f2a2e"
+          }
+        ],
+        "expected": [
+          {
+            "text": "=",
+            "fill": "#1f2a2e"
+          },
+          {
+            "text": "I",
+            "fill": "#8a5a00"
+          },
+          {
+            "text": "F",
+            "fill": "#8a5a00"
+          },
+          {
+            "text": "(",
+            "fill": "#1f2a2e"
+          },
+          {
+            "text": "S",
+            "fill": "#8a5a00"
+          },
+          {
+            "text": "U",
+            "fill": "#8a5a00"
+          },
+          {
+            "text": "M",
+            "fill": "#8a5a00"
+          },
+          {
+            "text": "(",
+            "fill": "#c0353e"
+          },
+          {
+            "text": "A",
+            "fill": "#326ac7"
+          },
+          {
+            "text": "4",
+            "fill": "#326ac7"
+          },
+          {
+            "text": ":",
+            "fill": "#326ac7"
+          },
+          {
+            "text": "B",
+            "fill": "#326ac7"
+          },
+          {
+            "text": "5",
+            "fill": "#326ac7"
+          },
+          {
+            "text": ",",
+            "fill": "#1f2a2e"
+          },
+          {
+            "text": "A",
+            "fill": "#c0353e"
+          },
+          {
+            "text": "4",
+            "fill": "#c0353e"
+          },
+          {
+            "text": ")",
+            "fill": "#c0353e"
+          },
+          {
+            "text": ">",
+            "fill": "#7a2350"
+          },
+          {
+            "text": "=",
+            "fill": "#7a2350"
+          },
+          {
+            "text": "1",
+            "fill": "#0d6e60"
+          },
+          {
+            "text": "0",
+            "fill": "#0d6e60"
+          },
+          {
+            "text": ",",
+            "fill": "#1f2a2e"
+          },
+          {
+            "text": "\"",
+            "fill": "#6b6e12"
+          },
+          {
+            "text": "المهام",
+            "fill": "#55606a"
+          },
+          {
+            "text": "'",
+            "fill": "#55606a"
+          },
+          {
+            "text": ",",
+            "fill": "#1f2a2e"
+          },
+          {
+            "text": "\"",
+            "fill": "#6b6e12"
+          },
+          {
+            "text": "نعم",
+            "fill": "#6b6e12"
+          },
+          {
+            "text": "'",
+            "fill": "#55606a"
+          },
+          {
+            "text": "!",
+            "fill": "#55606a"
+          },
+          {
+            "text": "A",
+            "fill": "#1f2a2e"
+          },
+          {
+            "text": "2",
+            "fill": "#1f2a2e"
+          },
+          {
+            "text": ")",
+            "fill": "#1f2a2e"
+          }
+        ]
+      }
+    },
+    {
+      "name": "formula colours: outlines on the mirrored grid in Excel's colours around A4:B5 and A4",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "blue": {
+          "left": 992,
+          "right": 1232,
+          "top": 250,
+          "bottom": 301,
+          "meanX": 1079.0606796116506,
+          "count": 412
+        },
+        "red": {
+          "left": 1112,
+          "right": 1232,
+          "top": 250,
+          "bottom": 277,
+          "meanX": 1165.9154411764707,
+          "count": 272
+        },
+        "want": {
+          "blue": {
+            "left": 994,
+            "right": 1234,
+            "top": 252,
+            "bottom": 300
+          },
+          "red": {
+            "left": 1114,
+            "right": 1234,
+            "top": 252,
+            "bottom": 276,
+            "width": 120,
+            "height": 24
+          }
+        }
+      }
+    },
+    {
+      "name": "formula colours (formula bar): every token painted in its colour, in bidi order, Arabic sheet name and string joined",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "painted": [
+          {
+            "text": "=",
+            "fill": "#1f2a2e"
+          },
+          {
+            "text": "I",
+            "fill": "#8a5a00"
+          },
+          {
+            "text": "F",
+            "fill": "#8a5a00"
+          },
+          {
+            "text": "(",
+            "fill": "#1f2a2e"
+          },
+          {
+            "text": "S",
+            "fill": "#8a5a00"
+          },
+          {
+            "text": "U",
+            "fill": "#8a5a00"
+          },
+          {
+            "text": "M",
+            "fill": "#8a5a00"
+          },
+          {
+            "text": "(",
+            "fill": "#c0353e"
+          },
+          {
+            "text": "A",
+            "fill": "#326ac7"
+          },
+          {
+            "text": "4",
+            "fill": "#326ac7"
+          },
+          {
+            "text": ":",
+            "fill": "#326ac7"
+          },
+          {
+            "text": "B",
+            "fill": "#326ac7"
+          },
+          {
+            "text": "5",
+            "fill": "#326ac7"
+          },
+          {
+            "text": ",",
+            "fill": "#1f2a2e"
+          },
+          {
+            "text": "A",
+            "fill": "#c0353e"
+          },
+          {
+            "text": "4",
+            "fill": "#c0353e"
+          },
+          {
+            "text": ")",
+            "fill": "#c0353e"
+          },
+          {
+            "text": ">",
+            "fill": "#7a2350"
+          },
+          {
+            "text": "=",
+            "fill": "#7a2350"
+          },
+          {
+            "text": "1",
+            "fill": "#0d6e60"
+          },
+          {
+            "text": "0",
+            "fill": "#0d6e60"
+          },
+          {
+            "text": ",",
+            "fill": "#1f2a2e"
+          },
+          {
+            "text": "\"",
+            "fill": "#6b6e12"
+          },
+          {
+            "text": "المهام",
+            "fill": "#55606a"
+          },
+          {
+            "text": "'",
+            "fill": "#55606a"
+          },
+          {
+            "text": ",",
+            "fill": "#1f2a2e"
+          },
+          {
+            "text": "\"",
+            "fill": "#6b6e12"
+          },
+          {
+            "text": "نعم",
+            "fill": "#6b6e12"
+          },
+          {
+            "text": "'",
+            "fill": "#55606a"
+          },
+          {
+            "text": "!",
+            "fill": "#55606a"
+          },
+          {
+            "text": "A",
+            "fill": "#1f2a2e"
+          },
+          {
+            "text": "2",
+            "fill": "#1f2a2e"
+          },
+          {
+            "text": ")",
+            "fill": "#1f2a2e"
+          }
+        ],
+        "expected": [
+          {
+            "text": "=",
+            "fill": "#1f2a2e"
+          },
+          {
+            "text": "I",
+            "fill": "#8a5a00"
+          },
+          {
+            "text": "F",
+            "fill": "#8a5a00"
+          },
+          {
+            "text": "(",
+            "fill": "#1f2a2e"
+          },
+          {
+            "text": "S",
+            "fill": "#8a5a00"
+          },
+          {
+            "text": "U",
+            "fill": "#8a5a00"
+          },
+          {
+            "text": "M",
+            "fill": "#8a5a00"
+          },
+          {
+            "text": "(",
+            "fill": "#c0353e"
+          },
+          {
+            "text": "A",
+            "fill": "#326ac7"
+          },
+          {
+            "text": "4",
+            "fill": "#326ac7"
+          },
+          {
+            "text": ":",
+            "fill": "#326ac7"
+          },
+          {
+            "text": "B",
+            "fill": "#326ac7"
+          },
+          {
+            "text": "5",
+            "fill": "#326ac7"
+          },
+          {
+            "text": ",",
+            "fill": "#1f2a2e"
+          },
+          {
+            "text": "A",
+            "fill": "#c0353e"
+          },
+          {
+            "text": "4",
+            "fill": "#c0353e"
+          },
+          {
+            "text": ")",
+            "fill": "#c0353e"
+          },
+          {
+            "text": ">",
+            "fill": "#7a2350"
+          },
+          {
+            "text": "=",
+            "fill": "#7a2350"
+          },
+          {
+            "text": "1",
+            "fill": "#0d6e60"
+          },
+          {
+            "text": "0",
+            "fill": "#0d6e60"
+          },
+          {
+            "text": ",",
+            "fill": "#1f2a2e"
+          },
+          {
+            "text": "\"",
+            "fill": "#6b6e12"
+          },
+          {
+            "text": "المهام",
+            "fill": "#55606a"
+          },
+          {
+            "text": "'",
+            "fill": "#55606a"
+          },
+          {
+            "text": ",",
+            "fill": "#1f2a2e"
+          },
+          {
+            "text": "\"",
+            "fill": "#6b6e12"
+          },
+          {
+            "text": "نعم",
+            "fill": "#6b6e12"
+          },
+          {
+            "text": "'",
+            "fill": "#55606a"
+          },
+          {
+            "text": "!",
+            "fill": "#55606a"
+          },
+          {
+            "text": "A",
+            "fill": "#1f2a2e"
+          },
+          {
+            "text": "2",
+            "fill": "#1f2a2e"
+          },
+          {
+            "text": ")",
+            "fill": "#1f2a2e"
+          }
+        ]
+      }
+    },
+    {
+      "name": "formula colours: after scroll and 150% zoom, the outlines mirror those of the unmirrored grid",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "mirrored": {
+          "blue": {
+            "left": 639,
+            "right": 1031,
+            "top": 204,
+            "bottom": 279,
+            "meanX": 835,
+            "count": 940
+          },
+          "red": {
+            "left": 639,
+            "right": 851,
+            "top": 312,
+            "bottom": 351,
+            "meanX": 745,
+            "count": 508
+          }
+        },
+        "expected": {
+          "blue": {
+            "left": 640,
+            "right": 1032,
+            "top": 204,
+            "bottom": 279
+          },
+          "red": {
+            "left": 640,
+            "right": 852,
+            "top": 312,
+            "bottom": 351
+          }
+        }
+      }
+    },
+    {
+      "name": "safety net: a changed formula-colour hook leaves Univer's own colouring, with Excel's palette",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "status": {
+          "applied": false,
+          "reason": "formula colours contract broken: RefSelectionsRenderService.prototype.resetSelectionsByModelData(selectionsWithStyle)"
+        },
+        "runs": [
+          [
+            0,
+            1,
+            null
+          ],
+          [
+            1,
+            5,
+            "#000000"
+          ],
+          [
+            5,
+            7,
+            "#326ac7"
+          ],
+          [
+            7,
+            8,
+            "#000000"
+          ]
+        ]
+      }
+    },
+    {
       "name": "safety net: a changed Univer hook leaves the stock grid untouched and working",
       "ok": true,
       "detail": {
@@ -898,7 +1713,7 @@
             "applied": true
           }
         },
-        "lineStart": "Meta+ArrowRight",
+        "lineStart": "Home",
         "offsetAfterLineStartAndThreeArrowLeft": 3
       }
     },
@@ -908,27 +1723,27 @@
       "detail": {
         "ok": true,
         "keys": {
-          "mac": true,
-          "appVersion": "5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+          "mac": false,
+          "appVersion": "5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.12 Safari/537.36",
           "platform": "Linux x86_64"
         },
         "lineKeys": [
-          "Meta+ArrowLeft",
-          "Meta+ArrowRight"
+          "Home",
+          "End"
         ],
         "got": {
           "lineStart": 0,
           "lineEnd": 15,
-          "homeAfterLineEnd": 15,
-          "endAfterLineStart": 0,
+          "homeAfterLineEnd": 0,
+          "endAfterLineStart": 15,
           "lineStartRight3": 3,
           "lineEndLeft2": 13
         },
         "expected": {
           "lineStart": 0,
           "lineEnd": 15,
-          "homeAfterLineEnd": 15,
-          "endAfterLineStart": 0,
+          "homeAfterLineEnd": 0,
+          "endAfterLineStart": 15,
           "lineStartRight3": 3,
           "lineEndLeft2": 13
         },
@@ -1022,6 +1837,128 @@
           }
         },
         "flipped": true
+      }
+    },
+    {
+      "name": "dropdown chips: each at its cell start, in its colour, Arabic text as in the unmirrored grid",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "cells": {
+          "A2": {
+            "placed": true,
+            "same": true,
+            "orient": {
+              "asIs": 2.1774134790528232,
+              "flipped": 45.96357012750455
+            },
+            "mText": {
+              "left": 1162,
+              "right": 1222,
+              "top": 155,
+              "bottom": 169,
+              "meanX": 1193.0238095238096,
+              "count": 168
+            },
+            "pText": {
+              "left": 57,
+              "right": 117,
+              "top": 155,
+              "bottom": 169,
+              "meanX": 87.96385542168674,
+              "count": 166
+            }
+          },
+          "A3": {
+            "placed": true,
+            "same": true,
+            "orient": {
+              "asIs": 32.753246753246756,
+              "flipped": 59.234848484848484
+            },
+            "mText": {
+              "left": 1194,
+              "right": 1222,
+              "top": 183,
+              "bottom": 193,
+              "meanX": 1208.2763157894738,
+              "count": 76
+            },
+            "pText": {
+              "left": 56,
+              "right": 83,
+              "top": 183,
+              "bottom": 193,
+              "meanX": 68.83561643835617,
+              "count": 73
+            }
+          },
+          "A4": {
+            "placed": true,
+            "same": true,
+            "orient": {
+              "asIs": 30.802777777777777,
+              "flipped": 45.71319444444445
+            },
+            "mText": {
+              "left": 1191,
+              "right": 1222,
+              "top": 202,
+              "bottom": 217,
+              "meanX": 1207.0641025641025,
+              "count": 78
+            },
+            "pText": {
+              "left": 56,
+              "right": 85,
+              "top": 202,
+              "bottom": 217,
+              "meanX": 70.71428571428572,
+              "count": 77
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "multiple-selection chips read from the cell start: the first item at the visual right",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "mirrored": {
+          "first": 1051.8351955307262,
+          "second": 1016.9863636363636
+        },
+        "plain": {
+          "first": 225.99728997289972,
+          "second": 263.0541760722348
+        }
+      }
+    },
+    {
+      "name": "a dropdown in the lower half opens below its cell when it fits there, as stock \"vertical\" does",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "cell": {
+          "a1": "A11",
+          "box": {
+            "left": 1074,
+            "right": 1234,
+            "top": 364,
+            "bottom": 388,
+            "width": 160,
+            "height": 24
+          }
+        },
+        "panel": {
+          "left": 1034,
+          "right": 1234,
+          "top": 391,
+          "bottom": 574,
+          "width": 200,
+          "height": 183
+        }
       }
     }
   ]

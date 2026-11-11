@@ -96,6 +96,60 @@ export function mirrorPopupDirection(direction: string | undefined): string {
   return d.replace(/left|right/g, (m) => (m === 'left' ? 'right' : 'left'))
 }
 
+/**
+ * Room a mirrored "vertical" popup needs below its anchor to open there: the
+ * tallest cell popup Univer 1.4.0 draws is the data-validation list
+ * (sheets-ui ListDropDown: search field, options capped at max-h-52 = 208 px,
+ * «تحرير»; about 300 px), plus RectPopup's 16 px pushing gap.
+ */
+export const MIRRORED_POPUP_ROOM = 320
+
+/**
+ * The direction for a popup Univer asked to open "vertical" (or with no
+ * direction), mirrored. Stock "vertical" opens below unless the popup does
+ * not fit there (ui RectPopup calcPopupPosition: `endY > maxTop`) and aligns
+ * with the anchor's left edge. The mirror needs the right edge, which only the
+ * "-right" directions give, and Univer resolves "vertical-right" by which side
+ * has MORE room (resolvePopupDirection), so a list in the lower half of the
+ * screen opened above its cell although it fitted below (found by the apps/web
+ * dropdown e2e at 375 px). With the room known: "bottom-right" when the popup
+ * fits below, else "vertical-right" (Univer then takes the roomier side, as
+ * stock does when it does not fit).
+ */
+export function mirroredVerticalDirection(roomBelow: number | null): 'bottom-right' | 'vertical-right' {
+  return roomBelow !== null && roomBelow >= MIRRORED_POPUP_ROOM ? 'bottom-right' : 'vertical-right'
+}
+
+/** The anchor's current rectangle when the popup is added: its static rect, or the value its stream holds now. */
+function currentAnchor(item: Record<string, unknown>): Rect | null {
+  if (item.anchorRect) return item.anchorRect as Rect
+  const stream = item.anchorRect$ as Observable<Rect> | undefined
+  if (!stream || typeof stream.subscribe !== 'function') return null
+  let now: Rect | null = null
+  try {
+    stream.subscribe((r) => (now ??= r)).unsubscribe()
+  } catch {
+    return null
+  }
+  return now
+}
+
+/**
+ * Popups whose side Univer itself already picks from the UI direction:
+ * sheets-drawing-ui 1.4.0 opens the image menu (`COMPONENT_IMAGE_POPUP_MENU`)
+ * with `direction: localeService.getDirection() === 'rtl' ? 'left' : 'horizontal'`
+ * (DrawingPopupMenuController). Its 'left' is meant for a right-to-left UI,
+ * so on the mirrored grid it stays 'left': the menu opens at the image's end
+ * side, as Univer intends. Checked against the installed source in
+ * test/contract.test.ts.
+ */
+export const RTL_AWARE_POPUPS: ReadonlyMap<string, string> = new Map([['COMPONENT_IMAGE_POPUP_MENU', 'left']])
+
+/** True when `item` is a popup of RTL_AWARE_POPUPS asking for the side Univer chose for a right-to-left UI. */
+export function keepsRtlDirection(item: { componentKey?: unknown }, asked: string | undefined): boolean {
+  return typeof item.componentKey === 'string' && asked !== undefined && RTL_AWARE_POPUPS.get(item.componentKey) === asked
+}
+
 /** LEFT and RIGHT trade places; everything else (CENTER, JUSTIFIED, ...) is direction-free. */
 export function swapHorizontalAlign<T>(value: T): T {
   if (value === (HorizontalAlign.LEFT as unknown as T)) return HorizontalAlign.RIGHT as unknown as T
@@ -461,7 +515,16 @@ export async function enableRtlGrid(univerAPI: FUniver, unitId: string, options:
     if (item.canvasElement !== canvas) return originalAddPopup.call(this, item)
     const flip = <T extends Rect>(r: T) => mirrorRect(r, canvas.getBoundingClientRect())
     const flipMany = (rs: Rect[] | null | undefined) => rs?.map(flip)
-    const mirrored: Record<string, unknown> = { ...item, direction: mirrorPopupDirection(item.direction as string | undefined) }
+    const asked = item.direction as string | undefined
+    // A popup that already chose its side for a right-to-left UI keeps it
+    // (mirroring it again would put it back on the start side).
+    let direction = keepsRtlDirection(item, asked) ? (asked as string) : mirrorPopupDirection(asked)
+    if (asked === undefined || asked === 'vertical') {
+      const anchor = currentAnchor(item)
+      // The boundary is the window unless the popup names another (data-validation lists do not).
+      direction = mirroredVerticalDirection(anchor && !item.boundaryElement && !item.constrainToCanvas ? window.innerHeight - anchor.bottom : null)
+    }
+    const mirrored: Record<string, unknown> = { ...item, direction }
     if (item.anchorRect$) mirrored.anchorRect$ = (item.anchorRect$ as Observable<Rect>).pipe(map(flip))
     if (item.anchorRect) mirrored.anchorRect = flip(item.anchorRect as Rect)
     if (item.excludeRects$) mirrored.excludeRects$ = (item.excludeRects$ as Observable<Rect[]>).pipe(map(flipMany))

@@ -36,6 +36,7 @@ import {
   ValidationError,
 } from '@naf-sheets/basecamp'
 import { LinkFailure, withServiceToken, withUserToken } from '../../basecamp-link'
+import { sendNotesImages } from '../../images/notes-images'
 import type { LinkContext } from '../../basecamp-link'
 import type { BcOutboundMessage, Env } from '../../env'
 import { queueClient, syncContext } from '../deps'
@@ -238,6 +239,21 @@ async function deadLetter(env: Env, deps: SyncDeps, message: Message<BcOutboundM
  * being processed (S2).
  */
 export async function processOutbound(env: Env, deps: SyncDeps, body: unknown, session?: WorkbookBatch): Promise<Outcome> {
+  const outcome = await processOutboundStep(env, deps, body, session)
+  // Pictures of the to-do's notes cell go out as files of its description,
+  // after the step and outside its lease (src/images/notes-images.ts). Never
+  // changes the message's outcome: a failure leaves the file `failed` with a retry.
+  if (outcome.kind === 'ack' && isOutboundMessage(body)) {
+    try {
+      await sendNotesImages(env, deps, body.workbookId, body.taskUid, body.actorUserId)
+    } catch (error) {
+      console.warn(`sync: sending the notes pictures of a task failed (${error instanceof Error ? error.name : 'unknown'})`)
+    }
+  }
+  return outcome
+}
+
+async function processOutboundStep(env: Env, deps: SyncDeps, body: unknown, session?: WorkbookBatch): Promise<Outcome> {
   if (!isOutboundMessage(body)) return ACK
   const batch = session ?? new WorkbookBatch(env, body.workbookId)
   const db = env.DB

@@ -305,6 +305,10 @@ function WorkbookEditor({ data, target, view, onReload, session, collab, roomNot
     const dashboard = dashboardSheetId
     mountWorkbook(host, resolved.data, {
       isCancelled: () => cancelled,
+      workbookId: data.workbook.id,
+      onImageRefused: (message) => {
+        if (!cancelled) refuse(message)
+      },
       onRtlStatus: (state) => {
         if (!cancelled) setRtl(state)
       },
