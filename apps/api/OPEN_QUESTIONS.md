@@ -1241,6 +1241,19 @@ D8. **Appearance** is stored in KV `SETTINGS` under `settings:appearance` (palet
 
 D9. **The dashboard is the workbook's first sheet tab «اللوحة»** (owner, 2026-11-10; apps/web #66). It is a real Univer worksheet, marked by platform data in its `custom` field (`nafSheetRole: 'dashboard'`, never by name or id), kept first in `sheetOrder` (`@naf-sheets/shared` dashboard-sheet.ts). The API adds it with `withDashboardSheet` when it serves a workbook (GET /api/workbooks/:id) and the room adds it with the same deterministic function when it loads one (room.ts `load`), so an editor that opened from the GET holds the same model as the room; blank workbooks, workbooks from a template and Google imports are created with it. It is never in D1 `sheets`: the files list, the link wizard, sync detection, /api/v1 and backups (D1 export) never see it, and backups copy snapshots byte for byte. Templates drop it and re-create it on instantiation. The figures and widgets skip it (a widget naming it is `sheet_missing`). sheet-model refuses it (`dashboard_sheet`) in `readTasks`, `ensureSystemColumns`, `applyInbound`, indentation, decoration and reordering. The room refuses any op that would remove, rename, hide or move it, put a sheet before it, insert a second one, or write its cells, properties or plugin data (footprint.ts `classifyOp`, as `invalid`); row heights and column widths on it pass. PUT …/snapshot stores what the editor sends unchanged (the editor always sends it); a snapshot saved without it is given it again on the next read. Confirm that a stored snapshot may lack it until its next save.
 
+## Before the first real Basecamp link (owner, 2026-11-11)
+
+Nothing is linked to Basecamp yet, so these two are deferred, not dropped. They
+must be decided and built **before the first workbook is linked**:
+
+- **Q1. Changing a sheet's notes column** treats the old column's pictures as
+  removed and takes their files out of the to-dos' descriptions in Basecamp
+  (I7). Proposed: a settings change never removes anything from Basecamp; only
+  a picture a person removed from the cell does.
+- **Q2. A notes cell that loses its stored description** (for example a plain
+  value pasted over it) makes ordinary sync drop all of that to-do's files from
+  Basecamp (P11, older than I7). Proposed: sync keeps the files in that case.
+
 ## Platform members «أعضاء المنصة» (src/routes/platform-members.ts)
 
 **Decided 2026-11-11 (owner): P1–P7 approved as built.** Admins are equal: no
