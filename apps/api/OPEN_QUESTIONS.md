@@ -27,9 +27,10 @@ behaviour chosen in the absence of a rule and need only a confirmation.
    `/webhooks/basecamp/*` — `/denied` is not among them and the Worker does not
    serve it. If the Worker answers for the whole origin, a refused navigation
    would loop; if Pages serves `/denied` on the same origin, nothing is needed.
-   Tied to spec §17-4 (subdomain). **Decided 2026-11-11:** Pages serves the
-   origin `sheets.naflaw.sa` and the Worker only `/api/*`, `/auth/*`, `/webhooks/*`
-   and `/health`, so Pages serves `/denied`.
+   Tied to spec §17-4 (subdomain). **Decided 2026-11-11:** one Worker serves
+   `sheets.naflaw.sa`: `/api/*`, `/auth/*`, `/webhooks/*` and `/health` run its
+   code (`run_worker_first`), every other path, `/denied` included, is the web
+   app's `index.html` (static assets, `not_found_handling = "single-page-application"`).
 
 4. **`PUT /api/workbooks/:id/members` has no response type.** It answers with
    `WorkbookMembersResponse` (the list after the change), like `GET`.

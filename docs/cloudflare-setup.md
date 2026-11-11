@@ -1,8 +1,8 @@
 # ربط المنصة بـ Cloudflare
 
-> **الحالة:** لم يُنشر شيء بعد. هذا الملف يصف الخطوات، ولم تُجرَّب على حساب Cloudflare حقيقي.
-> **المرجع:** المواصفات §4 «الاستضافة: Cloudflare Pages (الواجهة) + Workers (API) على نطاق فرعي من `naflaw.sa`».
-> **الإعدادات:** `apps/api/wrangler.toml` و`scripts/deploy-api.sh` (الخادم)، و`apps/web` (الواجهة).
+> **الحالة:** نُشر الخادم أول مرة في 2026-11-11 (قبل دمج الواجهة فيه). الخطوات من §3 فصاعداً لم تُجرَّب بعد على الحساب.
+> **المرجع:** المواصفات §4. قرار المالك 2026-11-11: **Worker واحد** اسمه `naf-sheets` يخدم الواجهة والخادم معاً على `sheets.naflaw.sa`، بدل مشروعَي Pages وWorkers في المواصفة.
+> **الإعدادات:** `apps/api/wrangler.toml` و`scripts/deploy-api.sh`. الواجهة (`apps/web`) تُبنى في أمر النشر وتُرفع ملفاتٍ ثابتة للـ Worker نفسه.
 
 ## 0. الفروع
 
@@ -15,7 +15,7 @@
 
 ## 1. قبل البدء
 
-1. يجب أن يكون النطاق `naflaw.sa` مُداراً في حساب Cloudflare نفسه (لازم لربط الواجهة والخادم على عنوان واحد، §6).
+1. يجب أن يكون النطاق `naflaw.sa` مُداراً في حساب Cloudflare نفسه (لازم لربط النطاق المخصص، §5).
 2. النطاق الفرعي للمنصة: `sheets.naflaw.sa` (قرار المالك 2026-11-11، المواصفات §17-4). خطة الحساب مدفوعة (Workers Paid).
 3. لا شيء يلزم على جهازك. كل ما يلي من لوحة Cloudflare.
 
@@ -46,7 +46,7 @@
 
 لا تغيّر `TOKEN_ENCRYPTION_KEY` بعد أول استخدام: تغييره يُبطل رموز Basecamp وGoogle المحفوظة، فيعيد كل شخص الربط.
 
-## 4. الخادم: Worker مربوط بـ GitHub
+## 4. المشروع: Worker مربوط بـ GitHub
 
 في لوحة Cloudflare: **Workers & Pages → Create → Import a repository** ← اختر `fahadaali/NAF-Sheets`. إن كان المشروع موجوداً فعدّل إعداداته من **Settings ← Build**.
 
@@ -55,7 +55,7 @@
 | Project name | `naf-sheets` (يجب أن يطابق `name` في `wrangler.toml`) |
 | Production branch | `main` |
 | Root directory | `/` (جذر المستودع: الخادم يحتاج حزم `packages/*`) |
-| Build command | فارغ (الخادم لا يحتاج بناء الواجهة) |
+| Build command | فارغ (أمر النشر يبني الواجهة) |
 | Deploy command | `bash scripts/deploy-api.sh` |
 | Non-production branch builds | معطّلة |
 | Build variable | `NODE_VERSION` = `22` |
@@ -66,41 +66,21 @@
 
 إن فشل إنشاء الموارد أو تطبيق المخطط بسبب الصلاحية، فرمز البناء الذي أنشأته Cloudflare ينقصه إذن. أضف إليه **D1: Edit** و**Workers KV Storage: Edit** و**Workers R2 Storage: Edit** و**Queues: Edit**.
 
-## 5. الواجهة: Pages مربوطة بـ GitHub
+## 5. الواجهة والنطاق
 
-**Workers & Pages → Create → Pages → Connect to Git** ← `fahadaali/NAF-Sheets`.
+Worker واحد يخدم كل شيء، فلا يوجد مشروع Pages:
 
-| الإعداد | القيمة |
+| الطلب | من يجيبه |
 |---|---|
-| Project name | `naf-sheets-web` (اسم مختلف عن مشروع الخادم `naf-sheets`) |
-| Production branch | `main` |
-| Framework preset | None |
-| Root directory | `/` |
-| Build command | `npm run build -w @naf-sheets/web` |
-| Build output directory | `apps/web/dist` |
-| Environment variable | `NODE_VERSION` = `22` |
+| `/api/*` و`/auth/*` و`/webhooks/*` و`/health` | كود الخادم |
+| ملف من الواجهة (`/assets/…`) | ملفات الواجهة المبنية (`apps/web/dist`) |
+| أي مسار آخر (`/` و`/workbooks/…` و`/denied`) | `index.html` من الواجهة، ثم تفتح الواجهة الشاشة المطلوبة |
 
-لا يوجد `404.html`، فتعيد Pages `index.html` لكل مسار مثل `/workbooks/…` و`/denied`، وهذا ما تحتاجه الواجهة.
+الواجهة والخادم يُنشران معاً في كل نشر، فلا تعمل واجهة جديدة مع خادم قديم.
 
-## 6. عنوان واحد للواجهة والخادم
+**النطاق:** `routes` في `wrangler.toml` تجعل `sheets.naflaw.sa` نطاقاً مخصصاً للـ Worker (`custom_domain = true`)، وCloudflare ينشئ سجل DNS والشهادة عند النشر. إن رفض النشر بسبب سجل DNS موجود مسبقاً للاسم `sheets`، فاحذف ذلك السجل من **DNS ← Records** ثم أعد النشر. لا يُحذف شيء دون موافقتك.
 
-الواجهة تنادي `/api` و`/auth` بمسارات نسبية، وجلسة الدخول ملف تعريف ارتباط على العنوان نفسه. لذلك يعمل الاثنان على العنوان نفسه `sheets.naflaw.sa`:
-
-1. **Pages ← Custom domains** ← أضف `sheets.naflaw.sa`.
-2. مسارات الخادم مفعّلة في `apps/api/wrangler.toml`، ومعها `PUBLIC_API_ORIGIN = "https://sheets.naflaw.sa"`:
-
-```toml
-routes = [
-  { pattern = "sheets.naflaw.sa/api/*", zone_name = "naflaw.sa" },
-  { pattern = "sheets.naflaw.sa/auth/*", zone_name = "naflaw.sa" },
-  { pattern = "sheets.naflaw.sa/webhooks/*", zone_name = "naflaw.sa" },
-  { pattern = "sheets.naflaw.sa/health", zone_name = "naflaw.sa" },
-]
-```
-
-مسارات Worker على النطاق تسبق Pages، فتذهب هذه المسارات الأربعة إلى الخادم ويذهب الباقي إلى الواجهة.
-
-## 7. التسجيل لدى الأنظمة الخارجية
+## 6. التسجيل لدى الأنظمة الخارجية
 
 | النظام | ما يُسجّل |
 |---|---|
@@ -108,7 +88,7 @@ routes = [
 | تطبيق Basecamp (launchpad.37signals.com/integrations) | Redirect URI: `https://sheets.naflaw.sa/auth/basecamp/callback` |
 | Google Cloud (OAuth client من نوع Web) | Authorized redirect URI: `https://sheets.naflaw.sa/auth/google/callback`؛ ونطاق القراءة `spreadsheets.readonly` |
 
-## 8. التحقق بعد أول نشر
+## 7. التحقق بعد أول نشر
 
 1. `https://sheets.naflaw.sa/health` يعيد `{"ok":true}`.
 2. فتح `https://sheets.naflaw.sa/` يحوّل إلى تسجيل الدخول في naf-id، ثم يعود إلى شاشة الملفات.
@@ -125,10 +105,9 @@ routes = [
 
 اعتماد المراحل (§15) لا يتم بهذه الخطوات. يحتاج اختبار Basecamp الحي (`spike/basecamp/README.md`) وملف Google Sheets حقيقياً.
 
-## 9. ملاحظات
+## 8. ملاحظات
 
 - **`naf-auth`** يُجلب أثناء التثبيت من GitHub بالوسم `v3.4.0`، والمستودع عام. `package-lock.json` يسجّل عنوانه بصيغة `git+ssh`. إن فشل التثبيت على Cloudflare بسبب SSH فهذه هي العلة، وتُعالج في المستودع لا في اللوحة.
-- **معاينات Pages** للفروع الأخرى (عناوين `*.pages.dev`) لا يصلها الخادم، فتظهر الواجهة فقط.
 - **الجدولة:** المطابقة كل 15 دقيقة والنسخ الاحتياطي اليومي (`[triggers]` في `wrangler.toml`) يعملان تلقائياً بعد النشر.
 - **الخطة:** الخادم يستخدم Queues وDurable Objects وCron، وخطة الحساب المدفوعة (Workers Paid) تشملها.
-- **حجم الخادم:** حوالي 2.4 ميغابايت مضغوطاً (`wrangler deploy --dry-run`)، وحد الخطة المدفوعة 10.
+- **الحجم:** كود الخادم حوالي 2.4 ميغابايت مضغوطاً (`wrangler deploy --dry-run`)، وحد الخطة المدفوعة 10. ملفات الواجهة (85 ملفاً، أكبرها 8.4 ميغابايت) تُرفع منفصلة عنه، وحد الملف الواحد 25 ميغابايت.

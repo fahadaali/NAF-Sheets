@@ -81,6 +81,7 @@ spec §15 criteria pass against real services — say which, never imply it.
 | Realtime | Durable Object `WorkbookRoom` per workbook |
 | Sync jobs | Queue `bc-outbound` + DLQ; Cron reconciliation every 15 min |
 | Auth | `naf-id` through the `naf-auth` package |
+| Hosting | **One Worker `naf-sheets`** on `sheets.naflaw.sa` (owner, 2026-11-11, replacing spec §4's Pages + Workers): the API, plus `apps/web/dist` as static assets (`[assets]` in `apps/api/wrangler.toml`; `/api/*`, `/auth/*`, `/webhooks/*`, `/health` run the Worker, any other path is the SPA). Built and deployed together by `scripts/deploy-api.sh` from `main` |
 
 Planned layout (§4.3): `apps/web`, `apps/api`, `packages/{shared,gsheets-import,basecamp,sync-engine}`, `migrations/`.
 

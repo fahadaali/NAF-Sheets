@@ -18,16 +18,21 @@ compatibility_flags = ["nodejs_compat"]
 keep_vars = true
 
 # ─────────────────────────────────────────────────────────────
-# Routes on the platform's host (docs/cloudflare-setup.md §6). The web app is
-# Cloudflare Pages on the same host; these paths go to this Worker, the rest
-# to Pages. Host decided by the owner 2026-11-11 (spec §17-4): sheets.naflaw.sa.
+# One Worker serves the whole platform on sheets.naflaw.sa (owner, 2026-11-11,
+# replacing spec §4's separate Pages project; host: spec §17-4).
+# The web app (apps/web, built by scripts/deploy-api.sh) is served as static
+# assets; these paths run the Worker first, everything else is a file of the
+# web app, and an unknown path gets index.html (client-side routes such as
+# /workbooks/:id and naf-auth's /denied).
 # ─────────────────────────────────────────────────────────────
 routes = [
-  { pattern = "sheets.naflaw.sa/api/*", zone_name = "naflaw.sa" },
-  { pattern = "sheets.naflaw.sa/auth/*", zone_name = "naflaw.sa" },
-  { pattern = "sheets.naflaw.sa/webhooks/*", zone_name = "naflaw.sa" },
-  { pattern = "sheets.naflaw.sa/health", zone_name = "naflaw.sa" },
+  { pattern = "sheets.naflaw.sa", custom_domain = true },
 ]
+
+[assets]
+directory = "../web/dist"
+not_found_handling = "single-page-application"
+run_worker_first = ["/api/*", "/auth/*", "/webhooks/*", "/health"]
 
 # ─────────────────────────────────────────────────────────────
 # Non-secret variables
