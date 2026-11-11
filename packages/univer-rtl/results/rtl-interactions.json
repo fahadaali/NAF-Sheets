@@ -1,8 +1,8 @@
 {
   "browser": "chromium",
-  "passed": 65,
+  "passed": 73,
   "knownUpstream": 0,
-  "total": 65,
+  "total": 73,
   "pageErrors": [],
   "checks": [
     {
@@ -22,7 +22,10 @@
           "problems": [],
           "textProblems": [],
           "text": {
-            "applied": true
+            "applied": true,
+            "formula": {
+              "applied": true
+            }
           }
         }
       }
@@ -681,7 +684,10 @@
           "problems": [],
           "textProblems": [],
           "text": {
-            "applied": true
+            "applied": true,
+            "formula": {
+              "applied": true
+            }
           }
         }
       }
@@ -1065,24 +1071,24 @@
             "fill": "#6b6e12"
           },
           {
-            "text": "المهام",
-            "fill": "#55606a"
-          },
-          {
-            "text": "'",
-            "fill": "#55606a"
-          },
-          {
-            "text": ",",
-            "fill": "#1f2a2e"
+            "text": "نعم",
+            "fill": "#6b6e12"
           },
           {
             "text": "\"",
             "fill": "#6b6e12"
           },
           {
-            "text": "نعم",
-            "fill": "#6b6e12"
+            "text": ",",
+            "fill": "#1f2a2e"
+          },
+          {
+            "text": "'",
+            "fill": "#55606a"
+          },
+          {
+            "text": "المهام",
+            "fill": "#55606a"
           },
           {
             "text": "'",
@@ -1199,24 +1205,24 @@
             "fill": "#6b6e12"
           },
           {
-            "text": "المهام",
-            "fill": "#55606a"
-          },
-          {
-            "text": "'",
-            "fill": "#55606a"
-          },
-          {
-            "text": ",",
-            "fill": "#1f2a2e"
+            "text": "نعم",
+            "fill": "#6b6e12"
           },
           {
             "text": "\"",
             "fill": "#6b6e12"
           },
           {
-            "text": "نعم",
-            "fill": "#6b6e12"
+            "text": ",",
+            "fill": "#1f2a2e"
+          },
+          {
+            "text": "'",
+            "fill": "#55606a"
+          },
+          {
+            "text": "المهام",
+            "fill": "#55606a"
           },
           {
             "text": "'",
@@ -1379,24 +1385,24 @@
             "fill": "#6b6e12"
           },
           {
-            "text": "المهام",
-            "fill": "#55606a"
-          },
-          {
-            "text": "'",
-            "fill": "#55606a"
-          },
-          {
-            "text": ",",
-            "fill": "#1f2a2e"
+            "text": "نعم",
+            "fill": "#6b6e12"
           },
           {
             "text": "\"",
             "fill": "#6b6e12"
           },
           {
-            "text": "نعم",
-            "fill": "#6b6e12"
+            "text": ",",
+            "fill": "#1f2a2e"
+          },
+          {
+            "text": "'",
+            "fill": "#55606a"
+          },
+          {
+            "text": "المهام",
+            "fill": "#55606a"
           },
           {
             "text": "'",
@@ -1513,24 +1519,24 @@
             "fill": "#6b6e12"
           },
           {
-            "text": "المهام",
-            "fill": "#55606a"
-          },
-          {
-            "text": "'",
-            "fill": "#55606a"
-          },
-          {
-            "text": ",",
-            "fill": "#1f2a2e"
+            "text": "نعم",
+            "fill": "#6b6e12"
           },
           {
             "text": "\"",
             "fill": "#6b6e12"
           },
           {
-            "text": "نعم",
-            "fill": "#6b6e12"
+            "text": ",",
+            "fill": "#1f2a2e"
+          },
+          {
+            "text": "'",
+            "fill": "#55606a"
+          },
+          {
+            "text": "المهام",
+            "fill": "#55606a"
           },
           {
             "text": "'",
@@ -1592,6 +1598,162 @@
             "bottom": 351
           }
         }
+      }
+    },
+    {
+      "name": "formula mode: applied with the text layer (lexer contract checked, no problems)",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "text": {
+          "applied": true,
+          "formula": {
+            "applied": true
+          }
+        }
+      }
+    },
+    {
+      "name": "formula mode (cell editor and formula bar): «=IF(A1>0,\"ملخص\",'نعم'!A1)» reads left to right, token by token, the Arabic tokens in their typed places",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "shown": "=IF(A1>0,\"ملخص\",'نعم'!A1)",
+        "browser": "= I F ( A 1 > 0 , \" ملخص \" , ' نعم ' ! A 1 )",
+        "editor": "= I F ( A 1 > 0 , \" ملخص \" , ' نعم ' ! A 1 )",
+        "formulaBar": "= I F ( A 1 > 0 , \" ملخص \" , ' نعم ' ! A 1 )"
+      }
+    },
+    {
+      "name": "formula mode: the formula starts at the left edge of the cell editor and of the formula bar",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "editor": {
+          "textLeft": 680,
+          "canvasLeft": 678
+        },
+        "bar": {
+          "textLeft": 188,
+          "canvasLeft": 188
+        }
+      }
+    },
+    {
+      "name": "formula mode: stable while typing, character by character: no completed token moves, an unterminated string reads in place",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "moved": [],
+        "unterminated": "= I F ( A 1 > 0 , \" ملخ"
+      }
+    },
+    {
+      "name": "formula mode: a click inside an Arabic token places the caret at the clicked letter; Backspace and Delete remove the letter beside it",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "got": {
+          "start of «ملخص» + Delete": {
+            "ok": true,
+            "text": "=IF(A1>0,\"لخص\",'نعم'!A1)",
+            "expected": "=IF(A1>0,\"لخص\",'نعم'!A1)",
+            "caret": 790.494384765625,
+            "edge": 790.494384765625
+          },
+          "end of «ملخص» + Backspace": {
+            "ok": true,
+            "text": "=IF(A1>0,\"ملخ\",'نعم'!A1)",
+            "expected": "=IF(A1>0,\"ملخ\",'نعم'!A1)",
+            "caret": 750.3757629394531,
+            "edge": 750.3757629394531
+          },
+          "end of «نعم» + Backspace": {
+            "ok": true,
+            "text": "=IF(A1>0,\"ملخص\",'نع'!A1)",
+            "expected": "=IF(A1>0,\"ملخص\",'نع'!A1)",
+            "caret": 802.5671844482422,
+            "edge": 802.5671844482422
+          }
+        }
+      }
+    },
+    {
+      "name": "formula mode: ArrowLeft and ArrowRight move the caret strictly visually across each Arabic token and its quotes",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "got": {
+          "«نعم» from the end": {
+            "ok": true,
+            "text": "=IF(A1>0,\"ملخص\",\"نعم\")",
+            "cell": "D7",
+            "xs": [
+              853,
+              848,
+              843,
+              832,
+              831,
+              822
+            ],
+            "back": [
+              822,
+              831,
+              832,
+              843,
+              848,
+              853
+            ],
+            "expectedLeft": 822
+          },
+          "«ملخص» from after its closing quote": {
+            "ok": true,
+            "text": "=IF(A1>0,\"ملخص\",\"نعم\")",
+            "cell": "D7",
+            "xs": [
+              813,
+              807,
+              798,
+              789,
+              785,
+              767
+            ],
+            "back": [
+              767,
+              785,
+              789,
+              798,
+              807,
+              813
+            ],
+            "expectedLeft": 767
+          }
+        }
+      }
+    },
+    {
+      "name": "formula mode: plain Arabic text in the same editor keeps its right-to-left layout at the start side",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "shown": "نص عادي",
+        "textRight": 872,
+        "cellRight": 874
+      }
+    },
+    {
+      "name": "safety net: a changed formula lexer leaves formulas in plain bidi; the text layer and the grid stay",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "status": {
+          "applied": true,
+          "formula": {
+            "applied": false,
+            "reason": "formula mode contract broken: LexerTreeBuilder.prototype.sequenceNodesBuilder(formulaString)"
+          }
+        },
+        "editor": "= I F ( A 1 > 0 , \" نعم ' , \" ملخص ' ! A 1 )"
       }
     },
     {
@@ -1672,7 +1834,10 @@
           "problems": [],
           "textProblems": [],
           "text": {
-            "applied": true
+            "applied": true,
+            "formula": {
+              "applied": true
+            }
           }
         },
         "ink": {
@@ -1710,7 +1875,10 @@
           "problems": [],
           "textProblems": [],
           "text": {
-            "applied": true
+            "applied": true,
+            "formula": {
+              "applied": true
+            }
           }
         },
         "lineStart": "Home",
@@ -1804,7 +1972,11 @@
           ],
           "text": {
             "applied": false,
-            "reason": "text contract broken: NodePositionConvertToCursor.prototype.getRangePointData(start, end)"
+            "reason": "text contract broken: NodePositionConvertToCursor.prototype.getRangePointData(start, end)",
+            "formula": {
+              "applied": false,
+              "reason": "the text layer is not applied"
+            }
           }
         },
         "painted": [
@@ -1833,7 +2005,11 @@
           "textProblems": [],
           "text": {
             "applied": false,
-            "reason": "heartbeat failed: right-to-left document text was painted without passing through Documents._drawGlyphGroup"
+            "reason": "heartbeat failed: right-to-left document text was painted without passing through Documents._drawGlyphGroup",
+            "formula": {
+              "applied": false,
+              "reason": "heartbeat failed: right-to-left document text was painted without passing through Documents._drawGlyphGroup"
+            }
           }
         },
         "flipped": true

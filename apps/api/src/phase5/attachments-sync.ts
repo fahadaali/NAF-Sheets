@@ -36,6 +36,14 @@ export async function syncAttachmentsFromTodo(env: Env, state: WorkbookState, ui
 
   const live = await liveAttachments(db, uid)
   const bySgid = new Map(live.filter((r): r is AttachmentRow & { bc_sgid: string } => r.bc_sgid !== null).map((r) => [r.bc_sgid, r]))
+  const removedNotesFiles = new Map<string, { id: string; filename: string }>()
+  if ([...inDescription.keys()].some((sgid) => !bySgid.has(sgid))) {
+    const { results } = await db
+      .prepare(`SELECT id, filename, bc_sgid FROM attachments WHERE task_uid = ?1 AND removed_at IS NOT NULL AND removed_reason = 'notes_image' AND bc_sgid IS NOT NULL`)
+      .bind(uid)
+      .all<{ id: string; filename: string; bc_sgid: string }>()
+    for (const r of results) removedNotesFiles.set(r.bc_sgid, r)
+  }
   const statements: D1PreparedStatement[] = []
   const added: string[] = []
   const removed: string[] = []
@@ -56,6 +64,23 @@ export async function syncAttachmentsFromTodo(env: Env, state: WorkbookState, ui
           .bind(existing.id, filename, m?.downloadUrl ?? null, m?.id ?? null, m?.byteSize ?? null, m?.contentType ?? null, at),
       )
       if (filename !== existing.filename) added.push(filename)
+      continue
+    }
+    // A notes picture's file whose picture came back to the cell with its stored
+    // description (Ctrl+Z after the save, I7): the platform's own row comes back,
+    // not a second chip for the same file.
+    const revived = removedNotesFiles.get(sgid)
+    if (revived) {
+      added.push(revived.filename)
+      statements.push(
+        db
+          .prepare(
+            `UPDATE attachments SET removed_at = NULL, removed_by = NULL, purge_after = NULL, removed_reason = NULL, state = 'attached',
+                    last_error = NULL, last_error_code = NULL, updated_at = ?2
+             WHERE id = ?1 AND removed_at IS NOT NULL AND removed_reason = 'notes_image'`,
+          )
+          .bind(revived.id, at),
+      )
       continue
     }
     const id = crypto.randomUUID()

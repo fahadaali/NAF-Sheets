@@ -239,6 +239,38 @@ const browserUnits = (p, text, dir) => p.evaluate(({ text, dir, run }) => {
   el.remove()
   return units.sort((a, b) => (a.x0 + a.x1) - (b.x0 + b.x1))
 }, { text, dir, run: ARABIC_RUN })
+// The same, for a formula in formula mode (rtl-text.ts step 7): `marked` is the
+// formula with the isolates written out BY HAND as FSI (U+2068) ... PDI (U+2069)
+// around each Arabic token, independently of the module; the browser lays it
+// out left to right. Units and their `start` refer to the formula without the marks.
+const browserFormulaUnits = (p, marked) => p.evaluate(({ marked, run }) => {
+  const el = document.createElement('div')
+  el.dir = 'ltr'
+  el.style.cssText = 'position:fixed;top:0;left:0;white-space:pre;font:11pt "Thmanyah Sans";visibility:hidden'
+  el.textContent = marked
+  document.body.append(el)
+  const re = new RegExp(run, 'y')
+  const units = []
+  let plain = 0
+  for (let i = 0; i < marked.length;) {
+    if (marked[i] === '\u2068' || marked[i] === '\u2069') { i++; continue }
+    re.lastIndex = i
+    const m = re.exec(marked)
+    const len = m ? m[0].length : 1
+    if (marked.slice(i, i + len).trim()) {
+      const range = document.createRange()
+      range.setStart(el.firstChild, i)
+      range.setEnd(el.firstChild, i + len)
+      const b = range.getBoundingClientRect()
+      units.push({ text: marked.slice(i, i + len), x0: b.left, x1: b.right, start: plain })
+    }
+    i += len
+    plain += len
+  }
+  el.remove()
+  return units.sort((a, b) => (a.x0 + a.x1) - (b.x0 + b.x1))
+}, { marked, run: ARABIC_RUN })
+const unmark = (marked) => marked.replace(/[\u2068\u2069]/g, '')
 const sameUnits = (a, b) => JSON.stringify(a.map((u) => u.text)) === JSON.stringify(b.map((u) => u.text))
 const docText = (p, unitId = EDITOR_ID) => p.evaluate((id) => window.__renderManager.getRenderUnitById(id).mainComponent.getSkeleton().getViewModel().getDataModel().getBody().dataStream.replace(/\r\n$/, ''), unitId)
 // The collapsed caret Univer draws in a document's scene (client x), or null.
@@ -883,7 +915,7 @@ await check('a formula with an Arabic sheet name reads left to right in the edit
   await sheet(tp, 'summary')
   await openEditor(tp, 'B2')
   const shown = await docText(tp)
-  const ref = await browserUnits(tp, shown, 'ltr')
+  const ref = await browserFormulaUnits(tp, "='\u2068المهام\u2069'!A2")
   const editor = await paintedUnits(tp, EDITOR_ID)
   await cancelEdit(tp)
   await sheet(tp, 'bidi')
@@ -1139,10 +1171,12 @@ const FORMULA_PIECES = PAL ? [
   ["'المهام'!", PAL.sheet], ['A2', PAL.plain], [')', PAL.plain],
 ] : []
 const FORMULA = FORMULA_PIECES.map(([t]) => t).join('')
+// Formula mode: «نعم» and «المهام» are isolates, so they keep their typed order.
+const FORMULA_MARKED = FORMULA.replace('"نعم"', '"\u2068نعم\u2069"').replace("'المهام'", "'\u2068المهام\u2069'")
 const charColours = FORMULA_PIECES.flatMap(([t, c]) => Array.from(t, () => c))
-// The browser's visual order of the formula's units (a formula paragraph is
-// left to right), each with the colour of its first character.
-const expectedColoured = async (p) => (await browserUnits(p, FORMULA, 'ltr')).map((u) => ({ text: u.text, fill: charColours[u.start] }))
+// The browser's visual order of the formula's units (formula mode: left to
+// right, Arabic tokens isolated), each with the colour of its first character.
+const expectedColoured = async (p) => (await browserFormulaUnits(p, FORMULA_MARKED)).map((u) => ({ text: u.text, fill: charColours[u.start] }))
 const paintedColoured = (p, unitId) => p.evaluate(async (unitId) => {
   const unit = window.__renderManager.getRenderUnitById(unitId)
   const canvas = unit.engine.getCanvasElement()
@@ -1260,6 +1294,188 @@ await check('formula colours: after scroll and 150% zoom, the outlines mirror th
 })
 await fpPlain.close()
 await fp.close()
+
+// --- formula mode (../src/formula-layout.ts, rtl-text.ts step 7) ------------------
+//
+// Owner decision 2026-11-11 («طبق من اليسار الى اليمين»): a formula in the cell
+// editor or the formula bar reads left to right, token by token, in the order it
+// was typed; every Arabic token reads right to left inside its own place. The
+// oracle is the browser's layout of the same formula with FSI … PDI written by
+// hand around each Arabic token (browserFormulaUnits).
+
+const fm = await openPage('?dir=rtl&grid=mirror&selftest=0', {}, { record: true })
+const FM = `=IF(A1>0,"ملخص",'نعم'!A1)`
+const FM_MARKED = `=IF(A1>0,"⁨ملخص⁩",'⁨نعم⁩'!A1)`
+const editorBox = (p, id = EDITOR_ID) => p.evaluate((id) => window.__renderManager.getRenderUnitById(id).engine.getCanvasElement().getBoundingClientRect().toJSON(), id)
+const startFormula = async (p, a1 = 'D7', text = FM) => {
+  await openEditor(p, a1)
+  await typeFormula(p, text)
+  await p.waitForTimeout(500)
+}
+const unitX = (units, text) => units.find((u) => u.text === text)
+
+await check('formula mode: applied with the text layer (lexer contract checked, no problems)', async () => {
+  const s = await fm.evaluate(() => window.__rtlStatus)
+  const st = await fm.evaluate(() => window.__rtlText.state())
+  return { ok: s?.text?.applied === true && s.text.formula?.applied === true && st.formulaMode === true, text: s?.text }
+})
+
+await sheet(fm, 'extras')
+await check('formula mode (cell editor and formula bar): «=IF(A1>0,"ملخص",\'نعم\'!A1)» reads left to right, token by token, the Arabic tokens in their typed places', async () => {
+  await startFormula(fm)
+  const shown = await docText(fm)
+  const ref = await browserFormulaUnits(fm, FM_MARKED)
+  const editor = await paintedUnits(fm, EDITOR_ID)
+  const bar = await paintedUnits(fm, FORMULA_BAR_ID)
+  await fm.screenshot({ path: `${OUT}formula-ltr${TAG}.png`, clip: { x: 0, y: 70, width: 1280, height: 300 } })
+  await cancelEdit(fm)
+  await clickAway(fm)
+  const order = (u) => unitX(u, 'ملخص') && unitX(u, 'نعم') && unitX(u, 'ملخص').x1 < unitX(u, 'نعم').x0
+  // Before formula mode (plain UAX #9 in an LTR paragraph) the two swapped: «نعم» painted left of «ملخص».
+  const ok = shown === FM && sameUnits(editor, ref) && sameUnits(bar, ref) && order(editor) && order(bar)
+  return { ok, shown, browser: ref.map((u) => u.text).join(' '), editor: editor.map((u) => u.text).join(' '), formulaBar: bar.map((u) => u.text).join(' ') }
+})
+
+await check('formula mode: the formula starts at the left edge of the cell editor and of the formula bar', async () => {
+  await startFormula(fm)
+  const editor = await paintedUnits(fm, EDITOR_ID)
+  const bar = await paintedUnits(fm, FORMULA_BAR_ID)
+  const eb = await editorBox(fm)
+  const bb = await editorBox(fm, FORMULA_BAR_ID)
+  await cancelEdit(fm)
+  await clickAway(fm)
+  const eLeft = Math.min(...editor.map((u) => u.x0))
+  const bLeft = Math.min(...bar.map((u) => u.x0))
+  const ok = editor[0]?.text === '=' && bar[0]?.text === '=' && eLeft - eb.left >= 0 && eLeft - eb.left <= 6 && bLeft - bb.left >= 0 && bLeft - bb.left <= 6
+  return { ok, editor: { textLeft: eLeft, canvasLeft: eb.left }, bar: { textLeft: bLeft, canvasLeft: bb.left } }
+})
+
+await check('formula mode: stable while typing, character by character: no completed token moves, an unterminated string reads in place', async () => {
+  await openEditor(fm, 'D7')
+  const steps = []
+  for (const ch of Array.from(FM)) {
+    if (/[؀-ۿ]/.test(ch)) await fm.keyboard.insertText(ch)
+    else await fm.keyboard.type(ch)
+    await fm.waitForTimeout(120)
+    const units = await paintedUnits(fm, EDITOR_ID)
+    const left = (await editorBox(fm)).left
+    steps.push({ text: await docText(fm), arabicLast: /[؀-ۿ]/.test(ch), units: units.map((u) => ({ text: u.text, x: u.x0 - left })) })
+  }
+  await cancelEdit(fm)
+  await clickAway(fm)
+  const final = steps[steps.length - 1].units
+  const moved = []
+  for (const step of steps) {
+    // The open Arabic token (the last unit while a letter is typed) is still being shaped; everything before it is final.
+    const done = step.arabicLast ? step.units.slice(0, -1) : step.units
+    done.forEach((u, i) => {
+      if (u.text !== final[i]?.text || !near(u.x, final[i].x, 1)) moved.push({ at: step.text, unit: u, final: final[i] })
+    })
+  }
+  // «="ملخ» (unterminated): the run sits right after its opening quote.
+  const open = steps.find((s) => s.text === '=IF(A1>0,"ملخ')
+  const quote = open?.units.findIndex((u) => u.text === '"')
+  const inPlace = open && quote >= 0 && open.units[quote + 1]?.text === 'ملخ' && open.units.length === quote + 2
+  return { ok: steps.length === Array.from(FM).length && steps[steps.length - 1].text === FM && moved.length === 0 && inPlace, moved: moved.slice(0, 5), unterminated: open?.units.map((u) => u.text).join(' ') }
+})
+
+await check('formula mode: a click inside an Arabic token places the caret at the clicked letter; Backspace and Delete remove the letter beside it', async () => {
+  const got = {}
+  // Visual right of «ملخص» is its logical start (offset 10), its visual left its end (14).
+  for (const [what, side, key, expected] of [
+    ['start of «ملخص» + Delete', 'right', 'Delete', FM.slice(0, 10) + FM.slice(11)],
+    ['end of «ملخص» + Backspace', 'left', 'Backspace', FM.slice(0, 13) + FM.slice(14)],
+    ['end of «نعم» + Backspace', 'left-2', 'Backspace', FM.slice(0, 19) + FM.slice(20)],
+  ]) {
+    await startFormula(fm)
+    const units = await paintedUnits(fm, EDITOR_ID)
+    const word = side === 'left-2' ? unitX(units, 'نعم') : unitX(units, 'ملخص')
+    const x = side === 'right' ? word.x1 - 2 : word.x0 + 2
+    const edge = side === 'right' ? word.x1 : word.x0
+    await fm.mouse.click(x, (await editorBox(fm)).top + 12)
+    await fm.waitForTimeout(150)
+    const caret = await caretX(fm)
+    await fm.keyboard.press(key)
+    await fm.waitForTimeout(150)
+    const text = await docText(fm)
+    await cancelEdit(fm)
+    await clickAway(fm)
+    got[what] = { ok: text === expected && caret !== null && near(caret, edge, 1.5), text, expected, caret, edge }
+  }
+  return { ok: Object.values(got).every((g) => g.ok), got }
+})
+
+// Univer 1.4.0, stock grid included: an arrow key pressed with the caret right
+// after `(`, `,`, an operator, or at a reference picks a cell into the formula
+// (Excel's "point" mode; seen 2026-11-11 in the unmirrored page without the
+// layer too). So the caret is driven across the two Arabic tokens and their
+// quotes only, from a click: that is where formula mode changes the order.
+await check('formula mode: ArrowLeft and ArrowRight move the caret strictly visually across each Arabic token and its quotes', async () => {
+  const FM2 = `=IF(A1>0,"ملخص","نعم")`
+  const got = {}
+  // [what, click x from the painted units, presses, expected final x going left]
+  for (const [what, from, presses, to] of [
+    ['«نعم» from the end', (u) => u[16].x1 + 3, 5, (u) => u[14].x0],
+    ['«ملخص» from after its closing quote', (u) => u[11].x1 - 1, 5, (u) => u[10].x0],
+  ]) {
+    await startFormula(fm, 'D7', FM2)
+    const units = await paintedUnits(fm, EDITOR_ID)
+    if (units.length !== 17 || units[10].text !== 'ملخص' || units[14].text !== 'نعم') {
+      got[what] = { ok: false, units: units.map((u) => u.text).join(' ') }
+      await cancelEdit(fm)
+      await clickAway(fm)
+      continue
+    }
+    await fm.mouse.click(from(units), (await editorBox(fm)).top + 12)
+    await fm.waitForTimeout(150)
+    const xs = [await caretX(fm)]
+    for (let i = 0; i < presses; i++) {
+      await fm.keyboard.press('ArrowLeft')
+      xs.push(await caretX(fm))
+    }
+    const back = [xs[xs.length - 1]]
+    for (let i = 0; i < presses; i++) {
+      await fm.keyboard.press('ArrowRight')
+      back.push(await caretX(fm))
+    }
+    const text = await docText(fm)
+    const cell = await active(fm)
+    await cancelEdit(fm)
+    await clickAway(fm)
+    const strict = (a, sign) => a.every((x, i) => i === 0 || (x - a[i - 1]) * sign > 0.5)
+    const ok = text === FM2 && cell === 'D7' && strict(xs, -1) && strict(back, 1) && near(xs[xs.length - 1], to(units), 1.5) && near(back[back.length - 1], xs[0], 0.5)
+    got[what] = { ok, text, cell, xs: xs.map(Math.round), back: back.map(Math.round), expectedLeft: Math.round(to(units)) }
+  }
+  return { ok: Object.values(got).every((g) => g.ok), got }
+})
+
+await check('formula mode: plain Arabic text in the same editor keeps its right-to-left layout at the start side', async () => {
+  await openEditor(fm, 'D1')
+  const shown = await docText(fm)
+  const ref = await browserUnits(fm, shown)
+  const editor = await paintedUnits(fm, EDITOR_ID)
+  const box = await cellBox(fm, 'D1')
+  await cancelEdit(fm)
+  const right = Math.max(...editor.map((u) => u.x1))
+  return { ok: shown === 'نص عادي' && sameUnits(editor, ref) && near(right, box.right - 2, 4), shown, textRight: right, cellRight: box.right }
+})
+await fm.close()
+
+await check('safety net: a changed formula lexer leaves formulas in plain bidi; the text layer and the grid stay', async () => {
+  const p = await openPage('?dir=rtl&grid=mirror&selftest=0&simulateBreak=formula-layout', {}, { record: true })
+  const status = await p.evaluate(() => window.__rtlStatus)
+  await sheet(p, 'extras')
+  await startFormula(p)
+  const shown = await docText(p)
+  const editor = await paintedUnits(p, EDITOR_ID)
+  const before = await browserUnits(p, shown, 'ltr') // plain UAX #9: today's behaviour before formula mode
+  await p.screenshot({ path: `${OUT}formula-ltr-fallback${TAG}.png`, clip: { x: 0, y: 70, width: 1280, height: 300 } })
+  await cancelEdit(p)
+  await p.close()
+  const ok = status?.mirrored === true && status.text?.applied === true && status.text.formula?.applied === false && /sequenceNodesBuilder/.test(status.text.formula?.reason ?? '') &&
+    shown === FM && sameUnits(editor, before)
+  return { ok, status: status?.text, editor: editor.map((u) => u.text).join(' ') }
+})
 
 await check('safety net: a changed formula-colour hook leaves Univer\'s own colouring, with Excel\'s palette', async () => {
   const p = await openPage('?dir=rtl&grid=mirror&selftest=0&simulateBreak=formula-contract')

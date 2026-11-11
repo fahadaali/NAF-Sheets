@@ -27,7 +27,7 @@ import type { SheetError, SheetIssue } from '@naf-sheets/sheet-model'
 import { findSystemColumns } from '@naf-sheets/sheet-model'
 import { diffTask } from '@naf-sheets/sync-engine'
 import type { BcOutboundMessage, Env } from '../env'
-import { notesImagesOf, tasksWithUnsentNotesImages } from '../images/notes-images'
+import { notesCellsOf, tasksWithNotesImageWork } from '../images/notes-images'
 import { localFingerprint } from './fingerprint'
 import { ROW_MESSAGES } from './messages'
 import { diffContextFor, diffLocal, loadWorkbookState, readSheet, syncedSheets } from './state'
@@ -315,15 +315,16 @@ export async function detectOutboundChanges(env: Env, input: DetectionInput, now
     hold(uid, 'row_missing', ROW_MESSAGES.row_missing)
   }
 
-  // --- Pictures in a to-do's notes cell that were never sent (src/images/notes-images.ts):
-  // the row's text did not change, so it is queued for its picture alone; the
-  // consumer sends it as a file of the description after the task's step.
-  const notesImages = notesImagesOf(state)
+  // --- Pictures in a to-do's notes cell never sent, or files whose picture left
+  // the cell (src/images/notes-images.ts, I7): the row's text did not change, so
+  // it is queued for its pictures alone; the consumer sends or removes the files
+  // after the task's step, on the latest committed snapshot.
+  const notesImages = notesCellsOf(state)
   for (const uid of [...notesImages.keys()]) {
     const row = state.taskRows.get(uid)
     if (!present.has(uid) || !row || row.level !== 0 || row.bc_recording_id === null || row.trashed_at !== null || row.remote_status !== 'active') notesImages.delete(uid)
   }
-  for (const uid of await tasksWithUnsentNotesImages(db, wb.id, notesImages)) {
+  for (const uid of await tasksWithNotesImageWork(db, wb.id, notesImages)) {
     if (queue.has(uid)) continue
     const author = actorFor(uid)
     if (author !== null) queue.set(uid, author)

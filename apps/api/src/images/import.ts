@@ -5,7 +5,8 @@
 //
 // They are stored before the workbook row exists (its id is chosen first). A
 // file whose import then fails leaves its pictures in R2 under that unused
-// id; nothing deletes them (CLAUDE.md §3; OPEN_QUESTIONS.md "Images" I9).
+// id; the daily clean-up (./cleanup.ts, I9) deletes them once no snapshot
+// refers to them and 30 days have passed, keeping the backup's copy.
 
 import type { PictureStore } from '@naf-sheets/xlsx-import'
 import type { Env } from '../env'

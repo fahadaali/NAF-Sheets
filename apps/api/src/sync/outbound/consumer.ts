@@ -36,7 +36,7 @@ import {
   ValidationError,
 } from '@naf-sheets/basecamp'
 import { LinkFailure, withServiceToken, withUserToken } from '../../basecamp-link'
-import { sendNotesImages } from '../../images/notes-images'
+import { syncNotesImages } from '../../images/notes-images'
 import type { LinkContext } from '../../basecamp-link'
 import type { BcOutboundMessage, Env } from '../../env'
 import { queueClient, syncContext } from '../deps'
@@ -240,14 +240,16 @@ async function deadLetter(env: Env, deps: SyncDeps, message: Message<BcOutboundM
  */
 export async function processOutbound(env: Env, deps: SyncDeps, body: unknown, session?: WorkbookBatch): Promise<Outcome> {
   const outcome = await processOutboundStep(env, deps, body, session)
-  // Pictures of the to-do's notes cell go out as files of its description,
-  // after the step and outside its lease (src/images/notes-images.ts). Never
-  // changes the message's outcome: a failure leaves the file `failed` with a retry.
+  // Pictures of the to-do's notes cell go out as files of its description, and
+  // leave it when they leave the cell (I7), after the step and outside its
+  // lease (src/images/notes-images.ts). Never changes the message's outcome: a
+  // failed send leaves the file `failed` with a retry; a failed removal leaves
+  // the chip, retried with the row's next change.
   if (outcome.kind === 'ack' && isOutboundMessage(body)) {
     try {
-      await sendNotesImages(env, deps, body.workbookId, body.taskUid, body.actorUserId)
+      await syncNotesImages(env, deps, body.workbookId, body.taskUid, body.actorUserId)
     } catch (error) {
-      console.warn(`sync: sending the notes pictures of a task failed (${error instanceof Error ? error.name : 'unknown'})`)
+      console.warn(`sync: syncing the notes pictures of a task failed (${error instanceof Error ? error.name : 'unknown'})`)
     }
   }
   return outcome

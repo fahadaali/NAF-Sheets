@@ -27,16 +27,25 @@
 //   6. Arrow keys move the caret visually; Home and End stay logical. With
 //      Univer's Mac key map, Cmd+Left/Right go to the visual left/right end
 //      of the line (owner decision 2026-11-10), like the plain arrows.
+//   7. Formula mode (owner decision 2026-11-11, formula-layout.ts): an editor
+//      document that starts with `=` is left to right, every token that can
+//      hold Arabic is a bidi isolate (token boundaries from Univer's formula
+//      lexer), and the line starts at the editor's left edge. Steps 2-6 then
+//      work on that order unchanged. Without a usable lexer
+//      (`checkFormulaLayoutContract`), formulas keep plain UAX #9.
 //
 // Every hook is listed in `checkTextContract()`. A heartbeat withdraws the
 // layer if right-to-left text is painted without passing through it.
 
 import { Direction, UniverInstanceType } from '@univerjs/core'
+import { LexerTreeBuilder } from '@univerjs/engine-formula'
 import { Documents, DocumentSkeleton } from '@univerjs/engine-render'
 import { NodePositionConvertToCursor } from '@univerjs/docs-ui'
 import { IPlatformService } from '@univerjs/ui'
 import { lineLevels, paragraphDirection, resolveParagraph } from './bidi'
 import type { ParagraphLevels } from './bidi'
+import { checkFormulaLayoutLexer, formulaIsolates, isFormulaText } from './formula-layout'
+import type { FormulaTokenizer } from './formula-layout'
 
 // ---------------------------------------------------------------------------
 // Pure helpers (no Univer, no DOM)
@@ -247,6 +256,17 @@ export function checkTextContract(): string[] {
   return problems
 }
 
+/**
+ * Static part of the formula-mode contract (7): Univer's formula lexer. A
+ * problem here leaves formulas in plain UAX #9 (today's behaviour), never the
+ * rest of the layer.
+ */
+export function checkFormulaLayoutContract(): string[] {
+  const lexer = (LexerTreeBuilder as unknown as { prototype?: Record<string, unknown> } | undefined)?.prototype
+  const f = lexer?.sequenceNodesBuilder
+  return isFn(f) && f.length >= 1 ? [] : ['LexerTreeBuilder.prototype.sequenceNodesBuilder(formulaString)']
+}
+
 // ---------------------------------------------------------------------------
 // Univer shapes this layer reads (only what it touches)
 // ---------------------------------------------------------------------------
@@ -300,12 +320,16 @@ const state = {
   onWithdraw: new Set<(reason: string) => void>(),
   /** Univer's key map is the Mac one (line start/end are Cmd+Left/Right, Home/End unbound). */
   macKeys: false,
+  /** Formula mode (7): the lexer that cuts formulas into tokens, or null (plain UAX #9 for formulas). */
+  tokenize: null as FormulaTokenizer | null,
+  /** Formula lines laid out in formula mode (the tests read it). */
+  formulaLines: 0,
 }
 const active = () => state.enabled > 0 && state.withdrawn === null
 
 /** Diagnostics for tests and the status: is the layer live, and how much has it painted. */
 export function textLayerState() {
-  return { active: active(), withdrawn: state.withdrawn, paintedLines: state.paintedLines }
+  return { active: active(), withdrawn: state.withdrawn, paintedLines: state.paintedLines, formulaMode: state.tokenize !== null }
 }
 
 const FROM_OFFSET = Symbol('naf-rtl.fromOffset')
@@ -456,13 +480,14 @@ interface Geometry {
 }
 const geometryCache = new WeakMap<Divide, { length: number; last: Glyph | undefined; width: number; stream: string; geometry: Geometry | null }>()
 const paragraphCache = new Map<string, ParagraphLevels>()
+const NO_ISOLATES: Array<[number, number]> = []
 const RTL_OR_CONTROL = /[\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF\u200F\u202A-\u202E\u2066-\u2069]|[\uD802-\uD803\uD83A-\uD83B]/
 
-function paragraphLevels(text: string, direction: 'ltr' | 'rtl'): ParagraphLevels {
-  const key = direction + text
+function paragraphLevels(text: string, direction: 'ltr' | 'rtl', isolates: ReadonlyArray<readonly [number, number]> = NO_ISOLATES): ParagraphLevels {
+  const key = `${direction}${isolates.length ? JSON.stringify(isolates) : ''}\u0000${text}`
   let p = paragraphCache.get(key)
   if (!p) {
-    p = resolveParagraph(text, direction)
+    p = resolveParagraph(text, direction, 'ltr', isolates)
     if (paragraphCache.size > 500) paragraphCache.clear()
     paragraphCache.set(key, p)
   }
@@ -503,8 +528,10 @@ function computeGeometry(skeleton: Skeleton, divide: Divide, stream: string, par
   }
   const text = bidiTextOfStream(stream.slice(start, end + 1))
   if (!editor && !RTL_OR_CONTROL.test(text)) return null
-  const direction = documentParagraphDirection(text, explicit, 'rtl')
-  const p = paragraphLevels(text, direction)
+  // Formula mode (7): only the editor surfaces, only with a usable lexer.
+  const formula = editor && state.tokenize !== null && isFormulaText(stream)
+  const direction = formula ? 'ltr' : documentParagraphDirection(text, explicit, 'rtl')
+  const p = formula ? paragraphLevels(text, 'ltr', formulaIsolates(text, state.tokenize, start > 0)) : paragraphLevels(text, direction)
   const from = Math.max(line.st, start) - start
   const to = Math.min(line.ed, end) - start + 1
   const levels = lineLevels(p, from, Math.max(from, to))
@@ -531,8 +558,13 @@ function computeGeometry(skeleton: Skeleton, divide: Divide, stream: string, par
     // right), a left-to-right one included, so the editor matches the mirrored
     // cell it edits (which shows Latin text on the right too). Word order still
     // follows each paragraph's own direction.
-    shift = surfaceShift(e0, e1, divide.width)
+    // A formula (7) starts at the left edge instead, whatever the cell's
+    // alignment, as Excel's formula bar and LibreOffice do (apps/web
+    // OPEN_QUESTIONS.md F5).
+    if (formula) shift = Number.isFinite(e0) && e0 > 0.5 && e1 - e0 <= divide.width + 0.5 ? -e0 : 0
+    else shift = surfaceShift(e0, e1, divide.width)
   }
+  if (formula) state.formulaLines++
   const boxes = visualBoxes(lefts, widths, glyphLevels, shift)
   const needed = shift !== 0 || glyphLevels.some((l) => l % 2 === 1)
   return { boxes, starts, paragraphRtl: p.paragraphLevel === 1, needed }
@@ -1044,6 +1076,8 @@ function withdraw(reason: string) {
 export interface TextLayer {
   applied: boolean
   reason?: string
+  /** Formula mode (7): applied, or why formulas keep plain UAX #9 (English, for an administrator). */
+  formula: { applied: boolean; reason?: string }
   /** Missing or changed hooks (static and instance); empty when applied. */
   problems: string[]
   dispose: () => void
@@ -1058,9 +1092,11 @@ export function enableRtlText(injector: unknown, onWithdraw: (reason: string) =>
   const problems = checkTextContract()
   const controller = findMoveController(injector)
   if (typeof controller === 'string' && controller !== PENDING) problems.push(controller)
-  if (problems.length) return { applied: false, reason: `text contract broken: ${problems.join('; ')}`, problems, dispose: () => {} }
-  if (state.withdrawn !== null) return { applied: false, reason: state.withdrawn, problems, dispose: () => {} }
+  const off = (reason: string) => ({ applied: false, reason })
+  if (problems.length) return { applied: false, reason: `text contract broken: ${problems.join('; ')}`, formula: off('the text layer is not applied'), problems, dispose: () => {} }
+  if (state.withdrawn !== null) return { applied: false, reason: state.withdrawn, formula: off('the text layer is not applied'), problems, dispose: () => {} }
   install()
+  const formula = enableFormulaMode(injector)
   try {
     state.macKeys = Boolean((injector as { get: (t: unknown) => { isMac?: boolean } }).get(IPlatformService)?.isMac)
   } catch {
@@ -1089,6 +1125,7 @@ export function enableRtlText(injector: unknown, onWithdraw: (reason: string) =>
   return {
     applied: true,
     problems,
+    formula,
     dispose: () => {
       if (disposed) return
       disposed = true
@@ -1099,7 +1136,34 @@ export function enableRtlText(injector: unknown, onWithdraw: (reason: string) =>
   }
 }
 
-/** For tests: lines painted, pointer positions mapped, and draws that bypassed the paint hook. */
+/**
+ * Formula mode (7): Univer's lexer from the root injector, checked statically
+ * and live. Any problem leaves `state.tokenize` null: formulas then keep plain
+ * UAX #9 and the editor's start side, as before formula mode existed.
+ */
+function enableFormulaMode(injector: unknown): { applied: boolean; reason?: string } {
+  const problems = checkFormulaLayoutContract()
+  let tokenize: FormulaTokenizer | null = null
+  if (problems.length === 0) {
+    try {
+      const lexer = (injector as { get: (t: unknown) => { sequenceNodesBuilder: (f: string) => ReturnType<FormulaTokenizer> } }).get(LexerTreeBuilder)
+      if (lexer && isFn(lexer.sequenceNodesBuilder)) tokenize = (f) => lexer.sequenceNodesBuilder(f)
+    } catch (e) {
+      problems.push(`LexerTreeBuilder (injector): ${String(e)}`)
+    }
+    if (problems.length === 0) problems.push(...checkFormulaLayoutLexer(tokenize))
+  }
+  if (problems.length) {
+    const reason = `formula mode contract broken: ${problems.join('; ')}`
+    console.error(`[rtl-text] formulas keep plain bidi: ${reason}`)
+    state.tokenize = null
+    return { applied: false, reason }
+  }
+  state.tokenize = tokenize
+  return { applied: true }
+}
+
+/** For tests: lines painted, pointer positions mapped, draws that bypassed the paint hook, formula lines laid out. */
 export function textLayerCounters() {
-  return { paintedLines: state.paintedLines, hitsMapped, paintedByHook, bypassedDraws: state.bypassedDraws }
+  return { paintedLines: state.paintedLines, hitsMapped, paintedByHook, bypassedDraws: state.bypassedDraws, formulaLines: state.formulaLines }
 }

@@ -191,7 +191,8 @@ export interface ParagraphLevels {
  * `direction` is the paragraph direction; 'auto' applies P2-P3 and falls back
  * to `fallback` when the paragraph has no strong character.
  */
-export function resolveParagraph(text: string, direction: 'ltr' | 'rtl' | 'auto' = 'auto', fallback: 'ltr' | 'rtl' = 'ltr'): ParagraphLevels {
+export function resolveParagraph(text: string, direction: 'ltr' | 'rtl' | 'auto' = 'auto', fallback: 'ltr' | 'rtl' = 'ltr', isolates?: ReadonlyArray<readonly [number, number]>): ParagraphLevels {
+  if (isolates?.length) return resolveWithIsolates(text, direction, fallback, isolates)
   const original = classesOf(text)
   const n = original.length
   const match = matchingPdi(original)
@@ -282,6 +283,41 @@ export function resolveParagraph(text: string, direction: 'ltr' | 'rtl' | 'auto'
   // Characters removed by X9 take the level of the preceding character (or the paragraph's).
   for (let i = 0; i < n; i++) if (isRemovedByX9(original[i]!)) levels[i] = i > 0 ? levels[i - 1]! : paragraphLevel
   return { levels, paragraphLevel, types: original }
+}
+
+/**
+ * Virtual isolates: each range [start, end) of `text` is resolved as if it
+ * were wrapped in FSI … PDI (UAX #9 X5c, X6a), without changing the text.
+ * Ranges must be sorted and must not overlap (empty ones are ignored). The
+ * controls are added to a copy, resolved, and dropped again: levels and
+ * types are those of `text`'s own code units. The levels are exactly those
+ * real controls give; the dropped controls no longer split a run in L2, which
+ * matters only where two characters of a deeper odd level meet across one
+ * (two adjacent right-to-left isolates). Formula mode never builds that.
+ */
+function resolveWithIsolates(text: string, direction: 'ltr' | 'rtl' | 'auto', fallback: 'ltr' | 'rtl', isolates: ReadonlyArray<readonly [number, number]>): ParagraphLevels {
+  let augmented = ''
+  const position: number[] = []
+  let at = 0
+  for (const [start, end] of isolates) {
+    if (!(end > start) || start < at || end > text.length) continue
+    for (; at < start; at++) {
+      position.push(augmented.length)
+      augmented += text[at]
+    }
+    augmented += '\u2068'
+    for (; at < end; at++) {
+      position.push(augmented.length)
+      augmented += text[at]
+    }
+    augmented += '\u2069'
+  }
+  for (; at < text.length; at++) {
+    position.push(augmented.length)
+    augmented += text[at]
+  }
+  const p = resolveParagraph(augmented, direction, fallback)
+  return { levels: position.map((k) => p.levels[k]!), paragraphLevel: p.paragraphLevel, types: position.map((k) => p.types[k]!) }
 }
 
 function resolveSequence(seq: number[], types: number[], original: number[], explicit: number[], levels: number[], text: string, kept: number[], keptIndex: number[], paragraphLevel: number) {
@@ -450,8 +486,8 @@ export function visualOrder(levels: readonly number[]): number[] {
 }
 
 /** For tests and diagnostics: the code points of one line of text in visual order (left to right). */
-export function visualString(text: string, direction: 'ltr' | 'rtl' | 'auto' = 'auto', fallback: 'ltr' | 'rtl' = 'ltr'): string {
-  const p = resolveParagraph(text, direction, fallback)
+export function visualString(text: string, direction: 'ltr' | 'rtl' | 'auto' = 'auto', fallback: 'ltr' | 'rtl' = 'ltr', isolates?: ReadonlyArray<readonly [number, number]>): string {
+  const p = resolveParagraph(text, direction, fallback, isolates)
   const line = lineLevels(p, 0, text.length)
   const units = Array.from(text)
   const levels: number[] = []

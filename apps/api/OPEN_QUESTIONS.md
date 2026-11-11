@@ -457,10 +457,10 @@ changes nothing (hidden columns; the server writes them as plain values).
 **Decisions taken as the safest, open for the owner:**
 - **(owner)** Excel "Ignore blank" off: blanks stay allowed (else Univer marks every empty cell of the range with a red triangle). Reported per rule. Keep, or honour it?
 - **(owner)** A Google multiple-selection dropdown none of whose cells holds two items is not recognisable (no file, API or page marks it): it imports as a single list.
-- **(owner)** Univer stores a new multiple pick as `["a","b"]`, not Google's `a, b`; formulas that split such cells on ", " stop matching after an edit. Reported; change Univer's write (a hook) or accept?
+- **Decided (owner, 2026-11-11: «نعم»): accepted.** Univer stores a new multiple pick as `["a","b"]`, not Google's `a, b`; formulas that split such cells on ", " stop matching after an edit. Kept as Univer writes it (no hook); the import report still says so.
 - **(verify live)** Google's htmlview page is not an API. It is read defensively (no table, no chip → nothing; any non-200 → a report item, the import goes on). If Google changes it, colours and the chip style silently fall back to arrow and grey **and the report says they could not be read** only when the page is unreadable, not when it reads but looks different. Re-check with the real NAF file.
 - **(owner)** Fetching htmlview makes 1 + (sheets with dropdowns, ≤ 20) extra requests to docs.google.com per link import (audited as `renderingRequests`); pages ≤ 8 MiB each (`DEFAULT_RENDERING_LIMITS`).
-- **(owner)** The new real fixtures (three Google exports and seven htmlview pages of public third-party samples) are in the repository like G20's. Confirm.
+- **Decided (owner, 2026-11-11: «نعم تبقى»):** the new real fixtures (three Google exports and seven htmlview pages of public third-party samples) stay in the repository, like G20's.
 - An item colour chosen as Google's default grey (`#e8eaed`) is read as "no colour".
 
 ## Basecamp link
@@ -939,10 +939,13 @@ P4. **(owner)** **The 30-day archive (§10).** A removed chip keeps its D1 row
     owner's decision (CLAUDE.md §3). Decide the mechanism (a cron that deletes
     objects past `purge_after`, or an R2 lifecycle rule on a prefix — which
     would mean moving objects), and whether a removed file can be restored
-    within the 30 days (no route for it yet).
+    within the 30 days (no route for it yet). The picture clean-up of I9 does
+    not touch these files (only `workbooks/{id}/images/…`).
 
 P5. **Removing a chip of a to-do deleted or archived in Basecamp**, or of a
     subtask / local row: only the platform's chip goes; Basecamp is not called.
+    (A notes picture removed from its cell of such a to-do changes nothing at
+    all, its chip included: "Images" I7.)
 
 P6. **(owner)** **Size limit.** Default 100 MB = 100 × 1024 × 1024 bytes; an
     admin can lower it (`PUT /api/admin/attachment-settings`, KV `SETTINGS`),
@@ -1410,11 +1413,58 @@ I6. **Notes pictures → files of the description.** After a commit, detection
     synced, active and in a synced sheet (`fileMode` = basecamp). The
     attachments cell then names the file.
 
-I7. **(owner)** **A picture removed from the notes cell stays in Basecamp.**
-    Removing it from the description would write to Basecamp on an
-    interpretation of an edit; the file stays a chip of the row and is removed
-    through the attachment editor, after confirmation (§10). Decide whether
-    removing the picture from the cell should remove the file.
+I7. **Decided (owner, 2026-11-11: «نعم تحذف») and built: a picture removed
+    from a to-do's notes cell leaves its description in Basecamp.**
+    Verified against `basecamp/bc-api` (sections `rich_text.md`, `attachments.md`,
+    `todos.md`, read 2026-11-11): a file in a description is not a recording
+    of its own but the `<bc-attachment sgid>` element in the rich text, whose
+    `sgid` is the `attachable_sgid` `POST /attachments.json` returned (phase 5
+    put it there with `changeTodoDescription` add, at the end of the person's
+    part, I6); `description_attachments` merely lists those elements; there is
+    no endpoint that deletes an attachment. So removal = the next
+    `PUT /todos/{id}.json` without that element, which carries every field
+    ("Omitting a parameter will clear its value", todos.md). Built on phase
+    5's removal path (`changeTodoDescription` remove, the attachment editor's
+    P4/P5 path): `src/images/notes-images.ts` `syncNotesImages`, run by the
+    outbound consumer after the task's step (as I6), on the **latest committed
+    snapshot**. Rules:
+    - only the sgid the platform recorded for that picture (the `attachments`
+      row keyed `attachments/{wb}/{uid}/cell-image-{imageId}`, origin `local`)
+      is removed; another file, a file attached in Basecamp, a mention, the
+      managed block are sent back byte for byte;
+    - with the token of the person whose edit removed it (detection's
+      attribution, spec §3); without a usable link nothing is sent (logged
+      warning; retried with the row's next change);
+    - the description exactly as read is logged first (`sync_log`
+      `detach_file_snapshot`, `old_value`), then the PUT, then the chip is
+      marked removed (`removed_reason = 'notes_image'`, migration 0008; R2 copy
+      kept, `purge_after` +30 days as P4) with audit `attachment.remove_notes_image`;
+    - a to-do trashed, archived or not reachable in Basecamp: nothing is sent,
+      no error, the chip stays (`fileMode` refused, or `task_deleted_remotely`
+      / 404 on the fresh read);
+    - a file still `uploading` is left for its outcome; a `failed` one never
+      in Basecamp (no sgid) only loses its chip;
+    - floating pictures never reach Basecamp (I3), so removing one sends
+      nothing; a picture removed from any other column sends nothing (I4).
+    **Confirmation: none, by choice** (the safest *consistent* behaviour,
+    open for the owner): row deletion asks because Basecamp's deletion is
+    destructive (§9.2.7); here nothing is destroyed — the file stays in the
+    platform (chip archived, R2 copy, the original picture), the old
+    description is logged, and the removal is reversible from the sheet:
+    an undo **before the save** never reaches the server; an undo after the
+    save but **before the queue runs** sends nothing (the consumer reads the
+    latest snapshot); an undo **after** it puts the same file back
+    (`<bc-attachment sgid>` re-added, or already re-added by the notes cell's
+    own stored description, P11 — the inbound extraction then revives the
+    platform's row instead of making a second chip). A file removed with the
+    attachment editor (§10, confirmed) or in Basecamp is never sent again
+    while its picture stays in the cell (I6, unchanged). **(verify live, I20)**:
+    putting a removed `sgid` back into the same description is not documented
+    either way (rich_text.md only forbids reusing an attachment in another
+    record); the notes cell's undo already relied on it (P11).
+    **Open:** changing which column is the notes column (link settings) reads
+    the old column's pictures as removed and takes their files out of the
+    description (reversible as above). Tests: `test/images/notes-remove.test.ts`.
 
 I8. **Inbound never removes a picture.** Every inbound write goes through
     sheet-model `writeValue`, which, for a cell holding pictures, keeps them
@@ -1424,14 +1474,31 @@ I8. **Inbound never removes a picture.** Every inbound write goes through
     formatting in such a cell is not kept. The same value twice is
     `unchanged` (no server change).
 
-I9. **(owner)** **Nothing deletes a picture object** (CLAUDE.md §3).
-    Pictures uploaded and then removed from the sheet, undone inserts, and
-    the pictures of an import that failed after they were stored stay in R2.
-    The daily backup copies every picture once into `images/workbooks/…` of
-    the backup bucket (create-only, never replaced) and the retention policy
-    never removes them (it removes `d1/{run}/` files and snapshot copies only);
-    docs/backups.md says so. Decide on a clean-up (pictures no snapshot
-    version references) and whether backups should keep removed pictures.
+I9. **Decided (owner, 2026-11-11: «نعم نظف») and built: a daily clean-up of
+    picture files nothing refers to.** `src/images/cleanup.ts`, run by
+    `runBackup` after a successful backup and its retention policy; operators'
+    description in docs/backups.md §7 (B8). Rules: only `ATTACHMENTS` keys
+    `workbooks/{id}/images/{imageId}` (phase 5 files, including notes-picture
+    copies, are **not** touched: P4 stays open); a picture is deleted only
+    when (1) no stored snapshot refers to it — every object in `SNAPSHOTS`
+    (every version of every workbook, templates; versions are never deleted)
+    and every `snapshots/…` copy in `BACKUPS` whose original is missing; a
+    reference is the id after `images/` anywhere in the text, whatever
+    workbook it names; (2) every snapshot written after its upload (minus a
+    day) has been read (`image_ref_scans` / `image_refs`, migration 0008; each
+    immutable snapshot is read once, ≤ 2,000 objects / 256 MiB per run,
+    newest first); (3) it was uploaded more than **30 days** ago
+    (`IMAGE_CLEANUP_GRACE_DAYS`); (4) its workbook is not archived (no row =
+    a failed import: allowed); (5) the backup bucket holds its copy. At most
+    200 deletions per run, oldest first; each logged to `audit_log`
+    (`image.cleanup`) before the delete; the outcome in
+    `backup_runs.details_json.imageCleanup`. **Backups keep removed
+    pictures** (`images/…` in `BACKUPS` is never deleted): the safest reading,
+    **(owner) confirm**. Consequence: since snapshot versions are kept
+    forever, a picture that was ever saved stays forever; what goes is what
+    never reached a saved version (undone inserts, failed imports, uploads
+    never inserted). Not read: the room's op log (not a restorable version;
+    the room saves within 10 s). Tests: `test/images/cleanup.test.ts`.
 
 I10. **Import, floating pictures** (`xl/drawings`, both origins). Anchors →
     Univer `anchorType`: `twoCellAnchor` (default) → `1` (moves and sizes with

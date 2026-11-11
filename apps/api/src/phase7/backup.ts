@@ -13,7 +13,8 @@
 //   d1/{run}/r2-inventory/{page}.ndjson      key, size, etag, uploaded of every SNAPSHOTS object
 //   d1/{run}/snapshot-copies.ndjson          the snapshot copies this run relies on (copied or already there)
 //   images/workbooks/{id}/images/{imageId}   each picture over or in a cell (ATTACHMENTS, src/images),
-//                                            copied once: a picture never changes (OPEN_QUESTIONS.md "Images" I9)
+//                                            copied once: a picture never changes; never removed, also
+//                                            after the clean-up below deleted the original (OPEN_QUESTIONS.md "Images" I9)
 //   d1/{run}/manifest.json                   counts, written last (a run without it is incomplete)
 //
 // Nothing is ever overwritten: every put is create-only, and a snapshot
@@ -21,6 +22,11 @@
 // policy (./retention.ts, owner decision 2026-11-10): after a run succeeds,
 // the files of old runs in this bucket — nothing else. Restoring is a manual,
 // documented procedure (docs/backups.md), never automatic.
+//
+// After the retention policy, the same successful run cleans up picture files
+// nothing refers to in ATTACHMENTS (src/images/cleanup.ts, owner decision
+// 2026-11-11, I9): bounded, audited, and only pictures whose copy is in this
+// bucket.
 //
 // OPEN (B1, B4, B5, apps/api/OPEN_QUESTIONS.md): Cloudflare's own D1 export /
 // Time Travel as the official mechanism, attachments (ATTACHMENTS bucket) and
@@ -32,6 +38,8 @@ import { Hono } from 'hono'
 import type { AppEnv } from '../auth'
 import type { Env } from '../env'
 import { auditStatement } from '../audit'
+import { cleanUpImages } from '../images/cleanup'
+import type { ImageCleanupOutcome } from '../images/cleanup'
 import { ApiFailure } from '../errors'
 import { callerOf } from '../request'
 import { snapshotKey } from '../snapshot'
@@ -55,6 +63,8 @@ export interface BackupDetails {
   imagesPresent?: number
   /** The retention policy applied after this run succeeded. */
   retention?: PruneOutcome
+  /** The picture clean-up run after the retention policy (src/images/cleanup.ts). */
+  imageCleanup?: ImageCleanupOutcome
 }
 
 export interface BackupResult {
@@ -228,6 +238,8 @@ export async function runBackup(env: Env, at: Date = new Date()): Promise<Backup
       .run()
     // Retention (B2): only now that this run succeeded and its manifest is written.
     details.retention = await pruneBackups(env, bucket, runId, new Date().toISOString())
+    // I9: pictures nothing refers to, only after this run copied them (never throws).
+    details.imageCleanup = await cleanUpImages(env, bucket, at)
     await db.prepare(`UPDATE backup_runs SET details_json = ?2 WHERE id = ?1`).bind(runId, JSON.stringify(details)).run()
     return { runId, status: 'succeeded', details, error: null }
   } catch (error) {

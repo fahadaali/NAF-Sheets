@@ -11,7 +11,7 @@
 //   ?grid=mirror            mirror the grid (and apply the document-text layer)
 //   ?textLayer=1            unmirrored grid with only the document-text layer
 //                           (the reference for comparisons with the mirrored grid)
-//   ?simulateBreak=contract|heartbeat|text-contract|text-heartbeat|formula-contract
+//   ?simulateBreak=contract|heartbeat|text-contract|text-heartbeat|formula-contract|formula-layout
 //                           break the layer on purpose to prove its safety nets
 //   ?formulaColours=0       Univer's own formula colouring (no formula-colours layer)
 
@@ -44,6 +44,7 @@ import { Documents, IRenderManagerService } from '@univerjs/engine-render'
 import { NodePositionConvertToCursor } from '@univerjs/docs-ui'
 import { IPlatformService } from '@univerjs/ui'
 import { RefSelectionsRenderService } from '@univerjs/sheets-formula-ui'
+import { LexerTreeBuilder } from '@univerjs/engine-formula'
 
 import '@univerjs/preset-sheets-core/lib/index.css'
 import '@univerjs/preset-sheets-conditional-formatting/lib/index.css'
@@ -366,6 +367,15 @@ async function run() {
     const proto = NodePositionConvertToCursor.prototype as unknown as { getRangePointData: (...a: unknown[]) => unknown }
     const original = proto.getRangePointData
     proto.getRangePointData = function (this: unknown, ...a: unknown[]) {
+      return original.apply(this, a)
+    }
+  }
+  if (simulateBreak === 'formula-layout') {
+    // The formula lexer with a different signature: only formula mode of the
+    // text layer must notice (formulas keep plain bidi; everything else stays).
+    const proto = LexerTreeBuilder.prototype as unknown as { sequenceNodesBuilder: (...a: unknown[]) => unknown }
+    const original = proto.sequenceNodesBuilder
+    proto.sequenceNodesBuilder = function (this: unknown, ...a: unknown[]) {
       return original.apply(this, a)
     }
   }

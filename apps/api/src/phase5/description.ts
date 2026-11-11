@@ -56,6 +56,8 @@ export interface DescriptionStep {
   wb: WorkbookSyncRow
   uid: string
   change: DescriptionChange
+  /** Runs with the record just read, right before the PUT (only when something changes): e.g. a snapshot of the old description. */
+  beforeWrite?: (current: RemoteTodo) => Promise<void>
   /** Runs after Basecamp accepted the PUT (or when nothing had to change), before the sheet catches up. */
   onWritten?: () => Promise<void>
 }
@@ -89,6 +91,7 @@ export async function changeTodoDescription(step: DescriptionStep): Promise<'cha
         startsOn: current.startsOn,
         notify: false,
       }
+      await step.beforeWrite?.(current)
       record = await client.todos.update(token, todoId, write)
       outcome = 'changed'
       await runBatches(env.DB, [

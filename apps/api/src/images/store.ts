@@ -1,8 +1,9 @@
 // Pictures of a workbook in R2 (contract: packages/shared/src/api-images.ts):
 // the ATTACHMENTS bucket, key `workbooks/{workbookId}/images/{imageId}`. The
 // workbook snapshot holds only the picture's URL. An object is written once
-// and never changed; nothing here deletes one (CLAUDE.md §3: deleting data
-// needs the owner's approval; apps/api OPEN_QUESTIONS.md "Images" I9).
+// and never changed. The only deletion is the daily clean-up of pictures no
+// stored snapshot refers to (./cleanup.ts; owner decision 2026-11-11, apps/api
+// OPEN_QUESTIONS.md "Images" I9).
 
 import { IMAGE_MAX_BYTES, imagePath, sniffImageType, type ImageType } from '@naf-sheets/shared'
 import type { Env } from '../env'

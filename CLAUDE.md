@@ -110,6 +110,7 @@ Planned layout (§4.3): `apps/web`, `apps/api`, `packages/{shared,gsheets-import
 - **Univer's grid does not render RTL** (1.4.0, re-checked 2026-11-10): `direction: 'rtl'` mirrors only the UI chrome; `worksheet.rightToLeft` is never read by the renderer.
 - **Solved by `@naf-sheets/univer-rtl`** (`packages/univer-rtl/src/rtl-grid.ts`; phase 0 original in `spike/univer`). It flips the canvas container with CSS and flips back what must not be mirrored: text per line or glyph group, rotated cells as a whole, images, the cell editor. It mirrors popup anchors and placement directions, swaps arrow keys and the toolbar's left/right alignment, fixes touch hit testing and negates horizontal wheel deltas. The model is never changed by the mirror.
 - **Univer's document layout has no bidi** (1.4.0, verified 2026-11-10 on the stock grid too): the cell editor, the formula bar, rich-text and rotated cells laid Arabic words out left to right («إعداد خطة» shown as «خطة إعداد»), and an Arabic word was one glyph (Backspace deleted the whole word). `IParagraphStyle.direction` is declared but never read. **Solved by the text layer** (`src/bidi.ts`, a full UAX #9; `src/rtl-text.ts`): the layout and the model stay logical; lines are painted in visual order, Arabic runs are re-cut into one glyph per grapheme (painted joined), and caret, selection, hit testing and arrow keys follow the visual positions. The contract check and a text heartbeat judge it separately from the grid: a broken text hook leaves the editors stock and keeps the grid mirrored (`RtlGridStatus.text`).
+- **Formulas read left to right, token by token** (owner, 2026-11-11, «طبق من اليسار الى اليمين»; `src/formula-layout.ts`, rtl-text step 7, apps/web `OPEN_QUESTIONS.md` F5): an editor document starting with `=` gets an LTR paragraph, every string / quoted sheet name / Arabic bare name is a virtual bidi isolate (FSI … PDI, quotes outside it; boundaries from Univer's `LexerTreeBuilder`), and the line starts at the editor's left edge. Guarded by `checkFormulaLayoutContract()` plus a live lexer check (`RtlGridStatus.text.formula`): without it formulas keep plain UAX #9; plain text and grid cells are untouched.
 - **Alignment is logical** (owner decision 2026-11-10): model LEFT = start = visual right. The toolbar and alignment shortcuts are swapped so their buttons mean what they show; programmatic writes (Facade, import, sync — anything that passes an explicit `range`) are stored as given. The Google Sheets import must state which it writes.
 - **Upgrade safety (owner requirement: updates must not break it):**
   1. Every `@univerjs/*` is pinned exactly, with the lockfile; `save-exact` in `.npmrc`. Nothing changes without a deliberate pull request.
@@ -160,10 +161,10 @@ cd apps/web && npx vitest run && npm run test:e2e
 
 # packages/univer-rtl — the RTL grid layer
 cd packages/univer-rtl
-npm test                   # 266 unit tests (pure helpers, UAX #9 bidi, text geometry, known-upstream rules, formula colours, Univer contract)
+npm test                   # 294 unit tests (pure helpers, UAX #9 bidi with isolates, text geometry, formula mode, known-upstream rules, formula colours, Univer contract)
 npm run check:pins         # every @univerjs/* == VERIFIED_UNIVER_VERSION
 npm run harness:build && (npm run harness:preview &)   # test page on :4175
-npm run test:rtl           # 65 interaction checks (BROWSER=chromium|firefox|webkit; USER_AGENT for the Mac key map)
+npm run test:rtl           # 73 interaction checks (BROWSER=chromium|firefox|webkit; USER_AGENT for the Mac key map)
 npm run perf:rtl           # frame cost with and without the mirror
 
 # packages/gsheets-import — regenerate the Univer function list after a Univer bump

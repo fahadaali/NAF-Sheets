@@ -428,7 +428,7 @@ export interface RtlGridStatus extends ContractReport {
   /** Set when the grid is not mirrored, or when it is but the text layer is not applied (English, for an administrator). */
   reason?: string
   /** The document-text layer (cell editor, formula bar, rich-text cells): applied, or why not. */
-  text: { applied: boolean; reason?: string }
+  text: { applied: boolean; reason?: string; formula?: { applied: boolean; reason?: string } }
   dispose: () => void
 }
 
@@ -479,7 +479,7 @@ export async function enableRtlGrid(univerAPI: FUniver, unitId: string, options:
   let status: RtlGridStatus | null = null
   const text: TextLayer = enableRtlText(injector, (why) => {
     if (!status) return
-    status.text = { applied: false, reason: why }
+    status.text = { applied: false, reason: why, formula: { applied: false, reason: why } }
     if (status.mirrored) status.reason = `document text left stock: ${why}`
     report$(status)
   })
@@ -610,7 +610,7 @@ export async function enableRtlGrid(univerAPI: FUniver, unitId: string, options:
     textProblems: text.problems,
     mirrored: true,
     reason: report.verifiedVersion ? (text.applied ? undefined : `document text left stock: ${text.reason}`) : `unverified Univer ${JSON.stringify(report.versions)}`,
-    text: { applied: text.applied, reason: text.reason },
+    text: { applied: text.applied, reason: text.reason, formula: text.formula },
     dispose,
   }
   const mirroredStatus = status
