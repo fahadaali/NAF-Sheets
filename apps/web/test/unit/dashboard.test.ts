@@ -31,10 +31,10 @@ const SHEETS: DashboardSheet[] = [
 ]
 
 describe('routes', () => {
-  it('maps /workbooks/:id/dashboard and /admin/appearance both ways', () => {
+  it('reads the older /workbooks/:id/dashboard, writes /workbooks/:id, and maps /admin/appearance both ways', () => {
     expect(parseRoute('/workbooks/wb-1/dashboard')).toEqual({ name: 'dashboard', id: 'wb-1' })
     expect(parseRoute('/workbooks/a%2Fb/dashboard/')).toEqual({ name: 'dashboard', id: 'a/b' })
-    expect(pathFor({ name: 'dashboard', id: 'a/b' })).toBe('/workbooks/a%2Fb/dashboard')
+    expect(pathFor({ name: 'dashboard', id: 'a/b' })).toBe('/workbooks/a%2Fb')
     expect(parseRoute('/admin/appearance')).toEqual({ name: 'appearance' })
     expect(pathFor({ name: 'appearance' })).toBe('/admin/appearance')
     expect(parseRoute('/workbooks/wb-1/dashboard/x')).toEqual({ name: 'notFound' })

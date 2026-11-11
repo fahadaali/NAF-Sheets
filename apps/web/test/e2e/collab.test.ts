@@ -21,6 +21,7 @@ import { chromium } from 'playwright'
 import type { Browser, BrowserContext, Page, WebSocketRoute } from 'playwright'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { BASE_URL } from './global-setup'
+import { openFirstSheet } from './editor-tabs'
 
 const SHOTS = process.env.E2E_SCREENSHOTS ?? fileURLToPath(new URL('./screenshots/', import.meta.url))
 mkdirSync(SHOTS, { recursive: true })
@@ -126,6 +127,7 @@ async function openAs(user: User): Promise<Page> {
   const page = await context.newPage()
   await page.goto(`${BASE_URL}/workbooks/${workbookId}`)
   await page.locator('[data-testid="univer-host"][data-engine="ready"]').waitFor({ timeout: 90_000 })
+  await openFirstSheet(page)
   await page.locator('[data-screen="editor"][data-collab="live"]').waitFor({ timeout: 60_000 })
   await expect.poll(() => page.getByTestId('univer-host').getAttribute('data-rtl-mirrored'), { timeout: 15_000 }).toBe('true')
   return page

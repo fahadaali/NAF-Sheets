@@ -239,6 +239,8 @@ function WorkbookEditor({ data, target, view, onReload, session, collab, roomNot
   const stageRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef(view)
   viewRef.current = view
+  const targetSheetRef = useRef(target?.sheet ?? null)
+  targetSheetRef.current = target?.sheet ?? null
   const lastContentSheet = useRef<string | null>(null)
 
   // Wave 3: synced sheets.
@@ -306,8 +308,8 @@ function WorkbookEditor({ data, target, view, onReload, session, collab, roomNot
       onRtlStatus: (state) => {
         if (!cancelled) setRtl(state)
       },
-      // The address decides the first tab: the dashboard at …/dashboard, else the first sheet
-      // (a deep link's own sheet is selected right after, below).
+      // The address decides the first tab: the dashboard at /workbooks/:id (owner, 2026-11-11),
+      // else the sheet it names (a deep link's own sheet and range are selected right after, below).
       initialSheetId: view === 'dashboard' ? dashboard : firstContentSheetId,
       dashboard:
         dashboard === null
@@ -350,7 +352,9 @@ function WorkbookEditor({ data, target, view, onReload, session, collab, roomNot
             if (viewRef.current !== 'dashboard') navigate(pathFor({ name: 'dashboard', id: data.workbook.id }), { replace: true })
           } else {
             lastContentSheet.current = sheetId
-            if (viewRef.current === 'dashboard') navigate(pathFor({ name: 'editor', id: data.workbook.id }), { replace: true })
+            // The address names the sheet, so a reload reopens it instead of the dashboard.
+            if (viewRef.current === 'dashboard' || targetSheetRef.current !== sheetId)
+              navigate(pathFor({ name: 'editor', id: data.workbook.id, target: { sheet: sheetId, range: null } }), { replace: true })
           }
         })
         if (synced.size > 0) {

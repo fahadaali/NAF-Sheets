@@ -12,6 +12,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { WorkbookSnapshot } from '@naf-sheets/sheet-model'
 import type { AttachmentInfo, CommentInfo, WorkbookSyncResponse } from '@naf-sheets/shared'
 import { BASE_URL } from './global-setup'
+import { openFirstSheet } from './editor-tabs'
 import { error, MockApi, summary } from './mock-api'
 import { COL, META, SHEET, syncedWorkbook, type RowSpec } from '../unit/sync-fixtures'
 
@@ -126,6 +127,7 @@ async function openEditor(api: MockApi, viewport = { width: 1280, height: 800 })
   await api.install(page)
   await page.goto(`${BASE_URL}/workbooks/${WB}`)
   await page.locator('[data-testid="univer-host"][data-engine="ready"]').waitFor({ timeout: 60_000 })
+  await openFirstSheet(page)
   await page.locator('[data-screen="editor"]:not([data-collab="connecting"])').waitFor({ timeout: 30_000 })
   await expect.poll(() => page.getByTestId('univer-host').getAttribute('data-rtl-mirrored'), { timeout: 15_000 }).toBe('true')
   return { context, page }

@@ -15,6 +15,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { ImportReport } from '@naf-sheets/gsheets-import'
 import type { LinkPlan, SheetMeta } from '@naf-sheets/shared'
 import { BASE_URL } from './global-setup'
+import { openFirstSheet } from './editor-tabs'
 import { MockApi, sheetMeta, summary, taskSnapshot } from './mock-api'
 
 const SHOTS = process.env.E2E_SCREENSHOTS ?? fileURLToPath(new URL('./screenshots/', import.meta.url))
@@ -55,6 +56,8 @@ async function waitForEditor(page: Page): Promise<void> {
   await page.locator('[data-testid="univer-host"][data-engine="ready"]').waitFor({ timeout: 60_000 })
   // The realtime room has answered (the mock API has none: the editor falls back to PUT).
   await page.locator('[data-screen="editor"]:not([data-collab="connecting"])').waitFor({ timeout: 30_000 })
+  // A workbook opens on «اللوحة»; these tests are about the grid.
+  await openFirstSheet(page)
 }
 
 const GRID = { rowHeaderWidth: 46, columnHeaderHeight: 20, columnWidth: 88, rowHeight: 24 }
@@ -155,7 +158,7 @@ describe('Basecamp account link (§3)', () => {
     expect(text).toContain('انتهت صلاحية ربط حسابك في Basecamp')
     expect(text).toContain('الأوراق المتزامنة في هذا الملف للقراءة فقط لك')
     expect(await page.getByTestId('univer-host').getAttribute('data-editable')).toBe('false')
-    expect(await banner.getByRole('link', { name: 'إعادة الربط' }).getAttribute('href')).toBe('/auth/basecamp/start?next=%2Fworkbooks%2Fwb-s')
+    expect(await banner.getByRole('link', { name: 'إعادة الربط' }).getAttribute('href')).toBe('/auth/basecamp/start?next=%2Fworkbooks%2Fwb-s%3Fsheet%3Dsheet-1')
     await shot(page, 'editor-basecamp-locked')
     // Univer refuses the edit with its own "protected" dialog; nothing is saved.
     await typeIntoCell(page, 1, 3, 'تعديل لا يُرسل')

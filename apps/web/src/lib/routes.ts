@@ -3,9 +3,10 @@
 //   /                                   files screen (§12.1 item 1); `?q=` keeps the search;
 //                                       `?import=<spreadsheet id>` reopens «ملف جديد» on the
 //                                       Google Sheets option after Google's consent (§7.2)
-//   /workbooks/:id                      workbook editor (§12.1 item 2);
-//                                       `?sheet=<univer sheet id>&range=B4:C10` selects a place after load
-//   /workbooks/:id/dashboard            the workbook's dashboard («اللوحة»), inside the editor
+//   /workbooks/:id                      workbook editor (§12.1 item 2), opened on its first tab,
+//                                       the dashboard «اللوحة» (owner, 2026-11-11);
+//                                       `?sheet=<univer sheet id>&range=B4:C10` opens a sheet and selects a place
+//   /workbooks/:id/dashboard            older address of the dashboard tab; still read, never written
 //   /workbooks/:id/import-report        import report (§7.2, §12.1 item 7)
 //   /workbooks/:id/link                 linking wizard (§7.3), full screen
 //   /settings                           the user's settings: Basecamp account (§3), admin entries
@@ -77,8 +78,9 @@ export function parseRoute(pathname: string, search = ''): Route {
     if (match[2] === 'import-report') return { name: 'importReport', id }
     if (match[2] === 'link') return { name: 'linkWizard', id }
     if (match[2] === 'dashboard') return { name: 'dashboard', id }
+    // No place asked for: the first tab, «اللوحة».
     const target = parseTarget(params)
-    return target ? { name: 'editor', id, target } : { name: 'editor', id }
+    return target ? { name: 'editor', id, target } : { name: 'dashboard', id }
   }
   return { name: 'notFound' }
 }
@@ -101,7 +103,7 @@ export function pathFor(route: Route): string {
       return `${base}?${params.toString()}`
     }
     case 'dashboard':
-      return `/workbooks/${encodeURIComponent(route.id)}/dashboard`
+      return `/workbooks/${encodeURIComponent(route.id)}`
     case 'importReport':
       return `/workbooks/${encodeURIComponent(route.id)}/import-report`
     case 'linkWizard':

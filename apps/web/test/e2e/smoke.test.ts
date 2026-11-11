@@ -12,6 +12,7 @@ import { chromium } from 'playwright'
 import type { Browser, BrowserContext, Page } from 'playwright'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { BASE_URL } from './global-setup'
+import { DASHBOARD_SHEET_ID, openFirstSheet } from './editor-tabs'
 import { error, MockApi, summary, taskSnapshot } from './mock-api'
 
 const SHOTS = process.env.E2E_SCREENSHOTS ?? fileURLToPath(new URL('./screenshots/', import.meta.url))
@@ -55,6 +56,8 @@ async function waitForEditor(page: Page): Promise<void> {
   await page.locator('[data-testid="univer-host"][data-engine="ready"]').waitFor({ timeout: 60_000 })
   // The realtime room has answered (the mock API has none: the editor falls back to PUT).
   await page.locator('[data-screen="editor"]:not([data-collab="connecting"])').waitFor({ timeout: 30_000 })
+  // A workbook opens on «اللوحة»; these tests are about the grid.
+  await openFirstSheet(page)
 }
 
 // Univer 1.4.0 defaults (core DEFAULT_WORKSHEET_*): the test snapshots set no sizes.
@@ -132,6 +135,9 @@ describe('files screen', () => {
     // Opening a file is what downloads the editor.
     await page.getByRole('link', { name: 'خطة الاتصال المؤسسي 2026' }).click()
     await page.waitForURL(`${BASE_URL}/workbooks/wb-1`)
+    // It opens on its first tab, the dashboard (owner, 2026-11-11).
+    await page.locator('[data-testid="univer-host"][data-engine="ready"]').waitFor({ timeout: 60_000 })
+    expect(await page.getByTestId('univer-host').getAttribute('data-active-sheet')).toBe(DASHBOARD_SHEET_ID)
     await waitForEditor(page)
     expect(scripts.some((s) => s.includes('/assets/EditorScreen-'))).toBe(true)
     await context.close()

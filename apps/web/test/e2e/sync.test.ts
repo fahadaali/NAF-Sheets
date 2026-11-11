@@ -17,6 +17,7 @@ import { readTasks, type WorkbookSnapshot } from '@naf-sheets/sheet-model'
 import { ERROR_MESSAGES } from '@naf-sheets/sync-engine'
 import type { AssigneeOptionsResponse, BcPerson, ConflictRecord, SaveSnapshotRequest, WorkbookSyncResponse } from '@naf-sheets/shared'
 import { BASE_URL } from './global-setup'
+import { openFirstSheet } from './editor-tabs'
 import { MockApi, summary } from './mock-api'
 import { COL, META, PLAN, SHEET, syncedWorkbook, type RowSpec } from '../unit/sync-fixtures'
 
@@ -140,6 +141,7 @@ async function openEditor(api: MockApi, viewport = { width: 1280, height: 800 })
   await api.install(page)
   await page.goto(`${BASE_URL}/workbooks/${WB}`)
   await page.locator('[data-testid="univer-host"][data-engine="ready"]').waitFor({ timeout: 60_000 })
+  await openFirstSheet(page)
   // The realtime room has answered (the mock API has none: the editor falls back to PUT).
   await page.locator('[data-screen="editor"]:not([data-collab="connecting"])').waitFor({ timeout: 30_000 })
   await expect.poll(() => page.getByTestId('univer-host').getAttribute('data-rtl-mirrored'), { timeout: 15_000 }).toBe('true')

@@ -203,13 +203,8 @@ describe('the automatic dashboard', () => {
     expect(tabs.map((t) => t.name)).toEqual(['اللوحة', 'المهام'])
     // RTL: the first tab is the rightmost.
     expect(tabs[0]!.right).toBeGreaterThan(tabs[1]!.right)
-    // /workbooks/:id opens on the first sheet, not on the dashboard; nothing is requested or saved yet.
-    expect(await host.getAttribute('data-active-sheet')).toBe(SHEET)
-    expect(api.count('GET', `/api/workbooks/${WB}/dashboard`)).toBe(0)
-    expect(await page.getByTestId('dashboard').count()).toBe(0)
-
-    await tab(page, DASH).click()
-    await page.waitForURL(`${BASE_URL}/workbooks/${WB}/dashboard`)
+    // /workbooks/:id opens on the first tab, the dashboard (owner, 2026-11-11), and the address stays put.
+    expect(page.url()).toBe(`${BASE_URL}/workbooks/${WB}`)
     const dash = page.getByTestId('dashboard')
     await expect.poll(() => dash.getAttribute('data-state'), READY).toBe('ready')
     expect(await host.getAttribute('data-active-sheet')).toBe(DASH)
@@ -266,17 +261,19 @@ describe('the automatic dashboard', () => {
 
     // Back to the dashboard tab (kept mounted), then a list item.
     await tab(page, DASH).click()
-    await page.waitForURL(`${BASE_URL}/workbooks/${WB}/dashboard`)
+    await page.waitForURL(`${BASE_URL}/workbooks/${WB}`)
     await page.getByTestId('dash-overdue').getByTestId('dash-task-link').first().click()
     await page.waitForURL(`${BASE_URL}/workbooks/${WB}?sheet=${SHEET}&range=A3`)
     await expect.poll(() => host.getAttribute('data-selection'), { timeout: 20_000 }).toBe(`${SHEET}!A3`)
-    // Choosing a sheet tab puts the address back on the workbook; Back returns to the dashboard tab.
+    // The dashboard tab puts the address back on the workbook; a sheet tab names its sheet, so a
+    // reload reopens that sheet. Back returns to the dashboard tab.
     await tab(page, DASH).click()
-    await page.waitForURL(`${BASE_URL}/workbooks/${WB}/dashboard`)
-    await tab(page, SHEET).click()
     await page.waitForURL(`${BASE_URL}/workbooks/${WB}`)
+    await tab(page, SHEET).click()
+    await page.waitForURL(`${BASE_URL}/workbooks/${WB}?sheet=${SHEET}`)
+    expect(await page.getByTestId('editor-target-missing').count()).toBe(0)
     await page.goBack()
-    await page.waitForURL(`${BASE_URL}/workbooks/${WB}/dashboard`)
+    await page.waitForURL(`${BASE_URL}/workbooks/${WB}`)
     await expect.poll(() => host.getAttribute('data-active-sheet')).toBe(DASH)
     // Opening it changed nothing: no save.
     expect(api.count('PUT', `/api/workbooks/${WB}/snapshot`)).toBe(0)

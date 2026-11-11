@@ -8,10 +8,12 @@ describe('parseRoute', () => {
     expect(parseRoute('/', '?q=%D8%AE%D8%B7%D8%A9')).toEqual({ name: 'files', q: 'خطة' })
   })
 
-  it('maps the editor and decodes the id', () => {
-    expect(parseRoute('/workbooks/wb-1')).toEqual({ name: 'editor', id: 'wb-1' })
-    expect(parseRoute('/workbooks/wb-1/')).toEqual({ name: 'editor', id: 'wb-1' })
-    expect(parseRoute('/workbooks/a%2Fb')).toEqual({ name: 'editor', id: 'a/b' })
+  it('opens a workbook on its first tab, the dashboard, and decodes the id', () => {
+    expect(parseRoute('/workbooks/wb-1')).toEqual({ name: 'dashboard', id: 'wb-1' })
+    expect(parseRoute('/workbooks/wb-1/')).toEqual({ name: 'dashboard', id: 'wb-1' })
+    expect(parseRoute('/workbooks/a%2Fb')).toEqual({ name: 'dashboard', id: 'a/b' })
+    // Links that name no place (files list, import report, wizard) land there too.
+    expect(pathFor({ name: 'editor', id: 'wb-1' })).toBe('/workbooks/wb-1')
   })
 
   it('maps naf-auth refusals', () => {
@@ -50,8 +52,8 @@ describe('parseRoute — wave 2 screens', () => {
     expect(parseRoute('/workbooks/wb-1', '?sheet=s-2')).toEqual({ name: 'editor', id: 'wb-1', target: { sheet: 's-2', range: null } })
     // An unreadable range still opens the sheet; a range without a sheet is ignored.
     expect(parseRoute('/workbooks/wb-1', '?sheet=s-2&range=b4')).toEqual({ name: 'editor', id: 'wb-1', target: { sheet: 's-2', range: null } })
-    expect(parseRoute('/workbooks/wb-1', '?range=B4')).toEqual({ name: 'editor', id: 'wb-1' })
-    expect(parseRoute('/workbooks/wb-1', '?sheet=%20')).toEqual({ name: 'editor', id: 'wb-1' })
+    expect(parseRoute('/workbooks/wb-1', '?range=B4')).toEqual({ name: 'dashboard', id: 'wb-1' })
+    expect(parseRoute('/workbooks/wb-1', '?sheet=%20')).toEqual({ name: 'dashboard', id: 'wb-1' })
   })
 
   it('reads `import` on the files screen only when it looks like a spreadsheet id', () => {
@@ -67,8 +69,8 @@ describe('pathFor', () => {
       { name: 'files', q: '' },
       { name: 'files', q: 'خطة الربع الأول' },
       { name: 'files', q: '', importSource: '1AbCdEfGhIjKlMnOpQrStUvWxYz_0123456789-abcd' },
-      { name: 'editor', id: 'wb-1' },
-      { name: 'editor', id: 'a/b c' },
+      { name: 'dashboard', id: 'wb-1' },
+      { name: 'dashboard', id: 'a/b c' },
       { name: 'editor', id: 'wb-1', target: { sheet: 'sheet 2/ب', range: { startRow: 0, startColumn: 26, endRow: 4, endColumn: 27 } } },
       { name: 'editor', id: 'wb-1', target: { sheet: 's-1', range: null } },
       { name: 'importReport', id: 'wb 1' },
