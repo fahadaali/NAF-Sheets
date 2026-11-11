@@ -12,6 +12,18 @@ compatibility_date = "2026-07-27"
 compatibility_flags = ["nodejs_compat"]
 
 # ─────────────────────────────────────────────────────────────
+# Routes on the platform's host (docs/cloudflare-setup.md §6). The web app is
+# Cloudflare Pages on the same host; these paths go to this Worker, the rest
+# to Pages. The host is not decided (spec §17-4): uncomment once it is.
+# ─────────────────────────────────────────────────────────────
+# routes = [
+#   { pattern = "REPLACE_WITH_HOST/api/*", zone_name = "naflaw.sa" },
+#   { pattern = "REPLACE_WITH_HOST/auth/*", zone_name = "naflaw.sa" },
+#   { pattern = "REPLACE_WITH_HOST/webhooks/*", zone_name = "naflaw.sa" },
+#   { pattern = "REPLACE_WITH_HOST/health", zone_name = "naflaw.sa" },
+# ]
+
+# ─────────────────────────────────────────────────────────────
 # Non-secret variables
 # ─────────────────────────────────────────────────────────────
 [vars]
