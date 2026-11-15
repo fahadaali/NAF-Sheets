@@ -3,9 +3,19 @@ import { isPlainLeftClick, parseRoute, pathFor } from '../../src/lib/routes'
 import type { Route } from '../../src/lib/routes'
 
 describe('parseRoute', () => {
+  it('opens the station on its links, and maps its screens', () => {
+    expect(parseRoute('/')).toEqual({ name: 'stationLinks' })
+    expect(parseRoute('/links/new')).toEqual({ name: 'stationNew' })
+    expect(parseRoute('/links/abc-1')).toEqual({ name: 'stationLink', id: 'abc-1' })
+    // The alert email's links (docs/station-plan.md §6.2).
+    expect(parseRoute('/names', `?name=${encodeURIComponent('عمر العمار')}&suggest=52761043`)).toEqual({ name: 'stationNames', focusName: 'عمر العمار', suggest: 52761043 })
+    expect(parseRoute('/names', '?suggest=x')).toEqual({ name: 'stationNames' })
+    expect(pathFor({ name: 'stationNames', focusName: 'عمر العمار', suggest: 7 })).toBe(`/names?name=${encodeURIComponent('عمر العمار').replace(/%20/g, '+')}&suggest=7`)
+  })
+
   it('maps the files screen with its search', () => {
-    expect(parseRoute('/')).toEqual({ name: 'files', q: '' })
-    expect(parseRoute('/', '?q=%D8%AE%D8%B7%D8%A9')).toEqual({ name: 'files', q: 'خطة' })
+    expect(parseRoute('/files')).toEqual({ name: 'files', q: '' })
+    expect(parseRoute('/files', '?q=%D8%AE%D8%B7%D8%A9')).toEqual({ name: 'files', q: 'خطة' })
   })
 
   it('opens a workbook on its first tab, the dashboard, and decodes the id', () => {
@@ -57,9 +67,9 @@ describe('parseRoute — wave 2 screens', () => {
   })
 
   it('reads `import` on the files screen only when it looks like a spreadsheet id', () => {
-    expect(parseRoute('/', '?import=1AbC_d-9')).toEqual({ name: 'files', q: '', importSource: '1AbC_d-9' })
-    expect(parseRoute('/', '?import=https%3A%2F%2Fevil.example')).toEqual({ name: 'files', q: '' })
-    expect(parseRoute('/', '?import=')).toEqual({ name: 'files', q: '' })
+    expect(parseRoute('/files', '?import=1AbC_d-9')).toEqual({ name: 'files', q: '', importSource: '1AbC_d-9' })
+    expect(parseRoute('/files', '?import=https%3A%2F%2Fevil.example')).toEqual({ name: 'files', q: '' })
+    expect(parseRoute('/files', '?import=')).toEqual({ name: 'files', q: '' })
   })
 })
 
@@ -90,8 +100,8 @@ describe('pathFor', () => {
   })
 
   it('drops an empty or blank search from the address', () => {
-    expect(pathFor({ name: 'files', q: '   ' })).toBe('/')
-    expect(pathFor({ name: 'files', q: ' خطة ' })).toBe(`/?q=${encodeURIComponent('خطة').replace(/%20/g, '+')}`)
+    expect(pathFor({ name: 'files', q: '   ' })).toBe('/files')
+    expect(pathFor({ name: 'files', q: ' خطة ' })).toBe(`/files?q=${encodeURIComponent('خطة').replace(/%20/g, '+')}`)
   })
 })
 

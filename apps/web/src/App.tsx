@@ -17,6 +17,8 @@ import { SyncHealthScreen } from './screens/SyncHealthScreen'
 import { TemplatesScreen } from './screens/TemplatesScreen'
 import { AppearanceScreen } from './screens/AppearanceScreen'
 import { t } from './strings'
+import { LinkScreen, LinksScreen, NamesScreen, NewLinkScreen } from './station/screens'
+import './station/station.css'
 
 // Univer (~2 MB gzip) is reachable only through this chunk.
 const EditorScreen = lazy(() => import('./editor/EditorScreen'))
@@ -93,6 +95,14 @@ export function App() {
   useAppearance(route.name !== 'denied')
 
   switch (route.name) {
+    case 'stationLinks':
+      return <LinksScreen user={user} />
+    case 'stationNew':
+      return <NewLinkScreen user={user} />
+    case 'stationLink':
+      return <LinkScreen key={route.id} user={user} id={route.id} />
+    case 'stationNames':
+      return <NamesScreen user={user} focusName={route.focusName} suggest={route.suggest} />
     case 'files':
       return <FilesScreen initialQuery={route.q} initialImport={route.importSource} user={user} />
     case 'editor':

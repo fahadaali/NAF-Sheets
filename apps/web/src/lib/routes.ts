@@ -1,6 +1,9 @@
 // Client-side routes (History API). Pure: no DOM access, so it is unit-tested.
 //
-//   /                                   files screen (§12.1 item 1); `?q=` keeps the search;
+//   /                                   the station's links (docs/station-plan.md §6)
+//   /links/new, /links/:id              new link, one link
+//   /names?name=&suggest=               name matching (alert emails link here)
+//   /files                              files screen (§12.1 item 1); `?q=` keeps the search;
 //                                       `?import=<spreadsheet id>` reopens «ملف جديد» on the
 //                                       Google Sheets option after Google's consent (§7.2)
 //   /workbooks/:id                      workbook editor (§12.1 item 2), opened on its first tab,
@@ -23,6 +26,10 @@ import { parseA1Range, rangeToA1 } from './cell-target'
 import type { EditorTarget } from './cell-target'
 
 export type Route =
+  | { name: 'stationLinks' }
+  | { name: 'stationNew' }
+  | { name: 'stationLink'; id: string }
+  | { name: 'stationNames'; focusName?: string; suggest?: number }
   | { name: 'files'; q: string; importSource?: string }
   | { name: 'editor'; id: string; target?: EditorTarget }
   | { name: 'dashboard'; id: string }
@@ -61,7 +68,23 @@ function parseTarget(params: URLSearchParams): EditorTarget | undefined {
 
 export function parseRoute(pathname: string, search = ''): Route {
   const params = new URLSearchParams(search)
-  if (pathname === '/' || pathname === '') {
+  // The station (docs/station-plan.md §6): the platform's home is its links.
+  if (pathname === '/' || pathname === '') return { name: 'stationLinks' }
+  if (pathname === '/links/new' || pathname === '/links/new/') return { name: 'stationNew' }
+  const station = /^\/links\/([^/]+)\/?$/.exec(pathname)
+  if (station?.[1]) {
+    const id = decodeId(station[1])
+    return id === null ? { name: 'notFound' } : { name: 'stationLink', id }
+  }
+  if (pathname === '/names' || pathname === '/names/') {
+    const route: Route = { name: 'stationNames' }
+    const focus = params.get('name')
+    if (focus && focus.trim()) route.focusName = focus.trim()
+    const suggest = Number(params.get('suggest'))
+    if (Number.isInteger(suggest) && suggest > 0) route.suggest = suggest
+    return route
+  }
+  if (pathname === '/files' || pathname === '/files/') {
     const route: Route = { name: 'files', q: params.get('q') ?? '' }
     const importSource = params.get('import')
     if (importSource && IMPORT_ID.test(importSource)) route.importSource = importSource
@@ -97,7 +120,20 @@ export function pathFor(route: Route): string {
       if (q) params.set('q', q)
       if (route.importSource) params.set('import', route.importSource)
       const search = params.toString()
-      return search ? `/?${search}` : '/'
+      return search ? `/files?${search}` : '/files'
+    }
+    case 'stationLinks':
+      return '/'
+    case 'stationNew':
+      return '/links/new'
+    case 'stationLink':
+      return `/links/${encodeURIComponent(route.id)}`
+    case 'stationNames': {
+      const params = new URLSearchParams()
+      if (route.focusName) params.set('name', route.focusName)
+      if (route.suggest) params.set('suggest', String(route.suggest))
+      const search = params.toString()
+      return search ? `/names?${search}` : '/names'
     }
     case 'editor': {
       const base = `/workbooks/${encodeURIComponent(route.id)}`
