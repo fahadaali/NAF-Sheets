@@ -95,8 +95,6 @@ export function LinksScreen({ user }: { user: CurrentUser | null }) {
   const [load, retry] = useLoad((signal) => stationApi.links(signal), [])
   const isAdmin = user?.role === 'admin'
   const links = load.kind === 'ready' ? load.data.links : []
-  const problems = links.reduce((n, l) => n + l.problems, 0)
-  const latest = links.map((l) => l.last_sync_at).filter((x): x is string => x !== null).sort().at(-1) ?? null
   return (
     <Page
       user={user}
@@ -112,29 +110,8 @@ export function LinksScreen({ user }: { user: CurrentUser | null }) {
         ) : null
       }
     >
-      <SetupNotice />
       {load.kind === 'loading' ? <Loading text={s.links.loading} /> : null}
       {load.kind === 'error' ? <Failed message={load.message} retry={retry} /> : null}
-      {load.kind === 'ready' && links.length > 0 ? (
-        <section className="station-summary" aria-label={s.links.summary}>
-          <div className="station-summary__item">
-            <span className="station-summary__value num">{links.length}</span>
-            <span className="station-summary__label">{s.links.count}</span>
-          </div>
-          <div className="station-summary__item">
-            <span className={problems > 0 ? 'station-summary__value station-summary__value--warn num' : 'station-summary__value num'}>{problems}</span>
-            <span className="station-summary__label">{s.links.problemsLabel}</span>
-          </div>
-          <div className="station-summary__item">
-            <span className="station-summary__value">{s.ago(latest)}</span>
-            <span className="station-summary__label">{s.links.lastSync}</span>
-          </div>
-          <p className="station-summary__note">
-            <RefreshCw className="icon" aria-hidden="true" />
-            {s.links.auto}
-          </p>
-        </section>
-      ) : null}
       {load.kind === 'ready' && links.length === 0 ? (
         <section className="panel">
           <ArrowLeftRight className="panel__icon" aria-hidden="true" />
@@ -149,30 +126,6 @@ export function LinksScreen({ user }: { user: CurrentUser | null }) {
         </div>
       ) : null}
     </Page>
-  )
-}
-
-/** On the home page only when something the station needs is missing; the details are in Settings. */
-function SetupNotice() {
-  const [load] = useLoad((signal) => stationApi.status(signal), [])
-  if (load.kind !== 'ready') return null
-  const { basecamp, google, email } = load.data
-  const missing = [basecamp?.status !== 'active' ? s.setup.basecamp : null, google === null ? s.setup.google : null, email ? null : s.setup.email].filter(
-    (x): x is string => x !== null,
-  )
-  if (missing.length === 0) return null
-  return (
-    <Notice
-      tone="warning"
-      title={s.setup.incomplete}
-      actions={
-        <Link className="button button--small" href="/settings">
-          {s.setup.open}
-        </Link>
-      }
-    >
-      <p>{missing.join('، ')}</p>
-    </Notice>
   )
 }
 
@@ -229,9 +182,7 @@ function LinkCard({ link }: { link: LinkSummary }) {
           <h2>
             <bdi>{link.title}</bdi>
           </h2>
-          <span className="muted small">
-            {s.links.tabs(link.tabs)} · {s.links.lastSync} {s.ago(link.last_sync_at)}
-          </span>
+          <span className="muted small">{s.links.tabs(link.tabs)}</span>
         </div>
         <ChevronLeft className="icon station-card__go" aria-hidden="true" />
       </div>
