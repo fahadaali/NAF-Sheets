@@ -5,9 +5,9 @@ import { ApiRequestError, redirectToLogin, toApiRequestError } from '../lib/api'
 import { t } from '../strings'
 
 export type StationAlert =
-  | { kind: 'name_unmapped'; linkId: string; linkTitle: string; tab: string; role: string; name: string; rows: number; suggestion?: { bcPersonId: number; personName: string; previousName: string } }
+  | { kind: 'name_unmapped'; linkId: string; linkTitle: string; tab: string; role: string; name: string; rows: number; rowNumbers?: number[]; suggestion?: { bcPersonId: number; personName: string; previousName: string } }
   | { kind: 'not_project_member'; linkId: string; linkTitle: string; personName: string; bcPersonId: number; projectName: string; rows: number }
-  | { kind: 'rows_held'; linkId: string; linkTitle: string; tab: string; code: string; reason: string; rows: number }
+  | { kind: 'rows_held'; linkId: string; linkTitle: string; tab: string; code: string; subject?: string; reason: string; rows: number; rowNumbers?: number[] }
   | { kind: 'tab_stopped'; linkId: string; linkTitle: string; tab: string; reason: string }
   | { kind: 'link_stopped'; linkId: string; linkTitle: string; reason: string }
 

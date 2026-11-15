@@ -265,10 +265,11 @@ describe('inboundEdits', () => {
     ])
   })
 
-  it('never writes people from Basecamp: alerts instead (decision 2-أ)', () => {
-    const out = inboundEdits(r.rows, cols, [{ type: 'update_row', uid: 'u2', fields: { assignees: [] } }])
+  it('never writes people from Basecamp, and raises nothing itself (decision 2-أ)', () => {
+    // E.g. the engine proposing a to-do's automatic people: no change, no alert.
+    const out = inboundEdits(r.rows, cols, [{ type: 'update_row', uid: 'u1', fields: { assignees: [] } }])
     expect(out.edits).toEqual([])
-    expect(out.alerts[0]).toMatchObject({ uid: 'u2', code: 'assignees_changed_in_basecamp' })
+    expect(Object.keys(out)).not.toContain('alerts')
   })
 
   it('hands structural actions and unknown rows to the caller', () => {

@@ -20,7 +20,7 @@ export {
   type TabIssueCode,
   type TabRow,
 } from './read'
-export { inboundEdits, type InboundEditsResult, type TabAlert } from './inbound'
+export { inboundEdits, type InboundEditsResult } from './inbound'
 export {
   ALERT_SENDER,
   BATCH_WINDOW_MS,
@@ -28,6 +28,7 @@ export {
   composeAlertEmail,
   dueForEmail,
   resendRequest,
+  rowList,
   type AlertEmail,
   type AlertRecord,
   type ComposeOptions,

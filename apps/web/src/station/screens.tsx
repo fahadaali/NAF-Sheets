@@ -398,8 +398,16 @@ export function LinkScreen({ user, id }: { user: CurrentUser | null; id: string 
   )
 }
 
+type LinkTab = 'problems' | 'tabs' | 'history'
+
 function LinkBody({ detail, isAdmin, busy, act }: { detail: LinkDetail; isAdmin: boolean; busy: boolean; act: (fn: () => Promise<unknown>, done?: string) => Promise<void> }) {
   const { link, tabs, problems, log } = detail
+  const [view, setView] = useState<LinkTab>(problems.length > 0 ? 'problems' : 'tabs')
+  const views: { id: LinkTab; label: string }[] = [
+    { id: 'problems', label: s.link.problemsTab(problems.length) },
+    { id: 'tabs', label: s.link.tabs },
+    { id: 'history', label: s.link.history },
+  ]
   return (
     <div className="stack">
       <section className="card stack">
@@ -442,61 +450,152 @@ function LinkBody({ detail, isAdmin, busy, act }: { detail: LinkDetail; isAdmin:
         </div>
       </section>
 
-      <section className="card stack" data-testid="link-problems">
-        <h2>{s.link.problems}</h2>
-        {problems.length === 0 ? <p className="muted">{s.link.noProblems}</p> : null}
-        <ul className="station-problems">
-          {problems.map((p) => (
-            <li key={p.key}>
-              <p>{alertText(p.alert)}</p>
-              <p className="muted small">
-                <bdi dir="ltr">{s.date(p.firstSeen)}</bdi>
-                {p.emailedAt ? ` · ${s.link.emailed}` : ''}
-              </p>
-              {p.alert.kind === 'name_unmapped' ? (
-                <Link className="button button--small" href={`/names?name=${encodeURIComponent(p.alert.name)}`}>
-                  {s.alert.linkName}
-                </Link>
-              ) : null}
-            </li>
-          ))}
-        </ul>
-      </section>
+      <div className="station-views" role="tablist" aria-label={link.title}>
+        {views.map((v) => (
+          <button
+            key={v.id}
+            type="button"
+            role="tab"
+            id={`view-${v.id}`}
+            aria-selected={view === v.id}
+            aria-controls={`panel-${v.id}`}
+            className={view === v.id ? 'station-views__tab station-views__tab--active' : 'station-views__tab'}
+            onClick={() => setView(v.id)}
+          >
+            {v.label}
+          </button>
+        ))}
+      </div>
 
-      <section className="card stack">
-        <h2>{s.link.tabs}</h2>
-        <ul>
-          {tabs.map((tab) => (
-            <li key={tab.google_sheet_id}>
-              <bdi>{tab.title}</bdi>
-              {tab.bc_todolist_id === null ? <span className="muted small"> — {s.link.noList}</span> : null}
-            </li>
-          ))}
-        </ul>
-        {isAdmin ? <RolesTabEditor id={link.id} value={link.roles_tab} act={act} busy={busy} /> : null}
-      </section>
+      {view === 'problems' ? (
+        <section className="stack" role="tabpanel" id="panel-problems" aria-labelledby="view-problems" data-testid="link-problems">
+          {problems.length === 0 ? (
+            <div className="card">
+              <p className="muted">{s.link.noProblems}</p>
+            </div>
+          ) : (
+            problemGroups(problems).map((g) => (
+              <section key={g.tab} className="card stack">
+                <h2>
+                  <bdi>{g.tab}</bdi> <span className="muted small">({s.link.problemsCount(g.items.length)})</span>
+                </h2>
+                <ul className="station-problems">
+                  {g.items.map((p) => (
+                    <ProblemItem key={p.key} problem={p} />
+                  ))}
+                </ul>
+              </section>
+            ))
+          )}
+        </section>
+      ) : null}
 
-      <section className="card stack">
-        <h2>{s.link.history}</h2>
-        {log.length === 0 ? <p className="muted">{s.link.noHistory}</p> : null}
-        <div className="table-wrap">
-          <table className="data-table">
-            <tbody>
-              {log.map((l, i) => (
-                <tr key={i}>
-                  <td>
-                    <bdi dir="ltr">{s.date(l.at)}</bdi>
-                  </td>
-                  <td>{l.direction === 'to_sheet' ? s.link.toSheet : s.link.toBasecamp}</td>
-                  <td>{s.link.actions[l.action] ?? l.action}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
+      {view === 'tabs' ? (
+        <section className="card stack" role="tabpanel" id="panel-tabs" aria-labelledby="view-tabs">
+          <ul>
+            {tabs.map((tab) => (
+              <li key={tab.google_sheet_id}>
+                <bdi>{tab.title}</bdi>
+                {tab.bc_todolist_id === null ? <span className="muted small"> — {s.link.noList}</span> : null}
+              </li>
+            ))}
+          </ul>
+          {isAdmin ? <RolesTabEditor id={link.id} value={link.roles_tab} act={act} busy={busy} /> : null}
+        </section>
+      ) : null}
+
+      {view === 'history' ? (
+        <section className="card stack" role="tabpanel" id="panel-history" aria-labelledby="view-history">
+          {log.length === 0 ? <p className="muted">{s.link.noHistory}</p> : null}
+          <div className="table-wrap">
+            <table className="data-table">
+              <tbody>
+                {log.map((l, i) => (
+                  <tr key={i}>
+                    <td>
+                      <bdi dir="ltr">{s.date(l.at)}</bdi>
+                    </td>
+                    <td>{l.direction === 'to_sheet' ? s.link.toSheet : s.link.toBasecamp}</td>
+                    <td>{s.link.actions[l.action] ?? l.action}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      ) : null}
     </div>
   )
+}
+
+type Problem = LinkDetail['problems'][number]
+
+/** Problems by sheet tab (the file-wide ones first), in a stable order. */
+export function problemGroups(problems: readonly Problem[]): { tab: string; items: Problem[] }[] {
+  const order: Record<StationAlert['kind'], number> = { link_stopped: 0, tab_stopped: 1, name_unmapped: 2, not_project_member: 3, rows_held: 4 }
+  const tabOf = (a: StationAlert): string => ('tab' in a ? a.tab : s.link.wholeFile)
+  const groups = new Map<string, Problem[]>()
+  for (const p of [...problems].sort((x, y) => order[x.alert.kind] - order[y.alert.kind] || x.firstSeen.localeCompare(y.firstSeen))) {
+    const tab = tabOf(p.alert)
+    groups.set(tab, [...(groups.get(tab) ?? []), p])
+  }
+  return [...groups].sort(([a], [b]) => (a === s.link.wholeFile ? -1 : b === s.link.wholeFile ? 1 : a.localeCompare(b, 'ar'))).map(([tab, items]) => ({ tab, items }))
+}
+
+function ProblemItem({ problem }: { problem: Problem }) {
+  const a = problem.alert
+  const rowNumbers = a.kind === 'rows_held' || a.kind === 'name_unmapped' ? a.rowNumbers : undefined
+  return (
+    <li className="station-problem">
+      <p className="station-problem__title">{problemTitle(a)}</p>
+      <p>{problemDetail(a)}</p>
+      {rowNumbers && rowNumbers.length > 0 ? (
+        <p className="station-problem__rows small">
+          <span className="muted">{rowNumbers.length === 1 ? s.link.row : s.link.rows}</span>
+          {rowNumbers.map((n) => (
+            <span key={n} className="badge badge--neutral num">
+              {n}
+            </span>
+          ))}
+        </p>
+      ) : null}
+      <p className="muted small">
+        {s.link.since} <bdi dir="ltr">{s.date(problem.firstSeen)}</bdi>
+        {problem.emailedAt ? ` · ${s.link.emailed}` : ''}
+      </p>
+      {a.kind === 'name_unmapped' ? (
+        <Link className="button button--small" href={`/names?name=${encodeURIComponent(a.name)}`}>
+          {s.alert.linkName}
+        </Link>
+      ) : null}
+    </li>
+  )
+}
+
+function problemTitle(a: StationAlert): string {
+  switch (a.kind) {
+    case 'name_unmapped':
+      return s.problem.nameUnmapped(a.name)
+    case 'not_project_member':
+      return s.problem.notMember(a.personName)
+    case 'rows_held':
+      return s.problem.held[a.code] ?? s.problem.heldDefault
+    case 'tab_stopped':
+      return s.problem.tabStopped
+    case 'link_stopped':
+      return s.problem.linkStopped
+  }
+}
+
+function problemDetail(a: StationAlert): string {
+  switch (a.kind) {
+    case 'name_unmapped':
+      return s.problem.nameUnmappedDetail(a.role, a.rows)
+    case 'not_project_member':
+      return s.problem.notMemberDetail(a.projectName, a.rows)
+    default:
+      return a.reason
+  }
 }
 
 function RolesTabEditor({ id, value, act, busy }: { id: string; value: string; act: (fn: () => Promise<unknown>, done?: string) => Promise<void>; busy: boolean }) {

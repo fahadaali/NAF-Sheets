@@ -3,7 +3,7 @@
 // Drive channel upkeep and the admin alert emails (docs/station-plan.md §4, §6.2).
 
 import { BATCH_WINDOW_MS, composeAlertEmail, dueForEmail, resendRequest, ALERT_SENDER, type AlertRecord, type StationAlert } from '@naf-sheets/station-sheet'
-import { withServiceToken } from '../basecamp-link'
+import { LinkFailure, withServiceToken } from '../basecamp-link'
 import type { Env } from '../env'
 import { defaultSyncDeps, readClient, syncContext, type SyncDeps } from './deps'
 import { ensureProjectWebhook, publicOrigin } from './basecamp-webhook'
@@ -72,7 +72,34 @@ async function runOnce(env: Env, linkId: string, deps: StationDeps): Promise<Run
     return { status: 'stopped', toBasecamp: 0, toSheet: 0, deleted: 0, alerts: [alert] }
   }
   const ctx = syncContext(env, deps)
-  return withServiceToken(ctx, (token) => syncLink(linkId, { db: env.DB, google, basecamp: readClient(ctx), token, now: deps.now }))
+  try {
+    return await withServiceToken(ctx, (token) => syncLink(linkId, { db: env.DB, google, basecamp: readClient(ctx), token, now: deps.now }))
+  } catch (error) {
+    // A run that stops half-way must not leave the admin with stale problems
+    // and no word: say so on the link (the queue retries the run).
+    const link = await env.DB.prepare(`SELECT title FROM station_links WHERE id = ?1`).bind(linkId).first<{ title: string }>()
+    const name = error instanceof Error ? error.name : 'Error'
+    const reason = basecampReason(error) ?? `توقفت المزامنة قبل أن تكتمل (${name}). ستُعاد المحاولة تلقائياً؛ وإن تكرر ذلك فأبلغ مسؤول المنصة.`
+    const at = new Date(deps.now()).toISOString()
+    await env.DB.batch([
+      env.DB.prepare(`INSERT INTO station_alerts (key, link_id, alert_json, first_seen, last_seen) VALUES (?1, ?2, ?3, ?4, ?4)
+        ON CONFLICT (key) DO UPDATE SET alert_json = excluded.alert_json, last_seen = excluded.last_seen, resolved_at = NULL`).bind(
+        `link_stopped:${linkId}`,
+        linkId,
+        JSON.stringify({ kind: 'link_stopped', linkId, linkTitle: link?.title ?? '', reason } satisfies StationAlert),
+        at,
+      ),
+      env.DB.prepare(`UPDATE station_links SET last_error = ?2, updated_at = ?3 WHERE id = ?1`).bind(linkId, reason, at),
+    ])
+    throw error
+  }
+}
+
+/** Arabic reason for the Basecamp failures an admin can act on. */
+function basecampReason(error: unknown): string | null {
+  if (error instanceof LinkFailure && error.key === 'service_not_linked') return 'حساب المزامنة في Basecamp غير مربوط. اضغط «اربط حساب المزامنة» في صفحة الروابط.'
+  if (error instanceof LinkFailure) return 'تعذّر استخدام حساب المزامنة في Basecamp. أعد ربطه من صفحة الروابط.'
+  return null
 }
 
 /** Queues a run (Drive notification, Basecamp webhook, «مزامنة الآن»). */
