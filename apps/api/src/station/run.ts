@@ -121,6 +121,13 @@ export async function syncLink(linkId: string, deps: RunDeps): Promise<RunReport
   const people = await getNames(db)
   mappedNames = new Set(people.keys())
   const projectPeople = await basecamp.people.listProject(token, link.bc_project_id).all()
+  // Notifications reach everyone (owner, 2026-11-15): every member of the
+  // project (clients excepted) hears of every completion.
+  const notifyIds = projectPeople
+    .filter((p) => p.client !== true && (p.personable_type === undefined || p.personable_type === 'User'))
+    .map((p) => p.id)
+    .sort((x, y) => x - y)
+  const notifyKey = notifyIds.join(',')
   const projectIds = new Set(projectPeople.map((p) => p.id))
   const personName = new Map(projectPeople.map((p) => [p.id, p.name]))
   // A name written exactly as a Basecamp person's name is mapped by itself (§6.1).
@@ -235,6 +242,12 @@ export async function syncLink(linkId: string, deps: RunDeps): Promise<RunReport
           // Unchanged subtask of an unchanged to-do: nothing to compare, nothing changed locally.
           continue
         }
+      }
+      // Everyone on the to-do's «When done, notify» list and among its subscribers,
+      // once (and again when the project's members change).
+      if (local.level === 0 && remote && remote.type === 'todo' && remote.status === 'active' && notifyIds.length > 0 && row?.notify_key !== notifyKey) {
+        remote = await ensureNotified(remote)
+        afterSheetWrite.push(db.prepare(`UPDATE station_tasks SET notify_key = ?2 WHERE uid = ?1`).bind(local.uid, notifyKey))
       }
       // Decision 2-أ: people changed in Basecamp only → send the sheet's people back.
       // (A to-do in automatic mode takes its subtasks' people; the engine handles it.)
@@ -489,6 +502,16 @@ export async function syncLink(linkId: string, deps: RunDeps): Promise<RunReport
         if (action.bcType === 'todo') await (action.completed ? basecamp.todos.complete(token, action.bcId) : basecamp.todos.uncomplete(token, action.bcId))
         else await (action.completed ? basecamp.subtasks.complete(token, action.bcId) : basecamp.subtasks.uncomplete(token, action.bcId))
         next = baseWith(need(), { completed: action.completed })
+        // Basecamp sends no notification for a subtask's completion: a comment on
+        // its to-do reaches the to-do's subscribers (everyone, see ensureNotified).
+        if (action.bcType === 'subtask' && action.completed) {
+          const todoId = local.parentUid ? (known.get(local.parentUid)?.bc_id ?? null) : null
+          if (todoId !== null) {
+            await basecamp.comments.create(token, todoId, `<div>أُنجزت المهمة الفرعية «${escapeHtml(local.title)}» (من ملف Google Sheets).</div>`).catch((error: unknown) => {
+              console.warn(`station: completion comment failed (${error instanceof Error ? error.name : 'unknown'})`)
+            })
+          }
+        }
         break
       case 'reposition':
         if (action.bcType === 'todo') await basecamp.todos.reposition(token, action.bcId, action.position, action.listId)
@@ -511,6 +534,27 @@ export async function syncLink(linkId: string, deps: RunDeps): Promise<RunReport
     return next
   }
 
+  /** Adds the project's members to the to-do's completion list and subscribers. Returns the to-do as it is now. */
+  async function ensureNotified(todo: RemoteTodo): Promise<RemoteTodo> {
+    let current = todo
+    const missing = notifyIds.filter((id) => !todo.completionSubscriberIds.includes(id))
+    if (missing.length > 0) {
+      // A full PUT (it clears what it omits), with the record's own values and no new notification.
+      const updated = await basecamp.todos.update(token, todo.id, {
+        content: todo.content,
+        descriptionHtml: todo.descriptionHtml,
+        assigneeIds: [...todo.assigneeIds],
+        completionSubscriberIds: [...new Set([...todo.completionSubscriberIds, ...notifyIds])],
+        dueOn: todo.dueOn,
+        startsOn: todo.startsOn,
+        notify: false,
+      })
+      current = { ...updated, position: todo.position }
+    }
+    await basecamp.recordings.subscribe(token, todo.id, notifyIds)
+    return current
+  }
+
   async function finish(status: 'ok' | 'stopped', error: string | null): Promise<void> {
     await db
       .prepare(`UPDATE station_links SET last_sync_at = ?2, last_error = ?3, last_modified = COALESCE(?4, last_modified), updated_at = ?2 WHERE id = ?1`)
@@ -518,6 +562,10 @@ export async function syncLink(linkId: string, deps: RunDeps): Promise<RunReport
       .run()
     await recordAlerts(db, link!.id, report.alerts, mappedNames, at())
   }
+}
+
+function escapeHtml(text: string): string {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 }
 
 function notesOf(b: SyncedBase): string | null {

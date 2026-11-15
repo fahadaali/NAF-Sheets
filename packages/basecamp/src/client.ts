@@ -228,6 +228,17 @@ export function createBasecampClient(options: BasecampClientOptions) {
     // documented only for projects. See OPEN_QUESTIONS.md.
     restore: async (token: string, recordingId: number): Promise<void> =>
       http.none(token, { method: 'PUT', target: `/recordings/${id('recordingId', recordingId)}/status/active.json` }),
+    /**
+     * subscriptions.md "Update subscription": PUT /recordings/{id}/subscription.json
+     * with `subscriptions` (person ids to add) and `unsubscriptions` (to remove).
+     * Subscribers get the notifications of the recording (its comments).
+     */
+    subscribe: async (token: string, recordingId: number, personIds: readonly number[]): Promise<void> =>
+      http.none(token, {
+        method: 'PUT',
+        target: `/recordings/${id('recordingId', recordingId)}/subscription.json`,
+        json: { subscriptions: personIds.map((p) => id('personId', p)), unsubscriptions: [] },
+      }),
   }
 
   const projects = {

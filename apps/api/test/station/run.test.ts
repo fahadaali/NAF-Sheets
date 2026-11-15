@@ -113,6 +113,7 @@ describe('first sync', () => {
   it('does nothing on a second run with nothing changed', async () => {
     const w = await world(SOCIAL)
     await w.run()
+    await w.run() // puts everyone on the to-dos' notifications (once)
     const before = writesTo(w.fake)
     const writes = w.sheet.writes
     const report = await w.run()
@@ -238,7 +239,8 @@ describe('Basecamp → sheet', () => {
     const before = w.fake.calls.length
     await w.run()
     const writes = w.fake.calls.slice(before).filter((c) => c.method !== 'GET')
-    expect(writes.map((c) => `${c.method} ${c.path}`)).toEqual([`PUT /todos/${todo.id}.json`])
+    // …and puts the project's members on its notifications.
+    expect(new Set(writes.map((c) => `${c.method} ${c.path}`))).toEqual(new Set([`PUT /todos/${todo.id}.json`, `PUT /recordings/${todo.id}/subscription.json`]))
     expect(w.fake.todos.get(todo.id)!.assigneeIds).toEqual([w.people.omar.id])
     // …and after that nothing changes: the new rows are known.
     const settled = writesTo(w.fake)
@@ -254,6 +256,42 @@ describe('Basecamp → sheet', () => {
     await w.run()
     expect(w.sheet.tab(TAB).rows.some((r) => r[COL.main] === 'المناسبات')).toBe(true)
     expect([...w.sheet.notes.values()].some((n) => n.startsWith('محذوفة في Basecamp'))).toBe(true)
+  })
+})
+
+describe('notifications reach everyone', () => {
+  it('puts every project member on each to-do’s completion list and subscribers, once', async () => {
+    const w = await world(SOCIAL)
+    await w.run()
+    await w.run()
+    const everyone = Object.values(w.people).map((p) => p.id).sort((x, y) => x - y)
+    for (const todo of w.todos()) {
+      expect([...todo.completionSubscriberIds].sort((x, y) => x - y)).toEqual(everyone)
+      expect([...(w.fake.subscribers.get(todo.id) ?? [])].sort((x, y) => x - y)).toEqual(everyone)
+    }
+    // Done once: the next run writes nothing.
+    const before = writesTo(w.fake)
+    await w.run()
+    expect(writesTo(w.fake)).toBe(before)
+  })
+
+  it('comments on the to-do when a subtask is completed from the sheet, not when completed in Basecamp', async () => {
+    const w = await world(SOCIAL)
+    await w.run()
+    await w.run()
+    const motion = w.todos().find((t) => t.content === 'فيديو الموشن')!
+    w.sheet.set(TAB, 2, COL.status, 'منجزة')
+    await w.run()
+    expect(w.subtasks().find((x) => x.title === 'بناء بنك أفكار للموشن')!.completed).toBe(true)
+    expect(w.fake.commentsOf(motion.id).map((c) => c.content)).toEqual(['<div>أُنجزت المهمة الفرعية «بناء بنك أفكار للموشن» (من ملف Google Sheets).</div>'])
+
+    // Completed in Basecamp: Basecamp notifies by itself; no comment from the station.
+    const other = w.subtasks().find((x) => x.title === 'اعتماد بنك الأفكار')!
+    other.completed = true
+    other.updatedAt = w.fake.tick()
+    motion.updatedAt = w.fake.tick()
+    await w.run()
+    expect(w.fake.commentsOf(motion.id)).toHaveLength(1)
   })
 })
 
