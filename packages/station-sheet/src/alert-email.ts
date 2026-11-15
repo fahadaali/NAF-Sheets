@@ -21,6 +21,8 @@ export type StationAlert =
       suggestion?: { bcPersonId: number; personName: string; previousName: string }
     }
   | { kind: 'not_project_member'; linkId: string; linkTitle: string; personName: string; bcPersonId: number; projectName: string; rows: number }
+  /** Rows held back for one reason in one tab (unknown title, title without a name, unreadable date …). */
+  | { kind: 'rows_held'; linkId: string; linkTitle: string; tab: string; code: string; reason: string; rows: number }
   /** A whole tab stopped: fixed column missing or renamed. */
   | { kind: 'tab_stopped'; linkId: string; linkTitle: string; tab: string; reason: string }
   /** The whole link stopped: file unshared or deleted, Basecamp refused the sync account. */
@@ -44,6 +46,8 @@ export function alertKey(alert: StationAlert): string {
       return `name_unmapped:${alert.name}`
     case 'not_project_member':
       return `not_project_member:${alert.linkId}:${alert.bcPersonId}`
+    case 'rows_held':
+      return `rows_held:${alert.linkId}:${alert.tab}:${alert.code}:${alert.reason}`
     case 'tab_stopped':
       return `tab_stopped:${alert.linkId}:${alert.tab}`
     case 'link_stopped':
@@ -101,6 +105,12 @@ function itemOf(alert: StationAlert, origin: string): Item {
       return {
         title: `«${alert.personName}» ليس عضواً في المشروع`,
         detail: `مسند إليه ${rowsText(alert.rows)} في «${alert.linkTitle}»، وليس عضواً في مشروع «${alert.projectName}» في Basecamp. أضفه إلى المشروع لتُستأنف مزامنتها.`,
+        action: { label: 'افتح الربط', url: link },
+      }
+    case 'rows_held':
+      return {
+        title: `توقفت مزامنة ${rowsText(alert.rows)} في تبويب «${alert.tab}»`,
+        detail: `في «${alert.linkTitle}»: ${alert.reason}`,
         action: { label: 'افتح الربط', url: link },
       }
     case 'tab_stopped':

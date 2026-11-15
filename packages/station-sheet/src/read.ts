@@ -77,6 +77,8 @@ export interface TabIssue {
   /** `true`: the row is held back from Basecamp until fixed. */
   blocking: boolean
   message: string
+  /** What the issue is about, without the row (title, name, cell text): groups rows for one alert. */
+  subject?: string
 }
 
 /** A cell the platform rewrites in the sheet (0-based row and column). */
@@ -108,8 +110,8 @@ export function readTab(input: ReadTabInput): ReadTabResult {
   let mainPosition = 0
   let subPosition = 0
 
-  const issue = (code: TabIssueCode, row: number, blocking: boolean, message: string): void => {
-    result.issues.push({ code, row, blocking, message })
+  const issue = (code: TabIssueCode, row: number, blocking: boolean, message: string, subject?: string): void => {
+    result.issues.push(subject === undefined ? { code, row, blocking, message } : { code, row, blocking, message, subject })
   }
 
   for (let r = 1; r < values.length; r++) {
@@ -141,7 +143,7 @@ export function readTab(input: ReadTabInput): ReadTabResult {
 
     const due = readDate(cells[columns.due])
     if (!due.ok) {
-      issue('date_unreadable', r, true, `الصف ${human(r)}: «${cellText(cells[columns.due])}» ليس تاريخاً مفهوماً. اكتبه بالشكل 2026/11/30.`)
+      issue('date_unreadable', r, true, `الصف ${human(r)}: «${cellText(cells[columns.due])}» ليس تاريخاً مفهوماً. اكتبه بالشكل 2026/11/30.`, cellText(cells[columns.due]))
       blocked = true
     }
 
@@ -149,11 +151,11 @@ export function readTab(input: ReadTabInput): ReadTabResult {
     if (!who.ok) {
       blocked = true
       if (who.code === 'role_unknown') {
-        issue('role_unknown', r, true, `الصف ${human(r)}: المسمى «${who.role}» غير موجود في تبويب «المسميات». أضفه هناك أو اختر مسمى من القائمة.`)
+        issue('role_unknown', r, true, `الصف ${human(r)}: المسمى «${who.role}» غير موجود في تبويب «المسميات». أضفه هناك أو اختر مسمى من القائمة.`, who.role)
       } else if (who.code === 'role_without_name') {
-        issue('role_without_name', r, true, `الصف ${human(r)}: المسمى «${who.role}» بلا اسم في تبويب «المسميات». اكتب الاسم أمامه هناك.`)
+        issue('role_without_name', r, true, `الصف ${human(r)}: المسمى «${who.role}» بلا اسم في تبويب «المسميات». اكتب الاسم أمامه هناك.`, who.role)
       } else {
-        issue('name_unmapped', r, true, `الصف ${human(r)}: الاسم «${who.name}» غير مربوط بشخص في Basecamp. اربطه من شاشة «مطابقة الأسماء» في المنصة.`)
+        issue('name_unmapped', r, true, `الصف ${human(r)}: الاسم «${who.name}» غير مربوط بشخص في Basecamp. اربطه من شاشة «مطابقة الأسماء» في المنصة.`, who.name)
       }
     }
 

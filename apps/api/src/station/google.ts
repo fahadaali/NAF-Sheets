@@ -274,6 +274,51 @@ export class GoogleClient {
     }
   }
 
+  /**
+   * Inserts rows (Basecamp records new to the sheet) with their values and
+   * identities, in one batch. Inserts are applied bottom-up so the given row
+   * indexes (as read, before any insert) stay valid.
+   */
+  async insertRows(
+    spreadsheetId: string,
+    inserts: { sheetId: number; before: number; values: (string | number | null)[]; uid: string }[],
+  ): Promise<void> {
+    if (inserts.length === 0) return
+    // Bottom-up; rows inserted at the same place go in reverse so they end up in the given order.
+    const ordered = inserts.map((ins, i) => ({ ins, i })).sort((a, b) => b.ins.before - a.ins.before || b.i - a.i).map((x) => x.ins)
+    const requests: unknown[] = []
+    for (const ins of ordered) {
+      const range = { sheetId: ins.sheetId, dimension: 'ROWS', startIndex: ins.before, endIndex: ins.before + 1 }
+      requests.push({ insertDimension: { range, inheritFromBefore: ins.before > 1 } })
+      requests.push({
+        updateCells: {
+          start: { sheetId: ins.sheetId, rowIndex: ins.before, columnIndex: 0 },
+          fields: 'userEnteredValue',
+          rows: [{ values: ins.values.map(userEntered) }],
+        },
+      })
+      requests.push({
+        createDeveloperMetadata: {
+          developerMetadata: { metadataKey: ROW_UID_KEY, metadataValue: ins.uid, visibility: 'PROJECT', location: { dimensionRange: range } },
+        },
+      })
+    }
+    await this.call(`${SHEETS}/${encodeURIComponent(spreadsheetId)}:batchUpdate`, { method: 'POST', body: JSON.stringify({ requests }) })
+  }
+
+  /** Cell notes (e.g. «محذوفة في Basecamp»); `null` removes the note. */
+  async setNotes(spreadsheetId: string, notes: { sheetId: number; row: number; column: number; note: string | null }[]): Promise<void> {
+    if (notes.length === 0) return
+    const requests = notes.map((n) => ({
+      updateCells: {
+        start: { sheetId: n.sheetId, rowIndex: n.row, columnIndex: n.column },
+        fields: 'note',
+        rows: [{ values: [{ note: n.note ?? '' }] }],
+      },
+    }))
+    await this.call(`${SHEETS}/${encodeURIComponent(spreadsheetId)}:batchUpdate`, { method: 'POST', body: JSON.stringify({ requests }) })
+  }
+
   /** Last modification of the file (cheap; the fallback check every minute). */
   async modifiedTime(fileId: string): Promise<string> {
     const body = await this.call<{ modifiedTime?: string }>(`${DRIVE}/${encodeURIComponent(fileId)}?fields=modifiedTime&supportsAllDrives=true`)
@@ -303,6 +348,12 @@ export class GoogleClient {
   async stopChannel(channel: { id: string; resourceId: string }): Promise<void> {
     await this.call('https://www.googleapis.com/drive/v3/channels/stop', { method: 'POST', body: JSON.stringify(channel) })
   }
+}
+
+function userEntered(value: string | number | null): unknown {
+  if (value === null || value === '') return {}
+  if (typeof value === 'number') return { userEnteredValue: { numberValue: value } }
+  return { userEnteredValue: { stringValue: value } }
 }
 
 /** A tab title as an A1 range prefix: always quoted, quotes doubled. */
