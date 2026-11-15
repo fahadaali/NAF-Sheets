@@ -291,6 +291,8 @@ export function stationRoutes(depsIn?: StationDeps): Hono<AppEnv> {
     )
       .bind(name, person, callerOf(c).id, at)
       .run()
+    // The problem is solved now; the next run confirms it (and reopens it if the name is still unknown).
+    await c.env.DB.prepare(`UPDATE station_alerts SET resolved_at = ?2 WHERE key = ?1 AND resolved_at IS NULL`).bind(`name_unmapped:${name}`, at).run()
     // Rows held for this name resume now.
     const links = await c.env.DB.prepare(`SELECT id FROM station_links WHERE state = 'active'`).all<{ id: string }>()
     for (const l of links.results) await requestRun(c.env, l.id, 'manual')

@@ -117,6 +117,8 @@ describe('first sync', () => {
     const writes = w.sheet.writes
     const report = await w.run()
     expect(report.toBasecamp).toBe(0)
+    // To-dos take their subtasks' people automatically: no false «people changed» alert.
+    expect(report.alerts).toEqual([])
     expect(writesTo(w.fake)).toBe(before)
     expect(w.sheet.writes).toBe(writes)
   })

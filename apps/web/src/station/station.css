@@ -96,3 +96,54 @@
 .station-setup__missing {
   color: var(--color-warning);
 }
+
+.station-views {
+  display: flex;
+  gap: 0.25rem;
+  border-block-end: var(--border-width) solid var(--color-border);
+}
+
+.station-views__tab {
+  padding: 0.5rem 1rem;
+  border: 0;
+  border-block-end: 2px solid transparent;
+  background: none;
+  color: var(--color-text-muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.station-views__tab:hover {
+  color: var(--color-text);
+}
+
+.station-views__tab--active {
+  border-block-end-color: var(--color-accent);
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
+.station-problem {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+}
+
+.station-problem p {
+  margin: 0;
+}
+
+.station-problem__title {
+  font-weight: 600;
+}
+
+.station-problem__rows {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.station-problem > .button {
+  align-self: flex-start;
+}

@@ -18,11 +18,25 @@ export type StationAlert =
       role: string
       name: string
       rows: number
+      /** 1-based sheet rows held for it. */
+      rowNumbers?: number[]
       suggestion?: { bcPersonId: number; personName: string; previousName: string }
     }
   | { kind: 'not_project_member'; linkId: string; linkTitle: string; personName: string; bcPersonId: number; projectName: string; rows: number }
   /** Rows held back for one reason in one tab (unknown title, title without a name, unreadable date …). */
-  | { kind: 'rows_held'; linkId: string; linkTitle: string; tab: string; code: string; reason: string; rows: number }
+  | {
+      kind: 'rows_held'
+      linkId: string
+      linkTitle: string
+      tab: string
+      code: string
+      /** What the rows share (a title, a name, a cell text); with `code`, the problem's identity. */
+      subject?: string
+      reason: string
+      rows: number
+      /** 1-based sheet rows concerned. */
+      rowNumbers?: number[]
+    }
   /** A whole tab stopped: fixed column missing or renamed. */
   | { kind: 'tab_stopped'; linkId: string; linkTitle: string; tab: string; reason: string }
   /** The whole link stopped: file unshared or deleted, Basecamp refused the sync account. */
@@ -47,7 +61,7 @@ export function alertKey(alert: StationAlert): string {
     case 'not_project_member':
       return `not_project_member:${alert.linkId}:${alert.bcPersonId}`
     case 'rows_held':
-      return `rows_held:${alert.linkId}:${alert.tab}:${alert.code}:${alert.reason}`
+      return `rows_held:${alert.linkId}:${alert.tab}:${alert.code}:${alert.subject ?? ''}`
     case 'tab_stopped':
       return `tab_stopped:${alert.linkId}:${alert.tab}`
     case 'link_stopped':
@@ -110,7 +124,7 @@ function itemOf(alert: StationAlert, origin: string): Item {
     case 'rows_held':
       return {
         title: `توقفت مزامنة ${rowsText(alert.rows)} في تبويب «${alert.tab}»`,
-        detail: `في «${alert.linkTitle}»: ${alert.reason}`,
+        detail: `في «${alert.linkTitle}»: ${alert.reason}${rowList(alert.rowNumbers)}`,
         action: { label: 'افتح الربط', url: link },
       }
     case 'tab_stopped':
@@ -126,6 +140,13 @@ function itemOf(alert: StationAlert, origin: string): Item {
         action: { label: 'افتح الربط', url: link },
       }
   }
+}
+
+/** « (الصفوف 4، 9، 12)» — at most ten, then «…». */
+export function rowList(rows: readonly number[] | undefined): string {
+  if (!rows || rows.length === 0) return ''
+  const shown = rows.slice(0, 10).join('، ')
+  return ` (${rows.length === 1 ? 'الصف' : 'الصفوف'} ${shown}${rows.length > 10 ? '، …' : ''})`
 }
 
 function rowsText(n: number): string {

@@ -69,6 +69,15 @@ export async function syncLink(linkId: string, deps: RunDeps): Promise<RunReport
   if (!found0 || found0.state !== 'active') return { ...report, status: 'skipped' }
   const link = found0
   const alert = (a: StationAlert): void => {
+    // One name is one problem whatever tabs it appears in: merge its rows.
+    if (a.kind === 'name_unmapped') {
+      const same = report.alerts.find((x): x is typeof a => x.kind === 'name_unmapped' && x.name === a.name)
+      if (same) {
+        if (!same.tab.split('، ').includes(a.tab)) same.tab = `${same.tab}، ${a.tab}`
+        same.rows += a.rows
+        return
+      }
+    }
     report.alerts.push(a)
   }
   const base = { linkId: link.id, linkTitle: link.title }
@@ -176,6 +185,10 @@ export async function syncLink(linkId: string, deps: RunDeps): Promise<RunReport
       changedAt: modified,
     })
     allTasks.push(...read.tasks)
+    // Grouped per tab: one alert per kind of problem, with its rows.
+    const reverted: number[] = []
+    const noRole: string[] = []
+    const rowOf = (uid: string): number => (read.rows.find((r) => r.uid === uid)?.row ?? -1) + 1
     for (const n of read.newIdentities) newIdentities.push({ sheetId: tab.google_sheet_id, row: n.row, uid: n.uid })
     for (const f of read.fixes) cellWrites.push({ tabTitle: tab.title, ...f })
     heldAlerts(read.issues, tab.title)
@@ -227,7 +240,7 @@ export async function syncLink(linkId: string, deps: RunDeps): Promise<RunReport
       // (A to-do in automatic mode takes its subtasks' people; the engine handles it.)
       const sheetOwnsPeople = local.level === 1 ? assignFromSheet : local.assignMode === 'manual'
       if (sheetOwnsPeople && b && remote && remote.type !== 'deleted' && !sameIds(remote.assigneeIds, b.bcAssigneeIds) && sameIds(idsOf(local), b.bcAssigneeIds)) {
-        alert({ kind: 'rows_held', ...base, tab: tab.title, code: 'people_reverted', reason: `غُيّر المسؤول في Basecamp لـ«${local.title}»، والملف هو المرجع للإسناد فأُعيد كما في الملف. لتغييره غيّر «القسم» في الملف.`, rows: 1 })
+        reverted.push(rowOf(local.uid))
         b = { ...b, bcAssigneeIds: [...remote.assigneeIds] }
       }
       const parentId = local.level === 1 ? (bcIdOf.get(local.parentUid!) ?? null) : null
@@ -257,7 +270,6 @@ export async function syncLink(linkId: string, deps: RunDeps): Promise<RunReport
     // Basecamp → sheet cells.
     const edits = inboundEdits(read.rows, columns, inbound)
     for (const e of edits.edits) cellWrites.push({ tabTitle: tab.title, ...e })
-    for (const a of edits.alerts) alert({ kind: 'rows_held', ...base, tab: tab.title, code: a.code, reason: a.message, rows: 1 })
     for (const s of edits.structural) {
       const r = read.rows.find((x) => 'uid' in s && x.uid === s.uid)
       if (!r) continue
@@ -302,9 +314,29 @@ export async function syncLink(linkId: string, deps: RunDeps): Promise<RunReport
       afterSheetWrite.push(
         saveTaskStatement(db, { uid, linkId: link.id, googleSheetId: tab.google_sheet_id, level: 1, parentUid, bcId: sub.id, base: baseFromRemote(uid, sub), assignFromSheet: role !== '' || sub.assigneeIds.length === 0 }, at()),
       )
-      if (role === '' && sub.assigneeIds.length > 0) {
-        alert({ kind: 'rows_held', ...base, tab: tab.title, code: 'role_missing', reason: `أُضيفت من Basecamp مهمة «${sub.title}» ولا يطابق مسؤولوها مسمى في «${link.roles_tab}»، فبقي «القسم» فارغاً. اختر له مسمى في الملف.`, rows: 1 })
-      }
+      if (role === '' && sub.assigneeIds.length > 0) noRole.push(sub.title)
+    }
+
+    if (reverted.length > 0) {
+      alert({
+        kind: 'rows_held',
+        ...base,
+        tab: tab.title,
+        code: 'people_reverted',
+        reason: 'غُيّر المسؤول في Basecamp، والملف هو المرجع للإسناد فأُعيد كما في الملف. لتغيير المسؤول غيّر «القسم» في الملف أو الاسم في «المسميات».',
+        rows: reverted.length,
+        rowNumbers: reverted.filter((n) => n > 0).sort((a, b) => a - b),
+      })
+    }
+    if (noRole.length > 0) {
+      alert({
+        kind: 'rows_held',
+        ...base,
+        tab: tab.title,
+        code: 'role_missing',
+        reason: `أُضيفت من Basecamp مهام لا يطابق مسؤولوها مسمى في «${link.roles_tab}»، فبقي «القسم» فارغاً: ${noRole.map((t) => `«${t}»`).join('، ')}. اختر لها مسمى في الملف.`,
+        rows: noRole.length,
+      })
     }
 
     // Rows gone from the sheet → Basecamp (decision 9-ب).
@@ -374,20 +406,20 @@ export async function syncLink(linkId: string, deps: RunDeps): Promise<RunReport
   // --- helpers ------------------------------------------------------------------------
 
   function heldAlerts(issues: ReturnType<typeof readTab>['issues'], tab: string): void {
-    const groups = new Map<string, { code: string; subject: string; message: string; rows: number }>()
+    const groups = new Map<string, { code: string; subject: string; message: string; rows: number[] }>()
     for (const i of issues) {
       if (!i.blocking) continue
       const key = `${i.code}:${i.subject ?? ''}`
       const g = groups.get(key)
-      if (g) g.rows += 1
-      else groups.set(key, { code: i.code, subject: i.subject ?? '', message: i.message.replace(/^الصف \d+: /, ''), rows: 1 })
+      if (g) g.rows.push(i.row + 1)
+      else groups.set(key, { code: i.code, subject: i.subject ?? '', message: i.message.replace(/^الصف \d+: /, ''), rows: [i.row + 1] })
     }
     for (const g of groups.values()) {
       if (g.code === 'name_unmapped') {
         const role = [...roles].find(([, names]) => splitNames(names).includes(g.subject))?.[0] ?? ''
-        alert({ kind: 'name_unmapped', ...base, tab, role, name: g.subject, rows: g.rows })
+        alert({ kind: 'name_unmapped', ...base, tab, role, name: g.subject, rows: g.rows.length, rowNumbers: g.rows })
       } else {
-        alert({ kind: 'rows_held', ...base, tab, code: g.code, reason: g.message, rows: g.rows })
+        alert({ kind: 'rows_held', ...base, tab, code: g.code, subject: g.subject, reason: g.message, rows: g.rows.length, rowNumbers: g.rows })
       }
     }
   }
