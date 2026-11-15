@@ -257,6 +257,34 @@ describe('Basecamp → sheet', () => {
   })
 })
 
+describe('to-do due date (option أ)', () => {
+  it('is the latest subtask date, follows changes, and is put back when changed in Basecamp only', async () => {
+    const w = await world(SOCIAL)
+    await w.run()
+    const events = () => w.todos().find((t) => t.content === 'المناسبات')!
+    const motion = () => w.todos().find((t) => t.content === 'فيديو الموشن')!
+    expect(motion().dueOn).toBe('2026-11-12') // one dated subtask, one undated
+    expect(events().dueOn).toBe('2026-11-12')
+
+    // A later subtask date in the sheet moves the to-do.
+    w.sheet.set(TAB, 5, COL.due, '2026/12/20')
+    await w.run()
+    expect(events().dueOn).toBe('2026-12-20')
+
+    // Changed on the to-do in Basecamp: put back, and the to-do's row stays empty.
+    events().dueOn = '2027-01-01'
+    events().updatedAt = w.fake.tick()
+    await w.run()
+    expect(events().dueOn).toBe('2026-12-20')
+    expect(w.sheet.tab(TAB).rows[4]![COL.due] ?? null).toBeNull()
+
+    // A date written in the to-do's own row wins.
+    w.sheet.set(TAB, 4, COL.due, '2026/11/30')
+    await w.run()
+    expect(events().dueOn).toBe('2026-11-30')
+  })
+})
+
 describe('problems', () => {
   it('holds a row whose name is not mapped and opens one alert for it', async () => {
     const w = await world([...SOCIAL, ['المناسبات', 'متابعة منصة اعتماد', 'مسؤول منصة اعتماد', 'لم تبدأ', null]])

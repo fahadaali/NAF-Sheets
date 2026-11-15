@@ -243,6 +243,12 @@ export async function syncLink(linkId: string, deps: RunDeps): Promise<RunReport
         reverted.push(rowOf(local.uid))
         b = { ...b, bcAssigneeIds: [...remote.assigneeIds] }
       }
+      // Option أ: a to-do's automatic date (latest of its subtasks) is the sheet's too:
+      // changed in Basecamp only → sent back, never written into the to-do's empty cell.
+      const autoDue = local.level === 0 && read.autoDue.has(local.uid)
+      if (autoDue && b && remote && remote.type === 'todo' && remote.dueOn !== b.dueOn && local.dueOn === b.dueOn) {
+        b = { ...b, dueOn: remote.dueOn }
+      }
       const parentId = local.level === 1 ? (bcIdOf.get(local.parentUid!) ?? null) : null
       if (local.level === 1 && parentId === null) continue // its to-do is not in Basecamp yet (held)
       const subtasks = local.level === 0 ? read.tasks.filter((t) => t.parentUid === local.uid) : []
@@ -259,7 +265,14 @@ export async function syncLink(linkId: string, deps: RunDeps): Promise<RunReport
         report.toBasecamp += 1
         if (action.type === 'create_todo' || action.type === 'create_subtask') bcIdOf.set(local.uid, next!.bcId)
       }
-      for (const a of result.inbound) inbound.push(a)
+      for (const a of result.inbound) {
+        if (autoDue && a.type === 'update_row' && a.fields.dueOn !== undefined) {
+          const { dueOn: _auto, ...fields } = a.fields
+          if (Object.keys(fields).length > 0) inbound.push({ ...a, fields })
+          continue
+        }
+        inbound.push(a)
+      }
       const counts = remote && remote.type === 'todo' ? { c: remote.subtasksCount, d: remote.subtasksCompletedCount } : null
       afterSheetWrite.push(
         saveTaskStatement(db, { uid: local.uid, linkId: link.id, googleSheetId: tab.google_sheet_id, level: local.level, parentUid: local.parentUid, bcId: next?.bcId ?? local.bcId, base: next, assignFromSheet }, at()),

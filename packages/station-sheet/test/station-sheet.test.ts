@@ -146,6 +146,24 @@ describe('readTab', () => {
     expect(approval!.completed).toBe(false) // «جارية» is not done
   })
 
+  it('gives a to-do with no date the latest of its subtasks’ dates; its own date wins (option أ)', () => {
+    const values: CellValue[][] = [
+      HEADER,
+      ['أ'],
+      ['أ', 'أولى', '', 'لم تبدأ', 46336], // 2026-11-10
+      ['أ', 'ثانية', '', 'لم تبدأ', '2026/12/06'],
+      ['أ', 'بلا تاريخ', '', 'لم تبدأ', ''],
+      ['ب', '', '', '', '2026/11/01'],
+      ['ب', 'فرعية', '', 'لم تبدأ', '2026/12/31'],
+      ['ج'],
+      ['ج', 'بلا تاريخ', '', 'لم تبدأ'],
+    ]
+    const r = read(values)
+    const due = Object.fromEntries(r.tasks.filter((t) => t.level === 0).map((t) => [t.title, t.dueOn]))
+    expect(due).toEqual({ أ: '2026-12-06', ب: '2026-11-01', ج: null })
+    expect([...r.autoDue].length).toBe(2)
+  })
+
   it('keeps known identities and carries fields the sheet has no column for', () => {
     const identities = new Map<number, RowIdentity>([
       [1, { uid: 'todo-a', bcId: 900, level: 0, carry: { notesHtml: '<div>من Basecamp</div>', startsOn: '2026-11-01' } }],

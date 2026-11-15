@@ -86,6 +86,7 @@ real Google and Basecamp — say which, never imply it.
 - A row with only «المهمة الرئيسية» is a to-do; a row with «المهمة» is a subtask of the **nearest to-do row above it**; the platform rewrites a stale repeated to-do title.
 - **People come from the sheet**: «القسم» → the roles tab («المسميات» by default, per link) → names (several split on « - » or «،») → Basecamp people through the platform's name directory (`station_names`, one for every link; exact names map themselves). A people change made in Basecamp is put back and alerted. A row whose people cannot be resolved is **held back**, never sent with no assignee.
 - «منجزة» ↔ completed; un-completing in Basecamp writes «جارية».
+- **A to-do's due date** (owner, 2026-11-15, option أ): its own «الموعد» when written; when empty, the latest of its subtasks' dates — changed in Basecamp only, it is put back, and never written into the empty cell.
 - **Deletion is automatic**: a row gone from the sheet trashes its to-do (subtasks go with it) or deletes its subtask for good after storing its snapshot (`station_deleted`). **Never** when a tab reads empty while it had tasks. A record deleted in Basecamp leaves the row with a note.
 - Records created in Basecamp get rows in the sheet; the sheet's order is the reference.
 - **Row identity** is row developer metadata (`naf_task_uid`), never a visible column.

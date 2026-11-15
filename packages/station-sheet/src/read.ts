@@ -98,13 +98,21 @@ export interface ReadTabResult {
   fixes: CellEdit[]
   /** Rows that got a new uid: write it to the row's metadata. */
   newIdentities: { row: number; uid: TaskUid }[]
+  /**
+   * To-dos whose «الموعد» is empty: their due date is the latest of their
+   * subtasks' (owner decision, 2026-11-15, option أ). A date written in the
+   * to-do's own row wins.
+   */
+  autoDue: Set<TaskUid>
 }
 
 const human = (row: number): number => row + 1
 
 export function readTab(input: ReadTabInput): ReadTabResult {
   const { values, columns } = input
-  const result: ReadTabResult = { rows: [], tasks: [], issues: [], fixes: [], newIdentities: [] }
+  const result: ReadTabResult = { rows: [], tasks: [], issues: [], fixes: [], newIdentities: [], autoDue: new Set() }
+  /** Latest readable subtask date per to-do uid (held subtasks included: their date is still the plan). */
+  const latestSubDue = new Map<TaskUid, string>()
   const usedUids = new Set<TaskUid>()
   let currentMain: { row: TabRow; title: string; held: boolean } | null = null
   let mainPosition = 0
@@ -163,8 +171,13 @@ export function readTab(input: ReadTabInput): ReadTabResult {
       mainPosition += 1
       subPosition = 0
       currentMain = { row, title: mainText, held: blocked }
+      if (due.ok && due.value === null) result.autoDue.add(row.uid)
     } else {
       subPosition += 1
+      if (due.ok && due.value !== null) {
+        const prev = latestSubDue.get(currentMain!.row.uid)
+        if (prev === undefined || due.value > prev) latestSubDue.set(currentMain!.row.uid, due.value)
+      }
       if (mainText !== currentMain!.title) result.fixes.push({ row: r, column: columns.main, value: currentMain!.title })
       // A subtask under a held to-do waits with it: it has no Basecamp parent to go to.
       if (currentMain!.held && currentMain!.row.bcId === null) blocked = true
@@ -193,6 +206,10 @@ export function readTab(input: ReadTabInput): ReadTabResult {
       bcId: row.bcId,
       deletedRemotely: false,
     })
+  }
+  // Option أ: an empty to-do date is the latest of its subtasks' dates.
+  for (const task of result.tasks) {
+    if (task.level === 0 && result.autoDue.has(task.uid)) task.dueOn = latestSubDue.get(task.uid) ?? null
   }
   return result
 
