@@ -90,4 +90,18 @@ export interface Env {
   PUBLIC_API_ORIGIN?: string
   /** Secret: `wrangler secret put AUTH_CLIENT_SECRET`. Read by naf-auth only. */
   AUTH_CLIENT_SECRET?: string
+  /**
+   * Station (docs/station-plan.md §5): the Google service account's JSON key,
+   * whole. Secret. Each linked spreadsheet is shared with its `client_email`.
+   */
+  GOOGLE_SERVICE_ACCOUNT_KEY?: string
+  /** Station alert emails (§6.2): Resend API key. Secret. */
+  RESEND_API_KEY?: string
+  /**
+   * Var (dashboard): sender of alert emails, `Name <address>`, the address on
+   * the domain verified in Resend. Default `NAF Sheets <sheets@naflaw.sa>`.
+   */
+  ALERT_EMAIL_FROM?: string
+  /** Var (dashboard): comma-separated recipients; unset → every active `admin` member. */
+  ALERT_EMAIL_TO?: string
 }

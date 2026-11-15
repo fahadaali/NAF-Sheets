@@ -51,3 +51,16 @@ cd apps/api && npx wrangler secret put GOOGLE_SERVICE_ACCOUNT_KEY
 في كل ملف يُربط: **Share** ← بريد حساب الخدمة ← **Editor** ← ألغِ «Notify people» ← **Share**.
 
 صلاحية المحرّر لازمة لأن المنصة تكتب في الملف: تعديلات Basecamp، وتصحيح عنوان المهمة الرئيسية المكرر، وعلامات الصفوف.
+
+## ملحق: متغيرات Cloudflare للمحطة
+
+Worker `naf-sheets` ← **Settings ← Variables and Secrets**:
+
+| الاسم | النوع | القيمة |
+|---|---|---|
+| `GOOGLE_SERVICE_ACCOUNT_KEY` | Secret | محتوى ملف JSON كاملاً |
+| `RESEND_API_KEY` | Secret | مفتاح Resend |
+| `ALERT_EMAIL_FROM` | Text | `NAF Sheets <sheets@naflaw.sa>` — الاسم الظاهر ثم العنوان بين `< >` |
+| `ALERT_EMAIL_TO` | Text | بريد المستلم، وعدة عناوين تُفصل بفاصلة. إن تُرك فارغاً يصل لكل `admin` |
+
+الأسماء حرفية (أحرف كبيرة وشرطة سفلية). مشاركة ملف Google مع حساب الخدمة (الخطوة 6) تتم في Google Sheets نفسه، لا في Cloudflare.
