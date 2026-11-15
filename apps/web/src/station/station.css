@@ -129,50 +129,7 @@
   align-self: flex-start;
 }
 
-/* Home: summary strip and link cards ------------------------------------------ */
-
-.station-summary {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-3) var(--space-6);
-  margin-block: var(--space-4);
-  padding: var(--space-4) var(--space-5);
-  border: var(--border-width) solid var(--color-border);
-  border-radius: var(--radius-lg);
-  background: var(--color-surface);
-}
-
-.station-summary__item {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-}
-
-.station-summary__value {
-  font-size: var(--font-size-xl);
-  font-weight: var(--font-weight-bold);
-  line-height: var(--line-height-tight);
-}
-
-.station-summary__value--warn {
-  color: var(--color-warning);
-}
-
-.station-summary__label {
-  color: var(--color-text-muted);
-  font-size: var(--font-size-sm);
-}
-
-.station-summary__note {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  flex: 1 1 18rem;
-  margin: 0;
-  color: var(--color-text-muted);
-  font-size: var(--font-size-sm);
-}
+/* Home: link cards ----------------------------------------------------------- */
 
 .station-card {
   gap: var(--space-3);

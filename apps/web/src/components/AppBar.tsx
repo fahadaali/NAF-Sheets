@@ -33,6 +33,12 @@ const SECTIONS: { id: Exclude<Section, null>; href: string; label: string; Icon:
   { id: 'settings', href: '/settings', label: t.nav.settings, Icon: Settings },
 ]
 
+/** First letter of the name (skipping «ال» and spaces), for the avatar. */
+function initial(name: string): string {
+  const word = name.trim().replace(/^ال/, '')
+  return [...word][0] ?? ''
+}
+
 export function AppBar({ user }: { user: CurrentUser | null; showSettings?: boolean }) {
   const current = sectionOf(useRoute())
   const who = user?.name || user?.email
@@ -54,7 +60,10 @@ export function AppBar({ user }: { user: CurrentUser | null; showSettings?: bool
         ))}
       </nav>
       {who ? (
-        <span className="app-bar__user">
+        <span className="app-bar__user" title={who}>
+          <span className="app-bar__avatar" aria-hidden="true">
+            {initial(who)}
+          </span>
           <span className="sr-only">{t.signedInAs} </span>
           <bdi>{who}</bdi>
         </span>
