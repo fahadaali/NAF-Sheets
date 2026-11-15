@@ -7,7 +7,7 @@
 
 export { cellText, latinDigits, readDate, serialToIso, isoToSerial, type CellValue, type DateRead } from './cells'
 export { FIXED_HEADERS, findColumns, type ColumnsResult, type FixedColumn, type TabColumns } from './columns'
-export { readRoles, assigneesForRole, type AssigneeLookup, type PeopleMap, type RoleNames, type RolesIssue } from './people'
+export { readRoles, assigneesForRole, splitNames, type AssigneeLookup, type PeopleMap, type RoleNames, type RolesIssue } from './people'
 export { STATUS, isDone, statusAfterRemoteCompletion } from './status'
 export {
   readTab,

@@ -2,16 +2,25 @@
 //
 // The sheet is the reference for assignment: «القسم» holds a job title, the
 // tab «المسميات» gives the name(s) behind each title, and the platform's own
-// table maps each name as written there («أبو عمار», «فهد وعمر») to Basecamp
-// people. A name may stand for several people. Nothing here splits names.
+// table maps each person's name as written there to a Basecamp person.
+// A title may name several people, separated by « - » or «،»
+// («فهد العتيبي - عمر العمار», as the tab is written since 2026-11-15).
 
 import { cellText, type CellValue } from './cells'
 
 /** Job title → the name text written for it in «المسميات». */
 export type RoleNames = Map<string, string>
 
-/** Name text as written in «المسميات» → Basecamp person ids (set in the platform). */
-export type PeopleMap = Map<string, readonly number[]>
+/** One person's name as written in «المسميات» → Basecamp person id (set in the platform). */
+export type PeopleMap = Map<string, number>
+
+/** The people a name cell lists: split on « - », «،» and «,»; blanks dropped. */
+export function splitNames(text: string): string[] {
+  return text
+    .split(/\s+-\s+|،|,/)
+    .map((n) => n.replace(/\s+/g, ' ').trim())
+    .filter((n) => n !== '')
+}
 
 export interface RolesIssue {
   role: string
@@ -48,7 +57,11 @@ export function assigneesForRole(roleCell: CellValue, roles: RoleNames, people: 
   if (!roles.has(role)) return { ok: false, code: 'role_unknown', role }
   const name = roles.get(role)!
   if (name === '') return { ok: false, code: 'role_without_name', role }
-  const ids = people.get(name)
-  if (ids === undefined) return { ok: false, code: 'name_unmapped', role, name }
-  return { ok: true, ids: [...new Set(ids)] }
+  const ids: number[] = []
+  for (const person of splitNames(name)) {
+    const id = people.get(person)
+    if (id === undefined) return { ok: false, code: 'name_unmapped', role, name: person }
+    if (!ids.includes(id)) ids.push(id)
+  }
+  return { ok: true, ids }
 }

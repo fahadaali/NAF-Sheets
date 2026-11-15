@@ -8,6 +8,7 @@ import {
   readDate,
   readRoles,
   readTab,
+  splitNames,
   serialToIso,
   statusAfterRemoteCompletion,
   type CellValue,
@@ -22,26 +23,26 @@ const HEADER: CellValue[] = ['المهمة الرئيسية', 'المهمة', '�
 const SOCIAL: CellValue[][] = [
   HEADER,
   ['إعداد المحتوى ومراجعته'],
-  ['إعداد المحتوى ومراجعته', 'تعديل أعمدة لوحة المحتوى في بيس كامب', 'مسؤول السوشل ميديا', 'لم تبدأ', 46336, 'أبو عمار', '', '', '', '', 1],
+  ['إعداد المحتوى ومراجعته', 'تعديل أعمدة لوحة المحتوى في بيس كامب', 'مسؤول السوشل ميديا', 'لم تبدأ', 46336, 'عمر العمار', '', '', '', '', 1],
   ['فيديو الموشن'],
-  ['فيديو الموشن', 'بناء بنك أفكار للموشن', 'مسؤول السوشل ميديا', 'منجزة', 46338, 'أبو عمار', '', '', '', '', 2],
-  ['فيديو الموشن', 'اعتماد بنك الأفكار', 'الاعتمادات', 'جارية', '', 'فهد وعمر', '', '', '', '', 3],
+  ['فيديو الموشن', 'بناء بنك أفكار للموشن', 'مسؤول السوشل ميديا', 'منجزة', 46338, 'عمر العمار', '', '', '', '', 2],
+  ['فيديو الموشن', 'اعتماد بنك الأفكار', 'الاعتمادات', 'جارية', '', 'فهد العتيبي - عمر العمار', '', '', '', '', 3],
   [],
 ]
 
 const ROLES_TAB: CellValue[][] = [
   ['المسمى', 'الاسم (اكتبه هنا)', 'ما يتولاه'],
-  ['الاعتمادات', 'فهد وعمر', 'القرارات'],
-  ['مسؤول السوشل ميديا', 'أبو عمار', 'مشروع السوشل ميديا'],
-  ['المحامي الرئيسي', 'أبو شبيب', 'اعتماد المحتوى'],
-  ['المحامي الرئيسي', 'أبو شبيب', 'الاستشارات'],
+  ['الاعتمادات', 'فهد العتيبي - عمر العمار', 'القرارات'],
+  ['مسؤول السوشل ميديا', 'عمر العمار', 'مشروع السوشل ميديا'],
+  ['المحامي الرئيسي', 'عبدالرحمن العاطفي', 'اعتماد المحتوى'],
+  ['المحامي الرئيسي', 'عبدالرحمن العاطفي', 'الاستشارات'],
   ['الشريك', '', ''],
 ]
 const FAHAD = 49045323
 const OMAR = 52761043
 const PEOPLE: PeopleMap = new Map([
-  ['أبو عمار', [OMAR]],
-  ['فهد وعمر', [FAHAD, OMAR]],
+  ['عمر العمار', OMAR],
+  ['فهد العتيبي', FAHAD],
 ])
 
 function columns(header: CellValue[] = HEADER): TabColumns {
@@ -105,9 +106,16 @@ describe('findColumns', () => {
 describe('readRoles', () => {
   it('maps titles to names and reports a title given two names', () => {
     const { roles, conflicts } = readRoles([...ROLES_TAB, ['الاعتمادات', 'فهد', '']])
-    expect(roles.get('مسؤول السوشل ميديا')).toBe('أبو عمار')
-    expect(roles.get('الاعتمادات')).toBe('فهد وعمر')
-    expect(conflicts).toEqual([{ role: 'الاعتمادات', names: ['فهد وعمر', 'فهد'] }])
+    expect(roles.get('مسؤول السوشل ميديا')).toBe('عمر العمار')
+    expect(roles.get('الاعتمادات')).toBe('فهد العتيبي - عمر العمار')
+    expect(conflicts).toEqual([{ role: 'الاعتمادات', names: ['فهد العتيبي - عمر العمار', 'فهد'] }])
+  })
+
+  it('splits several people in one name cell, keeping hyphenated names whole', () => {
+    expect(splitNames('فهد العتيبي - عمر العمار')).toEqual(['فهد العتيبي', 'عمر العمار'])
+    expect(splitNames('فهد العتيبي، عمر العمار')).toEqual(['فهد العتيبي', 'عمر العمار'])
+    expect(splitNames('آل-سعيد')).toEqual(['آل-سعيد'])
+    expect(splitNames('  ')).toEqual([])
   })
 })
 
@@ -164,7 +172,7 @@ describe('readTab', () => {
       ['name_unmapped', 3, true],
       ['role_unknown', 4, true],
     ])
-    expect(r.issues[1]!.message).toContain('«أبو شبيب»')
+    expect(r.issues[1]!.message).toContain('«عبدالرحمن العاطفي»')
     // Held rows are still rows: they must not be taken for deleted ones.
     expect(r.rows).toHaveLength(4)
   })
