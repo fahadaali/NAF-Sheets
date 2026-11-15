@@ -48,6 +48,18 @@ beforeEach(async () => {
   await env.DB.prepare(`DELETE FROM station_alerts`).run()
 })
 
+describe('setup status', () => {
+  it('says whether the sync account, the Google key and the email key are in place, without their values', async () => {
+    const s = await setup()
+    const res = await call(s.app, 'GET', '/api/station/status', { user: s.viewer, env: { ...s.h.env, RESEND_API_KEY: 're_secret' } as Env })
+    const body = await json<{ basecamp: { status: string } | null; google: string | null; email: boolean }>(res)
+    expect(body.basecamp?.status).toBe('active')
+    expect(body.google).toBe('naf-sync@naf-sheets-station.iam.gserviceaccount.com')
+    expect(body.email).toBe(true)
+    expect(JSON.stringify(body)).not.toContain('re_secret')
+  })
+})
+
 describe('wizard and links', () => {
   it('inspects a file: linkable tabs with counts, others with the reason', async () => {
     const s = await setup()

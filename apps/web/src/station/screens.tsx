@@ -2,7 +2,7 @@
 // name matching. The platform shows no sheet of its own: it only links.
 
 import { useEffect, useState, type ReactNode } from 'react'
-import { ArrowLeftRight, ExternalLink, LoaderCircle, Pause, Play, Plus, RefreshCw, Trash2, Unlink, Users } from 'lucide-react'
+import { ArrowLeftRight, CircleCheck, ExternalLink, LoaderCircle, Pause, Play, Plus, RefreshCw, Trash2, TriangleAlert, Unlink, Users } from 'lucide-react'
 import type { CurrentUser } from '@naf-sheets/shared'
 import { AppBar } from '../components/AppBar'
 import { Notice } from '../components/Notice'
@@ -105,6 +105,7 @@ export function LinksScreen({ user }: { user: CurrentUser | null }) {
       }
     >
       <p className="lead">{s.links.lead}</p>
+      <SetupCard isAdmin={isAdmin} />
       {load.kind === 'loading' ? <Loading text={s.links.loading} /> : null}
       {load.kind === 'error' ? <Failed message={load.message} retry={retry} /> : null}
       {load.kind === 'ready' && load.data.links.length === 0 ? (
@@ -121,6 +122,45 @@ export function LinksScreen({ user }: { user: CurrentUser | null }) {
         </div>
       ) : null}
     </Page>
+  )
+}
+
+/** The three things a link needs (§5); shown in full while one is missing. */
+function SetupCard({ isAdmin }: { isAdmin: boolean }) {
+  const [load] = useLoad((signal) => stationApi.status(signal), [])
+  if (load.kind !== 'ready') return null
+  const { basecamp, google, email } = load.data
+  const bcOk = basecamp?.status === 'active'
+  const next = typeof window === 'undefined' ? '/' : window.location.pathname
+  const connect = `/auth/basecamp/start?${new URLSearchParams({ service: '1', next }).toString()}`
+  const item = (ok: boolean, title: string, text: string, action?: ReactNode) => (
+    <li className="station-setup__item">
+      {ok ? <CircleCheck className="icon station-setup__ok" aria-label={s.setup.ready} /> : <TriangleAlert className="icon station-setup__missing" aria-label={s.setup.missing} />}
+      <div className="stack-tight">
+        <strong>{title}</strong>
+        <span className="muted small">{text}</span>
+        {action}
+      </div>
+    </li>
+  )
+  return (
+    <section className="card stack station-setup" data-testid="station-setup">
+      <h2>{s.setup.title}</h2>
+      <ul className="station-setup__list">
+        {item(
+          bcOk,
+          s.setup.basecamp,
+          bcOk ? s.setup.basecampOk(basecamp?.name ?? null) : basecamp ? s.setup.basecampExpired : s.setup.basecampMissing,
+          isAdmin && !bcOk ? (
+            <a className="button button--small button--primary" href={connect} title={s.setup.basecampHint}>
+              {s.setup.basecampConnect}
+            </a>
+          ) : null,
+        )}
+        {item(google !== null, s.setup.google, google ? s.setup.googleOk(google) : s.setup.googleMissing)}
+        {item(email, s.setup.email, email ? s.setup.emailOk : s.setup.emailMissing)}
+      </ul>
+    </section>
   )
 }
 

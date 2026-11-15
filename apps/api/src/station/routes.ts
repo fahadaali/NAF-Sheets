@@ -64,6 +64,32 @@ export function stationRoutes(depsIn?: StationDeps): Hono<AppEnv> {
   const deps = (): StationDeps => depsIn ?? defaultSyncDeps()
   const google = (c: Context<AppEnv>) => deps().google ?? googleFor(c.env, deps())
 
+  // What the station needs before a link can work (§5): the Basecamp sync
+  // account (an admin connects it at /auth/basecamp/start?service=1), the
+  // Google service account key, and the email key. Never a secret's value.
+  routes.get('/status', async (c) => {
+    callerOf(c)
+    const account = (c.env as { BASECAMP_ACCOUNT_ID?: string }).BASECAMP_ACCOUNT_ID?.trim() ?? ''
+    const sync = await c.env.DB.prepare(
+      `SELECT i.status, i.bc_person_id, p.name FROM integrations i LEFT JOIN bc_account_people_cache p ON p.bc_person_id = i.bc_person_id
+       WHERE i.provider = 'basecamp' AND i.account_id = ?1`,
+    )
+      .bind(account)
+      .first<{ status: string; bc_person_id: number | null; name: string | null }>()
+    let serviceAccount: string | null = null
+    try {
+      serviceAccount = google(c).serviceAccountEmail
+    } catch {
+      serviceAccount = null
+    }
+    return c.json({
+      ok: true,
+      basecamp: sync ? { status: sync.status, personId: sync.bc_person_id, name: sync.name } : null,
+      google: serviceAccount,
+      email: Boolean(c.env.RESEND_API_KEY),
+    })
+  })
+
   routes.get('/links', async (c) => {
     callerOf(c)
     const links = await c.env.DB.prepare(

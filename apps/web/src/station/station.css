@@ -70,3 +70,29 @@
 .station-name--focus {
   background: var(--color-accent-soft);
 }
+
+.station-setup {
+  margin-block-end: 1rem;
+}
+
+.station-setup__list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding-inline-start: 0;
+  list-style: none;
+}
+
+.station-setup__item {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+}
+
+.station-setup__ok {
+  color: var(--color-success);
+}
+
+.station-setup__missing {
+  color: var(--color-warning);
+}

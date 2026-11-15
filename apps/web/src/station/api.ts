@@ -88,7 +88,14 @@ async function request<T>(method: Method, path: string, body?: unknown, signal?:
 
 const linkPath = (id: string) => `/api/station/links/${encodeURIComponent(id)}`
 
+export interface StationStatus {
+  basecamp: { status: string; personId: number | null; name: string | null } | null
+  google: string | null
+  email: boolean
+}
+
 export const stationApi = {
+  status: (signal?: AbortSignal) => request<StationStatus>('GET', '/api/station/status', undefined, signal),
   links: (signal?: AbortSignal) => request<{ links: LinkSummary[] }>('GET', '/api/station/links', undefined, signal),
   inspect: (source: string, rolesTab: string, signal?: AbortSignal) =>
     request<Inspection>('GET', `/api/station/inspect?${new URLSearchParams({ source, rolesTab }).toString()}`, undefined, signal),
