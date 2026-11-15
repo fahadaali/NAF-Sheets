@@ -47,10 +47,10 @@ still exist: removing any of them deletes data and needs the owner.
 
 | Stage (`docs/station-plan.md` §9) | State |
 |---|---|
-| S0 — live feasibility (row identity, Drive notification delay, quotas) | Waits for the deploy and the first real link |
+| S0 — live feasibility (row identity, Drive notification delay, quotas) | Deployed 2026-11-15. Row identity passed on the real Google (`docs/station-s0-report.md`); delay and quotas wait for the first real link |
 | S1 — remove the editor | Done |
 | S2–S5 — links, both directions, deletion, alerts, screens | Built and tested against a fake Google sheet and a fake Basecamp |
-| S6 — hardening, live acceptance | Waits for the deploy |
+| S6 — hardening, live acceptance | Waits for the first real link |
 
 Code is "done" only with tests passing. A stage is "accepted" only against the
 real Google and Basecamp — say which, never imply it.
