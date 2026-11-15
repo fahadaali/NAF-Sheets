@@ -1,4 +1,4 @@
-// Settings: for platform admins, the platform's members «أعضاء المنصة» (§3),
+// Settings: the station's readiness (sync account, Google, email, schedule), and for platform admins the platform's members «أعضاء المنصة» (§3),
 // the names directory of the station «مطابقة الأسماء», and the palette «المظهر».
 // The Basecamp sync account is on the links page (docs/station-plan.md §5).
 
@@ -7,6 +7,8 @@ import { Palette, UserCog, Users } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { CurrentUser } from '@naf-sheets/shared'
 import { AppBar } from '../components/AppBar'
+import { PageHeader } from '../components/PageHeader'
+import { SetupCard } from '../station/screens'
 import { Link } from '../lib/router'
 import { pathFor } from '../lib/routes'
 import { useDocumentTitle } from '../lib/use-document-title'
@@ -21,10 +23,9 @@ export function SettingsScreen({ user }: { user: CurrentUser | null }) {
       </a>
       <AppBar user={user} />
       <main id="main" className="page page--narrow" data-screen="settings">
-        <div className="page-head">
-          <h1>{t.settings.title}</h1>
-        </div>
+        <PageHeader title={t.settings.title} back={{ href: '/', label: t.nav.links }} />
         <div className="stack">
+          <SetupCard isAdmin={user?.role === 'admin'} />
           {user && user.role !== 'admin' ? <p className="muted">{t.adminOnly.body}</p> : null}
           {/* Hidden for everyone but platform admins; the API refuses the rest anyway. */}
           {user?.role === 'admin' ? (
