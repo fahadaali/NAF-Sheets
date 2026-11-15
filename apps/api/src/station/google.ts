@@ -11,7 +11,7 @@
 //
 // Nothing here decides anything about sync: it only reads and writes.
 
-export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>
+export type FetchLike = (input: string, init: RequestInit) => Promise<Response>
 
 export const SCOPES = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive.readonly'] as const
 const SHEETS = 'https://sheets.googleapis.com/v4/spreadsheets'

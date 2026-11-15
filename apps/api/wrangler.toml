@@ -182,8 +182,9 @@ tag = "v2"
 new_sqlite_classes = ["BasecampRateGate"]
 
 # ─────────────────────────────────────────────────────────────
-# Cron — reconciliation every 15 minutes (§9.4), and the daily backup
-# (§14) at 00:23 UTC = 03:23 Riyadh (src/background.ts BACKUP_CRON).
+# Cron — reconciliation every 15 minutes (§9.4), the daily backup (§14) at
+# 00:23 UTC = 03:23 Riyadh (src/background.ts BACKUP_CRON), and the station's
+# minute check (docs/station-plan.md §4.1; src/background.ts STATION_CRON).
 # ─────────────────────────────────────────────────────────────
 [triggers]
-crons = ["*/15 * * * *", "23 0 * * *"]
+crons = ["*/15 * * * *", "23 0 * * *", "* * * * *"]

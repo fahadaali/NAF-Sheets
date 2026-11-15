@@ -12,6 +12,7 @@ import { meRoutes } from './routes/me'
 import type { AccessReporter } from './routes/platform-members'
 import { platformMemberRoutes } from './routes/platform-members'
 import { webhookRoutes } from './routes/webhooks'
+import { stationWebhookRoutes } from './station/routes'
 import { workbookRoutes } from './routes/workbooks'
 import { DEFAULT_SNAPSHOT_ORPHAN_AGE_MS } from './snapshot'
 
@@ -43,6 +44,8 @@ export function createApp(options: AppOptions = {}): Hono<AppEnv> {
   // All methods: naf-auth answers anything but POST with its own 405.
   app.all('/auth/backchannel-logout', (c) => handleBackchannelLogout(c.req.raw, c.env, authConfig(c.env)))
   app.route('/webhooks', webhookRoutes())
+  // Drive push notifications of the station's linked files (src/station).
+  app.route('/webhooks', stationWebhookRoutes())
   // Internal API of the NAF ecosystem (§13): service tokens, never a naf-id
   // session. Before the guard so naf-auth never sees these requests.
   app.route('/api/v1', internalApiRoutes())

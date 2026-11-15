@@ -46,8 +46,19 @@ export interface BcReconcileMessage {
   enqueuedAt: string
 }
 
+/**
+ * The station (docs/station-plan.md §4): run one link's sync. Sent on a Drive
+ * notification, a Basecamp webhook of a linked project, the minute check and
+ * «مزامنة الآن».
+ */
+export interface StationSyncMessage {
+  kind: 'station_sync'
+  linkId: string
+  reason: 'drive' | 'basecamp' | 'manual' | 'schedule'
+}
+
 /** Everything `bc-inbound` carries. */
-export type BcInboundQueueMessage = BcInboundMessage | BcReconcileMessage
+export type BcInboundQueueMessage = BcInboundMessage | BcReconcileMessage | StationSyncMessage
 
 export interface Env {
   DB: D1Database

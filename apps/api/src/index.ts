@@ -11,6 +11,7 @@ import { registerPhase5Routes } from './phase5'
 import { setOutboundDetection } from './room/outbound-seam'
 import { registerSyncRoutes } from './sync/outbound'
 import { registerXlsxImportRoutes } from './xlsx-import'
+import { stationRoutes } from './station'
 import { detectAfterRoomCommit } from './sync/room-commit'
 
 const app = createApp()
@@ -25,6 +26,8 @@ registerSyncRoutes(app)
 registerPhase5Routes(app)
 // The workbook dashboard and the appearance palette (src/dashboard). Reads only, no remote call.
 registerDashboardRoutes(app)
+// The station (docs/station-plan.md): links between Google Sheets and Basecamp.
+app.route('/api/station', stationRoutes())
 // After each room commit, changed task rows go to Basecamp with the token of
 // the person who changed them (spec §3, §9.2; src/sync/room-commit.ts).
 setOutboundDetection(detectAfterRoomCommit)

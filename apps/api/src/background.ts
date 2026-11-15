@@ -5,6 +5,7 @@ import type { BcInboundQueueMessage, BcOutboundMessage, Env } from './env'
 import { handleInboundBatch, runReconciliation } from './sync/inbound'
 import { handleOutboundBatch } from './sync/outbound'
 import { runBackup } from './phase7'
+import { handleStationMessages, stationMinute } from './station'
 
 export const OUTBOUND_QUEUE = 'bc-outbound'
 export const INBOUND_QUEUE = 'bc-inbound'
@@ -24,8 +25,12 @@ export async function handleQueue(batch: MessageBatch<QueueMessageBody>, env: En
   switch (batch.queue) {
     case OUTBOUND_QUEUE:
       return handleOutboundBatch(batch as MessageBatch<BcOutboundMessage>, env, ctx)
-    case INBOUND_QUEUE:
-      return handleInboundBatch(batch as MessageBatch<BcInboundQueueMessage>, env, ctx)
+    case INBOUND_QUEUE: {
+      // The station's runs, and webhooks of projects linked by the station, first.
+      const rest = await handleStationMessages(batch as MessageBatch<BcInboundQueueMessage>, env)
+      if (rest.messages.length === 0) return
+      return handleInboundBatch(rest, env, ctx)
+    }
     default:
       // A queue this Worker does not know: leave the messages to be retried.
       console.error(`queue consumer: unknown queue ${batch.queue}`)
@@ -42,6 +47,10 @@ export async function handleScheduled(controller: ScheduledController, env: Env,
     await runBackup(env, new Date(controller.scheduledTime))
     return
   }
+  if (controller.cron === STATION_CRON) {
+    await stationMinute(env)
+    return
+  }
   await runReconciliation(env, ctx)
 }
 
@@ -50,3 +59,6 @@ export async function handleScheduled(controller: ScheduledController, env: Env,
  * 00:23 UTC = 03:23 in Riyadh. Every other cron is the reconciliation.
  */
 export const BACKUP_CRON = '23 0 * * *'
+
+/** The station's minute check (docs/station-plan.md §4.1: under a minute, owner decision 8). */
+export const STATION_CRON = '* * * * *'
