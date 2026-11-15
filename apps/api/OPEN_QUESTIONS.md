@@ -1,5 +1,7 @@
 # API — open questions
 
+> **Mostly history (2026-11-15):** most items belong to the removed workbook editor. Still current: #1–3 and #17 (members, `PLATFORM_ID`, `/denied`, the first admin), the Basecamp link items (B…), backups (B1–B3) and appearance (D8). The station's open items are in `docs/station-plan.md` §11-ب.
+
 Decisions the API needed that the spec (`docs/spec.md`), `CLAUDE.md` or the
 contract (`packages/shared/src/api.ts`) do not settle. Each one is implemented
 with the narrowest safe behaviour and marked `OPEN:` in the code. Numbers are
