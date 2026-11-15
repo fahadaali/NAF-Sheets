@@ -115,6 +115,8 @@ export class FakeBasecamp {
   readonly webhooks = new Map<number, FakeWebhook>()
   /** Phase 5: comments by id, and uploaded files by sgid. */
   readonly comments = new Map<number, FakeComment>()
+  /** Subscribers per recording id (subscriptions.md). */
+  readonly subscribers = new Map<number, Set<number>>()
   readonly blobs = new Map<string, FakeBlob>()
   /** token → Basecamp person id (who the token belongs to). */
   readonly tokens = new Map<string, number>()
@@ -548,6 +550,16 @@ export class FakeBasecamp {
       return new Response(null, { status: 204 })
     }
 
+    // Subscriptions (subscriptions.md)
+    if ((m = /^\/recordings\/(\d+)\/subscription\.json$/.exec(path)) && method === 'PUT') {
+      const rid = Number(m[1])
+      const b = (call.body ?? {}) as { subscriptions?: number[]; unsubscriptions?: number[] }
+      const set = this.subscribers.get(rid) ?? new Set<number>()
+      for (const p of b.subscriptions ?? []) set.add(p)
+      for (const p of b.unsubscriptions ?? []) set.delete(p)
+      this.subscribers.set(rid, set)
+      return reply(200, { subscribed: set.has(me), count: set.size, subscribers: [...set].map((pid) => this.personRef(pid)) })
+    }
     // Comments (comments.md)
     if ((m = /^\/recordings\/(\d+)\/comments\.json$/.exec(path))) {
       const todo = this.todos.get(Number(m[1]))

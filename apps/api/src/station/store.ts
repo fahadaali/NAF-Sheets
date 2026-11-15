@@ -39,6 +39,8 @@ export interface TaskRow {
   subtasks_done: number | null
   deleted_remotely: 0 | 1
   assign_from_sheet: 0 | 1
+  /** Project members last put on the to-do's completion list and subscribers (sorted ids). */
+  notify_key: string | null
 }
 
 export async function getLink(db: D1Database, id: string): Promise<LinkRow | null> {
