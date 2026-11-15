@@ -113,11 +113,14 @@ bdi.num,
 /* App bar ---------------------------------------------------------------- */
 
 .app-bar {
+  position: sticky;
+  inset-block-start: 0;
+  z-index: 10;
   display: flex;
   align-items: center;
-  gap: var(--space-3);
+  gap: var(--space-5);
   min-block-size: var(--app-bar-height);
-  padding-inline: var(--space-4);
+  padding-inline: var(--space-5);
   background: var(--color-surface);
   border-block-end: var(--border-width) solid var(--color-border);
 }
@@ -125,21 +128,63 @@ bdi.num,
 .app-bar__brand {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--space-3);
   min-inline-size: 0;
   color: var(--color-text);
-  font-weight: var(--font-weight-bold);
   text-decoration: none;
 }
 
-.app-bar__brand .icon {
-  color: var(--color-success);
+.app-bar__logo {
+  block-size: 2rem;
+  inline-size: auto;
 }
 
-.app-bar__brand span {
-  overflow: hidden;
-  text-overflow: ellipsis;
+.app-bar__name {
+  display: flex;
+  flex-direction: column;
+  padding-inline-start: var(--space-3);
+  border-inline-start: var(--border-width) solid var(--color-border);
+  line-height: var(--line-height-tight);
+}
+
+.app-bar__name strong {
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-bold);
+}
+
+.app-bar__tagline {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
   white-space: nowrap;
+}
+
+.app-bar__nav {
+  display: flex;
+  align-items: stretch;
+  align-self: stretch;
+  gap: var(--space-1);
+}
+
+.app-bar__nav-link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-inline: var(--space-3);
+  border-block-end: 2px solid transparent;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.app-bar__nav-link:hover {
+  color: var(--color-text);
+}
+
+.app-bar__nav-link[aria-current='page'] {
+  border-block-end-color: var(--color-accent);
+  color: var(--color-accent);
+  font-weight: var(--font-weight-bold);
 }
 
 .app-bar__user {
@@ -149,6 +194,78 @@ bdi.num,
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+@media (max-width: 48rem) {
+  .app-bar {
+    flex-wrap: wrap;
+    gap: var(--space-2) var(--space-3);
+    padding-block: var(--space-2);
+  }
+
+  .app-bar__tagline,
+  .app-bar__user {
+    display: none;
+  }
+
+  .app-bar__nav {
+    order: 3;
+    inline-size: 100%;
+    overflow-x: auto;
+  }
+
+  .app-bar__nav-link {
+    padding-block: var(--space-2);
+  }
+}
+
+/* Page head: back link, title, actions ------------------------------------- */
+
+.page-header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-block-end: var(--space-5);
+}
+
+.page-header__back {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: var(--space-1);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  text-decoration: none;
+}
+
+.page-header__back:hover {
+  color: var(--color-accent);
+}
+
+.page-header__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.page-header__titles h1 {
+  margin: 0;
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-bold);
+  line-height: var(--line-height-tight);
+}
+
+.page-header__subtitle {
+  margin: var(--space-1) 0 0;
+  color: var(--color-text-muted);
+}
+
+.page-header__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
 }
 
 /* Page -------------------------------------------------------------------- */
@@ -406,31 +523,13 @@ bdi.num,
 
 /* Shared building blocks (wave 2) ------------------------------------------ */
 
-.app-bar__end {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  min-inline-size: 0;
-  margin-inline-start: auto;
-}
 
-.app-bar__end .app-bar__user {
-  margin-inline-start: 0;
-}
 
-.app-bar__link {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  color: var(--color-text-muted);
-  font-size: var(--font-size-sm);
-  text-decoration: none;
-  white-space: nowrap;
-}
 
-.app-bar__link:hover {
-  color: var(--color-text);
-}
+
+
+
+
 
 .page--narrow {
   max-inline-size: var(--narrow-width);

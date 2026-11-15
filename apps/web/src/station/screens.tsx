@@ -2,9 +2,10 @@
 // name matching. The platform shows no sheet of its own: it only links.
 
 import { useEffect, useState, type ReactNode } from 'react'
-import { ArrowLeftRight, CircleCheck, ExternalLink, LoaderCircle, Pause, Play, Plus, RefreshCw, Trash2, TriangleAlert, Unlink, Users } from 'lucide-react'
+import { ArrowLeftRight, ChevronLeft, CircleCheck, ExternalLink, FileSpreadsheet, LoaderCircle, Pause, Play, Plus, RefreshCw, Trash2, TriangleAlert, Unlink } from 'lucide-react'
 import type { CurrentUser } from '@naf-sheets/shared'
 import { AppBar } from '../components/AppBar'
+import { PageHeader } from '../components/PageHeader'
 import { Notice } from '../components/Notice'
 import { errorMessage } from '../lib/api'
 import { Link, navigate } from '../lib/router'
@@ -32,7 +33,23 @@ function useLoad<T>(fetcher: (signal: AbortSignal) => Promise<T>, deps: unknown[
   return [state, () => setAttempt((n) => n + 1)]
 }
 
-function Page({ user, title, screen, actions, children }: { user: CurrentUser | null; title: string; screen: string; actions?: ReactNode; children: ReactNode }) {
+function Page({
+  user,
+  title,
+  screen,
+  back,
+  subtitle,
+  actions,
+  children,
+}: {
+  user: CurrentUser | null
+  title: string
+  screen: string
+  back?: { href: string; label: string }
+  subtitle?: ReactNode
+  actions?: ReactNode
+  children: ReactNode
+}) {
   useDocumentTitle(title)
   return (
     <>
@@ -41,20 +58,7 @@ function Page({ user, title, screen, actions, children }: { user: CurrentUser | 
       </a>
       <AppBar user={user} />
       <main id="main" className="page" data-screen={screen}>
-        <nav className="station-nav" aria-label={s.nav.links}>
-          <Link href="/" className="station-nav__link">
-            <ArrowLeftRight className="icon" aria-hidden="true" />
-            {s.nav.links}
-          </Link>
-          <Link href="/names" className="station-nav__link">
-            <Users className="icon" aria-hidden="true" />
-            {s.nav.names}
-          </Link>
-        </nav>
-        <div className="page-head">
-          <h1>{title}</h1>
-          {actions}
-        </div>
+        <PageHeader title={title} back={back} subtitle={subtitle} actions={actions} />
         {children}
       </main>
     </>
@@ -90,11 +94,15 @@ function Failed({ message, retry }: { message: string; retry: () => void }) {
 export function LinksScreen({ user }: { user: CurrentUser | null }) {
   const [load, retry] = useLoad((signal) => stationApi.links(signal), [])
   const isAdmin = user?.role === 'admin'
+  const links = load.kind === 'ready' ? load.data.links : []
+  const problems = links.reduce((n, l) => n + l.problems, 0)
+  const latest = links.map((l) => l.last_sync_at).filter((x): x is string => x !== null).sort().at(-1) ?? null
   return (
     <Page
       user={user}
       title={s.links.title}
       screen="station-links"
+      subtitle={s.links.lead}
       actions={
         isAdmin ? (
           <Link href="/links/new" className="button button--primary">
@@ -104,11 +112,30 @@ export function LinksScreen({ user }: { user: CurrentUser | null }) {
         ) : null
       }
     >
-      <p className="lead">{s.links.lead}</p>
-      <SetupCard isAdmin={isAdmin} />
+      <SetupNotice />
       {load.kind === 'loading' ? <Loading text={s.links.loading} /> : null}
       {load.kind === 'error' ? <Failed message={load.message} retry={retry} /> : null}
-      {load.kind === 'ready' && load.data.links.length === 0 ? (
+      {load.kind === 'ready' && links.length > 0 ? (
+        <section className="station-summary" aria-label={s.links.summary}>
+          <div className="station-summary__item">
+            <span className="station-summary__value num">{links.length}</span>
+            <span className="station-summary__label">{s.links.count}</span>
+          </div>
+          <div className="station-summary__item">
+            <span className={problems > 0 ? 'station-summary__value station-summary__value--warn num' : 'station-summary__value num'}>{problems}</span>
+            <span className="station-summary__label">{s.links.problemsLabel}</span>
+          </div>
+          <div className="station-summary__item">
+            <span className="station-summary__value">{s.ago(latest)}</span>
+            <span className="station-summary__label">{s.links.lastSync}</span>
+          </div>
+          <p className="station-summary__note">
+            <RefreshCw className="icon" aria-hidden="true" />
+            {s.links.auto}
+          </p>
+        </section>
+      ) : null}
+      {load.kind === 'ready' && links.length === 0 ? (
         <section className="panel">
           <ArrowLeftRight className="panel__icon" aria-hidden="true" />
           <p>{s.links.empty}</p>
@@ -116,7 +143,7 @@ export function LinksScreen({ user }: { user: CurrentUser | null }) {
       ) : null}
       {load.kind === 'ready' ? (
         <div className="station-cards">
-          {load.data.links.map((l) => (
+          {links.map((l) => (
             <LinkCard key={l.id} link={l} />
           ))}
         </div>
@@ -125,13 +152,37 @@ export function LinksScreen({ user }: { user: CurrentUser | null }) {
   )
 }
 
-/** The three things a link needs (§5); shown in full while one is missing. */
-function SetupCard({ isAdmin }: { isAdmin: boolean }) {
+/** On the home page only when something the station needs is missing; the details are in Settings. */
+function SetupNotice() {
+  const [load] = useLoad((signal) => stationApi.status(signal), [])
+  if (load.kind !== 'ready') return null
+  const { basecamp, google, email } = load.data
+  const missing = [basecamp?.status !== 'active' ? s.setup.basecamp : null, google === null ? s.setup.google : null, email ? null : s.setup.email].filter(
+    (x): x is string => x !== null,
+  )
+  if (missing.length === 0) return null
+  return (
+    <Notice
+      tone="warning"
+      title={s.setup.incomplete}
+      actions={
+        <Link className="button button--small" href="/settings">
+          {s.setup.open}
+        </Link>
+      }
+    >
+      <p>{missing.join('، ')}</p>
+    </Notice>
+  )
+}
+
+/** The three things a link needs (§5), in Settings. */
+export function SetupCard({ isAdmin }: { isAdmin: boolean }) {
   const [load] = useLoad((signal) => stationApi.status(signal), [])
   if (load.kind !== 'ready') return null
   const { basecamp, google, email } = load.data
   const bcOk = basecamp?.status === 'active'
-  const next = typeof window === 'undefined' ? '/' : window.location.pathname
+  const next = typeof window === 'undefined' ? '/settings' : window.location.pathname
   const connect = `/auth/basecamp/start?${new URLSearchParams({ service: '1', next }).toString()}`
   const item = (ok: boolean, title: string, text: string, action?: ReactNode) => (
     <li className="station-setup__item">
@@ -146,37 +197,48 @@ function SetupCard({ isAdmin }: { isAdmin: boolean }) {
   return (
     <section className="card stack station-setup" data-testid="station-setup">
       <h2>{s.setup.title}</h2>
+      <p className="muted small">{s.setup.lead}</p>
       <ul className="station-setup__list">
         {item(
           bcOk,
           s.setup.basecamp,
           bcOk ? s.setup.basecampOk(basecamp?.name ?? null) : basecamp ? s.setup.basecampExpired : s.setup.basecampMissing,
-          isAdmin && !bcOk ? (
-            <a className="button button--small button--primary" href={connect} title={s.setup.basecampHint}>
-              {s.setup.basecampConnect}
+          isAdmin ? (
+            <a className="button button--small" href={connect} title={s.setup.basecampHint}>
+              {bcOk ? s.setup.basecampReconnect : s.setup.basecampConnect}
             </a>
           ) : null,
         )}
         {item(google !== null, s.setup.google, google ? s.setup.googleOk(google) : s.setup.googleMissing)}
         {item(email, s.setup.email, email ? s.setup.emailOk : s.setup.emailMissing)}
+        {item(true, s.setup.schedule, s.setup.scheduleText)}
       </ul>
     </section>
   )
 }
 
 function LinkCard({ link }: { link: LinkSummary }) {
+  const tone = link.state === 'paused' ? 'neutral' : link.problems > 0 ? 'warning' : 'success'
   return (
     <Link href={`/links/${encodeURIComponent(link.id)}`} className="card station-card" data-testid="link-card">
-      <div className="card__head">
-        <h2>
-          <bdi>{link.title}</bdi>
-        </h2>
-        <span className={link.state === 'paused' ? 'badge badge--neutral' : 'badge badge--success'}>{link.state === 'paused' ? s.links.paused : s.links.active}</span>
+      <div className="station-card__head">
+        <span className={`station-card__icon station-card__icon--${tone}`}>
+          <FileSpreadsheet className="icon" aria-hidden="true" />
+        </span>
+        <div className="station-card__titles">
+          <h2>
+            <bdi>{link.title}</bdi>
+          </h2>
+          <span className="muted small">
+            {s.links.tabs(link.tabs)} · {s.links.lastSync} {s.ago(link.last_sync_at)}
+          </span>
+        </div>
+        <ChevronLeft className="icon station-card__go" aria-hidden="true" />
       </div>
-      <p className="muted small">
-        {s.links.tabs(link.tabs)} · {s.links.lastSync}: <bdi dir="ltr">{s.date(link.last_sync_at)}</bdi>
-      </p>
-      <span className={link.problems > 0 ? 'badge badge--warning' : 'badge badge--neutral'}>{s.links.problems(link.problems)}</span>
+      <div className="station-card__foot">
+        <span className={`badge badge--${link.state === 'paused' ? 'neutral' : 'success'}`}>{link.state === 'paused' ? s.links.paused : s.links.active}</span>
+        <span className={link.problems > 0 ? 'badge badge--warning' : 'badge badge--neutral'}>{s.links.problems(link.problems)}</span>
+      </div>
     </Link>
   )
 }
@@ -194,7 +256,7 @@ export function NewLinkScreen({ user }: { user: CurrentUser | null }) {
 
   if (user && user.role !== 'admin') {
     return (
-      <Page user={user} title={s.wizard.title} screen="station-new">
+      <Page user={user} title={s.wizard.title} screen="station-new" back={{ href: '/', label: s.links.title }} subtitle={s.wizard.lead}>
         <Notice tone="warning">
           <p>{t.adminOnly.body}</p>
         </Notice>
@@ -228,7 +290,7 @@ export function NewLinkScreen({ user }: { user: CurrentUser | null }) {
 
   const ready = inspection?.kind === 'ready' ? inspection.data : null
   return (
-    <Page user={user} title={s.wizard.title} screen="station-new">
+    <Page user={user} title={s.wizard.title} screen="station-new" back={{ href: '/', label: s.links.title }} subtitle={s.wizard.lead}>
       <div className="stack">
       <section className="card stack">
         <h2>1. {s.wizard.step1}</h2>
@@ -384,8 +446,23 @@ export function LinkScreen({ user, id }: { user: CurrentUser | null; id: string 
     }
   }
 
+  const detail = load.kind === 'ready' ? load.data : null
   return (
-    <Page user={user} title={title} screen="station-link">
+    <Page
+      user={user}
+      title={title}
+      screen="station-link"
+      back={{ href: '/', label: s.links.title }}
+      subtitle={
+        detail ? (
+          <>
+            <span className={`badge badge--${detail.link.state === 'paused' ? 'neutral' : 'success'}`}>{detail.link.state === 'paused' ? s.links.paused : s.links.active}</span>{' '}
+            {s.links.lastSync} {s.ago(detail.link.last_sync_at)}
+          </>
+        ) : undefined
+      }
+      actions={detail ? <LinkActions link={detail.link} isAdmin={isAdmin} busy={busy} act={act} /> : undefined}
+    >
       {load.kind === 'loading' ? <Loading text={s.link.loading} /> : null}
       {load.kind === 'error' ? <Failed message={load.message} retry={reload} /> : null}
       {flash ? (
@@ -393,8 +470,42 @@ export function LinkScreen({ user, id }: { user: CurrentUser | null; id: string 
           <p>{flash.text}</p>
         </Notice>
       ) : null}
-      {load.kind === 'ready' ? <LinkBody detail={load.data} isAdmin={isAdmin} busy={busy} act={act} /> : null}
+      {detail ? <LinkBody detail={detail} isAdmin={isAdmin} busy={busy} act={act} /> : null}
     </Page>
+  )
+}
+
+function LinkActions({ link, isAdmin, busy, act }: { link: LinkDetail['link']; isAdmin: boolean; busy: boolean; act: (fn: () => Promise<unknown>, done?: string) => Promise<void> }) {
+  return (
+    <>
+      <a className="button button--ghost" href={`https://docs.google.com/spreadsheets/d/${encodeURIComponent(link.spreadsheet_id)}/edit`} target="_blank" rel="noreferrer">
+        <ExternalLink className="icon" aria-hidden="true" />
+        {s.link.file}
+      </a>
+      {isAdmin ? (
+        <>
+          <button type="button" className="button button--primary" disabled={busy} onClick={() => void act(() => stationApi.syncNow(link.id), s.link.syncQueued)}>
+            <RefreshCw className="icon" aria-hidden="true" />
+            {s.link.syncNow}
+          </button>
+          <button type="button" className="button" disabled={busy} onClick={() => void act(() => stationApi.updateLink(link.id, { state: link.state === 'paused' ? 'active' : 'paused' }))}>
+            {link.state === 'paused' ? <Play className="icon" aria-hidden="true" /> : <Pause className="icon" aria-hidden="true" />}
+            {link.state === 'paused' ? s.link.resume : s.link.pause}
+          </button>
+          <button
+            type="button"
+            className="button button--danger"
+            disabled={busy}
+            onClick={() => {
+              if (window.confirm(s.link.unlinkConfirm)) void act(() => stationApi.deleteLink(link.id).then(() => navigate('/')))
+            }}
+          >
+            <Unlink className="icon" aria-hidden="true" />
+            {s.link.unlink}
+          </button>
+        </>
+      ) : null}
+    </>
   )
 }
 
@@ -410,46 +521,6 @@ function LinkBody({ detail, isAdmin, busy, act }: { detail: LinkDetail; isAdmin:
   ]
   return (
     <div className="stack">
-      <section className="card stack">
-        <p className="muted small">
-          {s.links.lastSync}: <bdi dir="ltr">{s.date(link.last_sync_at)}</bdi> · {link.state === 'paused' ? s.links.paused : s.links.active}
-        </p>
-        <div className="card__actions">
-          <a className="button button--ghost" href={`https://docs.google.com/spreadsheets/d/${encodeURIComponent(link.spreadsheet_id)}/edit`} target="_blank" rel="noreferrer">
-            <ExternalLink className="icon" aria-hidden="true" />
-            {s.link.file}
-          </a>
-          {isAdmin ? (
-            <>
-              <button type="button" className="button" disabled={busy} onClick={() => void act(() => stationApi.syncNow(link.id), s.link.syncQueued)}>
-                <RefreshCw className="icon" aria-hidden="true" />
-                {s.link.syncNow}
-              </button>
-              <button
-                type="button"
-                className="button"
-                disabled={busy}
-                onClick={() => void act(() => stationApi.updateLink(link.id, { state: link.state === 'paused' ? 'active' : 'paused' }))}
-              >
-                {link.state === 'paused' ? <Play className="icon" aria-hidden="true" /> : <Pause className="icon" aria-hidden="true" />}
-                {link.state === 'paused' ? s.link.resume : s.link.pause}
-              </button>
-              <button
-                type="button"
-                className="button button--danger"
-                disabled={busy}
-                onClick={() => {
-                  if (window.confirm(s.link.unlinkConfirm)) void act(() => stationApi.deleteLink(link.id).then(() => navigate('/')))
-                }}
-              >
-                <Unlink className="icon" aria-hidden="true" />
-                {s.link.unlink}
-              </button>
-            </>
-          ) : null}
-        </div>
-      </section>
-
       <div className="station-views" role="tablist" aria-label={link.title}>
         {views.map((v) => (
           <button
@@ -617,8 +688,7 @@ export function NamesScreen({ user, focusName, suggest }: { user: CurrentUser | 
   const [load, reload] = useLoad((signal) => stationApi.names(signal), [])
   const isAdmin = user?.role === 'admin'
   return (
-    <Page user={user} title={s.names.title} screen="station-names">
-      <p className="lead">{s.names.lead}</p>
+    <Page user={user} title={s.names.title} screen="station-names" subtitle={s.names.lead}>
       {load.kind === 'loading' ? <Loading text={s.names.loading} /> : null}
       {load.kind === 'error' ? <Failed message={load.message} retry={reload} /> : null}
       {load.kind === 'ready' ? <NamesBody data={load.data} isAdmin={isAdmin} reload={reload} focusName={focusName} suggest={suggest} /> : null}
@@ -665,13 +735,16 @@ function NamesBody({ data, isAdmin, reload, focusName, suggest }: { data: NamesR
                 <th scope="col">{s.names.name}</th>
                 <th scope="col">{s.names.person}</th>
                 <th scope="col">{s.names.source}</th>
+                {isAdmin ? <th scope="col"><span className="sr-only">{s.names.remove}</span></th> : null}
               </tr>
             </thead>
             <tbody>
               {data.names.map((n) => (
                 <tr key={n.name}>
                   <td>
-                    <NameRow name={n.name} initial={String(n.bc_person_id)} people={people} isAdmin={isAdmin} focus={n.name === focusName} onSaved={reload} compact />
+                    <strong>
+                      <bdi>{n.name}</bdi>
+                    </strong>
                   </td>
                   <td>
                     <bdi>{personName.get(n.bc_person_id) ?? n.bc_person_id}</bdi>
@@ -679,6 +752,11 @@ function NamesBody({ data, isAdmin, reload, focusName, suggest }: { data: NamesR
                   <td>
                     <span className="badge badge--neutral">{n.source === 'auto' ? s.names.auto : s.names.manual}</span>
                   </td>
+                  {isAdmin ? (
+                    <td>
+                      <NameRow name={n.name} initial={String(n.bc_person_id)} people={people} isAdmin={isAdmin} focus={n.name === focusName} onSaved={reload} compact />
+                    </td>
+                  ) : null}
                 </tr>
               ))}
             </tbody>
@@ -725,6 +803,19 @@ function NameRow({
     } catch (error) {
       setStatus({ kind: 'error', message: errorMessage(error) })
     }
+  }
+  if (compact) {
+    return isAdmin ? (
+      <button
+        type="button"
+        className="button button--small button--ghost"
+        data-name={name}
+        onClick={() => void stationApi.deleteName(name).then(onSaved, (e: unknown) => setStatus({ kind: 'error', message: errorMessage(e) }))}
+      >
+        <Trash2 className="icon" aria-hidden="true" />
+        {status.kind === 'error' ? status.message : s.names.remove}
+      </button>
+    ) : null
   }
   return (
     <div className={focus ? 'station-name station-name--focus' : 'station-name'} data-name={name}>

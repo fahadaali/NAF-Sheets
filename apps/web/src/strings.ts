@@ -4,13 +4,24 @@
 // The API's own Arabic `message` (ApiError) always wins over these; the
 // fallbacks below are used only when a response carries none.
 
-export const APP_NAME = 'منصة إدارة مشاريع الاتصال المؤسسي'
+export const APP_NAME = 'شيت ناف'
 
 export const t = {
   appName: APP_NAME,
   skipToContent: 'تخطَّ إلى المحتوى',
   signedInAs: 'مسجّل الدخول باسم',
   settingsLink: 'الإعدادات',
+  back: 'رجوع إلى',
+  brand: {
+    logoAlt: 'شعار ناف',
+    tagline: 'ربط Google Sheets بـ Basecamp',
+  },
+  nav: {
+    label: 'أقسام المنصة',
+    links: 'الروابط',
+    names: 'مطابقة الأسماء',
+    settings: 'الإعدادات',
+  },
 
   settings: {
     title: 'الإعدادات',
@@ -29,7 +40,7 @@ export const t = {
     apiTokensBody: 'رموز خدمة تتيح لأنظمة ناف الأخرى قراءة الملفات والمهام والمؤشرات، دون أي تعديل.',
     apiTokensOpen: 'إدارة الرموز',
     membersTitle: 'أعضاء المنصة',
-    membersBody: 'غيّر دور كل عضو («مسؤول» أو «محرّر» أو «مشاهد») وأوقف حسابه أو أعد تفعيله، وتابع مطابقته بحسابه في Basecamp.',
+    membersBody: 'غيّر دور كل عضو («مسؤول» أو «محرّر» أو «مشاهد»)، أو أوقف حسابه أو أعد تفعيله. المسؤول وحده ينشئ الروابط ويعدّلها.',
     membersOpen: 'إدارة الأعضاء',
   },
 

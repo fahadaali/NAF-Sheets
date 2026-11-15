@@ -6,6 +6,7 @@ import type { ReactNode } from 'react'
 import { LoaderCircle, ShieldX } from 'lucide-react'
 import type { CurrentUser } from '@naf-sheets/shared'
 import { AppBar } from './AppBar'
+import { PageHeader } from './PageHeader'
 import { Link } from '../lib/router'
 import { pathFor } from '../lib/routes'
 import { useDocumentTitle } from '../lib/use-document-title'
@@ -33,9 +34,7 @@ export function AdminPage({
       </a>
       <AppBar user={user} />
       <main id="main" className="page" data-screen={screen}>
-        <div className="page-head">
-          <h1>{title}</h1>
-        </div>
+        <PageHeader title={title} back={{ href: '/settings', label: t.settings.title }} />
         {!userSettled ? (
           <div className="panel panel--plain" role="status">
             <LoaderCircle className="panel__icon spin" aria-hidden="true" />

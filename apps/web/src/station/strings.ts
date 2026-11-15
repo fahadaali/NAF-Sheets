@@ -16,10 +16,20 @@ export const s = {
     paused: 'موقوف',
     active: 'يعمل',
     lastSync: 'آخر مزامنة',
+    summary: 'ملخص الروابط',
+    count: 'روابط',
+    problemsLabel: 'مشكلات مفتوحة',
+    auto: 'المزامنة تلقائية: أي تعديل في الملف أو في Basecamp ينعكس في الجهة الأخرى خلال أقل من دقيقة، ومراجعة كاملة لكل ربط كل 15 دقيقة.',
     never: 'لم تتم بعد',
   },
   setup: {
-    title: 'الإعداد',
+    title: 'جاهزية الربط',
+    lead: 'ما تحتاجه المنصة لتعمل المزامنة. يُفحص عند فتح هذه الصفحة.',
+    incomplete: 'إعداد المزامنة ناقص',
+    open: 'افتح الإعدادات',
+    basecampReconnect: 'أعد الربط',
+    schedule: 'جدول المزامنة',
+    scheduleText: 'تلقائية: فور أي تعديل (إشعار من Google أو Basecamp)، وفحص كل دقيقة لما فات، ومراجعة كاملة كل 15 دقيقة.',
     ready: 'جاهز',
     missing: 'ناقص',
     basecamp: 'حساب المزامنة في Basecamp',
@@ -37,6 +47,7 @@ export const s = {
   },
   wizard: {
     title: 'ربط جديد',
+    lead: 'اربط ملف Google Sheets بمشروع في Basecamp في ثلاث خطوات.',
     step1: 'رابط ملف Google Sheets',
     sourceHint: 'انسخ رابط الملف من شريط العنوان والصقه هنا.',
     rolesTab: 'تبويب المسميات',
@@ -144,6 +155,17 @@ export const s = {
     remove: 'إلغاء الربط',
     suggestion: (person: string, previous: string) => `اقتراح: كان هذا المسمى لـ«${previous}» المربوط بـ«${person}».`,
     where: (a: { role: string; tab: string; linkTitle: string; rows: number }) => `أمام «${a.role}» في «${a.tab}» من «${a.linkTitle}» — ${rows(a.rows)}`,
+  },
+  /** «قبل 3 دقائق» — relative to now; the full date for older times. */
+  ago: (iso: string | null): string => {
+    if (!iso) return 'لم تتم بعد'
+    const seconds = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 1000))
+    if (seconds < 60) return 'الآن'
+    const minutes = Math.round(seconds / 60)
+    if (minutes < 60) return minutes === 1 ? 'قبل دقيقة' : minutes === 2 ? 'قبل دقيقتين' : minutes <= 10 ? `قبل ${minutes} دقائق` : `قبل ${minutes} دقيقة`
+    const hours = Math.round(minutes / 60)
+    if (hours < 24) return hours === 1 ? 'قبل ساعة' : hours === 2 ? 'قبل ساعتين' : hours <= 10 ? `قبل ${hours} ساعات` : `قبل ${hours} ساعة`
+    return s.date(iso)
   },
   date: (iso: string | null): string => {
     if (!iso) return 'لم تتم بعد'
