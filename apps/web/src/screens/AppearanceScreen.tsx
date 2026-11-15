@@ -108,7 +108,7 @@ function AppearanceEditor() {
         title={ta.loadFailed}
         actions={
           <button type="button" className="button button--small" onClick={() => setAttempt((n) => n + 1)}>
-            {t.dashboard.retry}
+            {t.common.retry}
           </button>
         }
       >
@@ -273,7 +273,7 @@ function Preview({ scope, effective }: { scope: Record<string, string>; effectiv
   return (
     <div className="theme-scope appearance-sample" style={scope as CSSProperties} data-testid="appearance-preview">
       <div className="appearance-sample__card">
-        <p className="appearance-sample__label">{t.dashboard.kpi.completion}</p>
+        <p className="appearance-sample__label">{t.common.completion}</p>
         <p className="appearance-sample__value">
           <bdi dir="ltr" className="num">
             {ta.previewValue}

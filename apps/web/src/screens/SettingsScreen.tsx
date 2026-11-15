@@ -1,14 +1,12 @@
-// The user's settings: their own Basecamp account (spec §3, «اربط حسابك في
-// Basecamp»), and for platform admins the entries of §12.1 item 8 that exist
-// so far: platform members «أعضاء المنصة» (§3), people matching (§3), sync health (§9.4), templates (§7.1) and the
-// internal API's service tokens (§13), and the palette («المظهر»).
+// Settings: for platform admins, the platform's members «أعضاء المنصة» (§3),
+// the names directory of the station «مطابقة الأسماء», and the palette «المظهر».
+// The Basecamp sync account is on the links page (docs/station-plan.md §5).
 
 import type { ReactNode } from 'react'
-import { Activity, KeyRound, LayoutTemplate, Palette, UserCog, Users } from 'lucide-react'
+import { Palette, UserCog, Users } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { CurrentUser } from '@naf-sheets/shared'
 import { AppBar } from '../components/AppBar'
-import { BasecampAccountCard } from '../components/BasecampLink'
 import { Link } from '../lib/router'
 import { pathFor } from '../lib/routes'
 import { useDocumentTitle } from '../lib/use-document-title'
@@ -27,7 +25,7 @@ export function SettingsScreen({ user }: { user: CurrentUser | null }) {
           <h1>{t.settings.title}</h1>
         </div>
         <div className="stack">
-          <BasecampAccountCard />
+          {user && user.role !== 'admin' ? <p className="muted">{t.adminOnly.body}</p> : null}
           {/* Hidden for everyone but platform admins; the API refuses the rest anyway. */}
           {user?.role === 'admin' ? (
             <section className="card" aria-labelledby="admin-heading" data-testid="admin-section">
@@ -37,24 +35,9 @@ export function SettingsScreen({ user }: { user: CurrentUser | null }) {
                   {t.settings.membersOpen}
                 </Link>
               </AdminEntry>
-              <AdminEntry Icon={Users} title={t.settings.peopleMatchesTitle} body={t.settings.peopleMatchesBody}>
-                <Link className="button button--small" href={pathFor({ name: 'peopleMatches' })} data-testid="open-people-matches">
-                  {t.settings.peopleMatchesOpen}
-                </Link>
-              </AdminEntry>
-              <AdminEntry Icon={Activity} title={t.settings.syncHealthTitle} body={t.settings.syncHealthBody}>
-                <Link className="button button--small" href={pathFor({ name: 'syncHealth' })} data-testid="open-sync-health">
-                  {t.settings.syncHealthOpen}
-                </Link>
-              </AdminEntry>
-              <AdminEntry Icon={LayoutTemplate} title={t.settings.templatesTitle} body={t.settings.templatesBody}>
-                <Link className="button button--small" href={pathFor({ name: 'templates' })} data-testid="open-templates">
-                  {t.settings.templatesOpen}
-                </Link>
-              </AdminEntry>
-              <AdminEntry Icon={KeyRound} title={t.settings.apiTokensTitle} body={t.settings.apiTokensBody}>
-                <Link className="button button--small" href={pathFor({ name: 'apiTokens' })} data-testid="open-api-tokens">
-                  {t.settings.apiTokensOpen}
+              <AdminEntry Icon={Users} title="مطابقة الأسماء" body="ربط الأسماء المكتوبة في تبويبات المسميات بأشخاص Basecamp، مرة واحدة لكل الروابط.">
+                <Link className="button button--small" href={pathFor({ name: 'stationNames' })} data-testid="open-names">
+                  فتح
                 </Link>
               </AdminEntry>
               <AdminEntry Icon={Palette} title={t.appearance.settingsTitle} body={t.appearance.settingsBody}>

@@ -76,7 +76,7 @@ function Failed({ message, retry }: { message: string; retry: () => void }) {
       tone="danger"
       actions={
         <button type="button" className="button button--small" onClick={retry}>
-          {t.files.retry}
+          {t.common.retry}
         </button>
       }
     >

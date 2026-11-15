@@ -2,7 +2,6 @@
 
 import type { PlatformMember } from '@naf-sheets/shared'
 import { formatDateTime } from './format'
-import { pathFor } from './routes'
 
 /**
  * Why a member's role and state cannot be changed from this screen, or null.
@@ -21,7 +20,3 @@ export function lastSeenDay(iso: string | null, timeZone?: string): string | nul
   return formatDateTime(iso, timeZone)?.slice(0, 10) ?? null
 }
 
-/** The people-matching screen, focused on this member's row (`#match-<user id>`). */
-export function peopleMatchHref(userId: string): string {
-  return `${pathFor({ name: 'peopleMatches' })}#match-${encodeURIComponent(userId)}`
-}
