@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   ApiRequestError,
-  classifySaveError,
   createApiClient,
   isSafeNext,
   loginRedirectUrl,
@@ -22,40 +21,6 @@ function fakeFetch(status: number, body: unknown, calls: Call[] = []) {
 const ARABIC = /[؀-ۿ]/
 
 describe('createApiClient — requests', () => {
-  it('lists workbooks, encoding the search and omitting an empty one', async () => {
-    const calls: Call[] = []
-    const client = createApiClient({ fetch: fakeFetch(200, { workbooks: [] }, calls) })
-    await client.listWorkbooks('  خطة الربع/1&2 ')
-    await client.listWorkbooks('   ')
-    expect(calls[0]?.url).toBe(`/api/workbooks?q=${encodeURIComponent('خطة الربع/1&2')}`)
-    expect(calls[1]?.url).toBe('/api/workbooks')
-    expect(calls[0]?.init.method).toBe('GET')
-    expect(calls[0]?.init.credentials).toBe('same-origin')
-    expect((calls[0]?.init.headers as Record<string, string>).Accept).toBe('application/json')
-    expect(calls[0]?.init.body).toBeUndefined()
-  })
-
-  it('creates a blank workbook with exactly the contract body', async () => {
-    const calls: Call[] = []
-    const client = createApiClient({ fetch: fakeFetch(201, { id: 'wb-9' }, calls) })
-    await expect(client.createWorkbook('خطة الاتصال')).resolves.toEqual({ id: 'wb-9' })
-    expect(calls[0]?.url).toBe('/api/workbooks')
-    expect(calls[0]?.init.method).toBe('POST')
-    expect(JSON.parse(String(calls[0]?.init.body))).toEqual({ title: 'خطة الاتصال', source: 'blank' })
-    expect((calls[0]?.init.headers as Record<string, string>)['Content-Type']).toBe('application/json; charset=utf-8')
-  })
-
-  it('reads a workbook and saves a snapshot with baseVersion at the encoded path', async () => {
-    const calls: Call[] = []
-    const client = createApiClient({ fetch: fakeFetch(200, { version: 8 }, calls) })
-    await client.getWorkbook('a/b c')
-    await expect(client.saveSnapshot('a/b c', { baseVersion: 7, snapshot: { id: 'x' } })).resolves.toEqual({ version: 8 })
-    expect(calls[0]?.url).toBe('/api/workbooks/a%2Fb%20c')
-    expect(calls[1]?.url).toBe('/api/workbooks/a%2Fb%20c/snapshot')
-    expect(calls[1]?.init.method).toBe('PUT')
-    expect(JSON.parse(String(calls[1]?.init.body))).toEqual({ baseVersion: 7, snapshot: { id: 'x' } })
-  })
-
   it('calls GET /api/me', async () => {
     const calls: Call[] = []
     const client = createApiClient({ fetch: fakeFetch(200, { user: { id: 'u', name: null, email: null, role: 'editor' } }, calls) })
@@ -67,7 +32,7 @@ describe('createApiClient — requests', () => {
 describe('createApiClient — errors', () => {
   it('uses the API Arabic message and code', async () => {
     const client = createApiClient({ fetch: fakeFetch(409, { ok: false, error: 'version_conflict', message: 'نسخة أحدث محفوظة؛ أعد التحميل.' }) })
-    const error = await client.saveSnapshot('wb', { baseVersion: 1, snapshot: {} }).catch((e: unknown) => e)
+    const error = await client.me().catch((e: unknown) => e)
     expect(error).toBeInstanceOf(ApiRequestError)
     expect(error).toMatchObject({ status: 409, code: 'version_conflict', message: 'نسخة أحدث محفوظة؛ أعد التحميل.' })
   })
@@ -79,7 +44,7 @@ describe('createApiClient — errors', () => {
       fetch: fakeFetch(401, { ok: false, error: 'unauthorized', login: 'https://app.naflaw.sa/go/naf-sheets' }),
       onUnauthorized,
     })
-    const error = await client.listWorkbooks('').catch((e: unknown) => e)
+    const error = await client.me().catch((e: unknown) => e)
     expect(onUnauthorized).toHaveBeenCalledWith('https://app.naflaw.sa/go/naf-sheets')
     expect(error).toMatchObject({ status: 401, code: 'unauthorized', message: t.errors.unauthorized })
   })
@@ -87,7 +52,7 @@ describe('createApiClient — errors', () => {
   it('does not call onUnauthorized for other statuses', async () => {
     const onUnauthorized = vi.fn()
     const client = createApiClient({ fetch: fakeFetch(403, { ok: false, error: 'forbidden', message: 'لا صلاحية.' }), onUnauthorized })
-    await client.listWorkbooks('').catch(() => undefined)
+    await client.me().catch(() => undefined)
     expect(onUnauthorized).not.toHaveBeenCalled()
   })
 
@@ -97,7 +62,7 @@ describe('createApiClient — errors', () => {
         throw new TypeError('Failed to fetch')
       },
     })
-    const error = await client.getWorkbook('wb').catch((e: unknown) => e)
+    const error = await client.me().catch((e: unknown) => e)
     expect(error).toMatchObject({ status: 0, code: 'network_error', message: t.errors.network })
   })
 
@@ -108,12 +73,12 @@ describe('createApiClient — errors', () => {
         throw abort
       },
     })
-    await expect(client.getWorkbook('wb')).rejects.toBe(abort)
+    await expect(client.me()).rejects.toBe(abort)
   })
 
   it('rejects a 2xx response that is not a JSON object', async () => {
     const client = createApiClient({ fetch: fakeFetch(200, '<html>login</html>') })
-    await expect(client.getWorkbook('wb')).rejects.toMatchObject({ code: 'invalid_response', message: t.errors.invalidResponse })
+    await expect(client.me()).rejects.toMatchObject({ code: 'invalid_response', message: t.errors.invalidResponse })
   })
 
   it('falls back to an Arabic message for every status without one', () => {
@@ -121,7 +86,7 @@ describe('createApiClient — errors', () => {
       [403, { ok: false, error: 'access_denied', reason: 'inactive', denied: '/denied?r=inactive' }, t.denied.reasons.inactive!],
       [403, { ok: false, error: 'access_denied', reason: 'something_new' }, t.errors.forbidden],
       [404, null, t.errors.notFound],
-      [409, { ok: false, error: 'version_conflict' }, t.editor.conflictFallback],
+      [409, { ok: false, error: 'version_conflict' }, t.errors.conflict],
       [429, '', t.errors.tooManyRequests],
       [503, { ok: false, error: 'auth_unavailable' }, t.errors.authUnavailable],
       [502, '<html>bad gateway</html>', t.errors.server],
@@ -134,15 +99,6 @@ describe('createApiClient — errors', () => {
     }
     expect(toApiRequestError(404, null).code).toBe('http_404')
     expect(toApiRequestError(400, { ok: false, error: 'bad', message: '   ' }).message).toBe(t.errors.generic)
-  })
-})
-
-describe('classifySaveError', () => {
-  it('stops on 409, retries transient failures, waits for the user otherwise', () => {
-    expect(classifySaveError(new ApiRequestError(409, 'version_conflict', 'م'))).toEqual({ kind: 'conflict', message: 'م' })
-    for (const status of [0, 429, 500, 503]) expect(classifySaveError(new ApiRequestError(status, 'x', 'م')).kind).toBe('retryable')
-    for (const status of [400, 401, 403, 404, 413]) expect(classifySaveError(new ApiRequestError(status, 'x', 'م')).kind).toBe('fatal')
-    expect(classifySaveError(new Error('boom'))).toEqual({ kind: 'fatal', message: t.errors.generic })
   })
 })
 

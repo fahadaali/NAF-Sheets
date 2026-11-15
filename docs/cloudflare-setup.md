@@ -35,16 +35,20 @@
 |---|---|---|
 | `PLATFORM_ID` | Text | اسم المنصة كما سُجّل في لوحة naf-id، حرفاً بحرف (حساس لحالة الأحرف). بدونه يفشل كل تسجيل دخول |
 | `BASECAMP_ACCOUNT_ID` | Text | رقم حساب ناف في Basecamp |
-| `GOOGLE_CLIENT_ID` | Text | معرّف تطبيق Google OAuth |
+| `ALERT_EMAIL_FROM` | Text | مرسل التنبيهات: `NAF Sheets <sheets@naflaw.sa>` (العنوان على نطاق موثّق في Resend) |
+| `ALERT_EMAIL_TO` | Text | مستلمو التنبيهات مفصولين بفاصلة؛ فارغ = كل مسؤولي المنصة |
 | `AUTH_CLIENT_SECRET` | Secret | من لوحة naf-id |
 | `TOKEN_ENCRYPTION_KEY` | Secret | 32 بايتاً عشوائية بترميز base64، مثل ناتج `openssl rand -base64 32` |
 | `BASECAMP_CLIENT_ID` | Secret | من تطبيق Basecamp |
 | `BASECAMP_CLIENT_SECRET` | Secret | من تطبيق Basecamp |
-| `GOOGLE_CLIENT_SECRET` | Secret | من Google Cloud |
+| `GOOGLE_SERVICE_ACCOUNT_KEY` | Secret | محتوى مفتاح JSON لحساب خدمة Google كاملاً (`docs/google-service-account.md`) |
+| `RESEND_API_KEY` | Secret | مفتاح Resend لتنبيهات البريد |
+
+`GOOGLE_CLIENT_ID` و`GOOGLE_CLIENT_SECRET` كانا لاستيراد المحرّر القديم، والمحطة لا تستخدمهما.
 
 النوع Secret يحفظ القيمة مشفّرة، ولا تظهر بعد حفظها، وهو المخزن نفسه الذي يكتب فيه `wrangler secret put`. لا تُكتب أي قيمة سرية في ملف أو محادثة.
 
-لا تغيّر `TOKEN_ENCRYPTION_KEY` بعد أول استخدام: تغييره يُبطل رموز Basecamp وGoogle المحفوظة، فيعيد كل شخص الربط.
+لا تغيّر `TOKEN_ENCRYPTION_KEY` بعد أول استخدام: تغييره يُبطل رمز حساب المزامنة في Basecamp المحفوظ، فيُعاد ربطه.
 
 ## 4. المشروع: Worker مربوط بـ GitHub
 
@@ -74,7 +78,7 @@ Worker واحد يخدم كل شيء، فلا يوجد مشروع Pages:
 |---|---|
 | `/api/*` و`/auth/*` و`/webhooks/*` و`/health` | كود الخادم |
 | ملف من الواجهة (`/assets/…`) | ملفات الواجهة المبنية (`apps/web/dist`) |
-| أي مسار آخر (`/` و`/workbooks/…` و`/denied`) | `index.html` من الواجهة، ثم تفتح الواجهة الشاشة المطلوبة |
+| أي مسار آخر (`/` و`/links/…` و`/names` و`/denied`) | `index.html` من الواجهة، ثم تفتح الواجهة الشاشة المطلوبة |
 
 الواجهة والخادم يُنشران معاً في كل نشر، فلا تعمل واجهة جديدة مع خادم قديم.
 
@@ -86,12 +90,13 @@ Worker واحد يخدم كل شيء، فلا يوجد مشروع Pages:
 |---|---|
 | naf-id (لوحة الإدارة) | المنصة باسم `PLATFORM_ID`، وعنوان العودة `https://sheets.naflaw.sa/auth/callback`، وعنوان الخروج الخلفي `https://sheets.naflaw.sa/auth/backchannel-logout` |
 | تطبيق Basecamp (launchpad.37signals.com/integrations) | Redirect URI: `https://sheets.naflaw.sa/auth/basecamp/callback` |
-| Google Cloud (OAuth client من نوع Web) | Authorized redirect URI: `https://sheets.naflaw.sa/auth/google/callback`؛ ونطاق القراءة `spreadsheets.readonly` |
+| Google Cloud | حساب خدمة فقط (`docs/google-service-account.md`)؛ لا OAuth ولا عنوان عودة. إشعارات Drive تصل إلى `https://sheets.naflaw.sa/webhooks/google/…` دون تسجيل |
+| Resend | نطاق `naflaw.sa` موثّق، والمرسل `sheets@naflaw.sa` |
 
 ## 7. التحقق بعد أول نشر
 
 1. `https://sheets.naflaw.sa/health` يعيد `{"ok":true}`.
-2. فتح `https://sheets.naflaw.sa/` يحوّل إلى تسجيل الدخول في naf-id، ثم يعود إلى شاشة الملفات.
+2. فتح `https://sheets.naflaw.sa/` يحوّل إلى تسجيل الدخول في naf-id، ثم يعود إلى شاشة «الروابط».
 3. كل من يدخل أول مرة يُضاف عضواً بدور `viewer`، ولا شاشة في المنصة ترقّي أول مسؤول. بعد أول دخول لك نفّذ مرة واحدة (`apps/api/OPEN_QUESTIONS.md` البند 17):
 
    من **Storage & Databases ← D1 ← naf-sheets ← Console**:
@@ -100,14 +105,15 @@ Worker واحد يخدم كل شيء، فلا يوجد مشروع Pages:
    UPDATE members SET role = 'admin' WHERE email = '<بريدك>';
    ```
 
-4. إنشاء ملف فارغ وتحريره ثم إعادة تحميل الصفحة: يبقى التعديل محفوظاً.
-5. في الإعدادات: ربط حساب Basecamp، ثم ربط حساب الخدمة من شاشة المسؤول.
+4. في «الروابط» تظهر بطاقة «الإعداد»: «حساب خدمة Google» و«تنبيهات البريد» جاهزان. اضغط «اربط حساب المزامنة» وسجّل الدخول بحساب Basecamp الذي تُكتب به المزامنة (مدير أو مالك في الحساب).
+5. «ربط جديد»: الصق رابط الملف (مشارَكاً مع حساب الخدمة كمحرّر)، اختر التبويبات والمشروع. يُنصح بتبويب واحد في أول تجربة.
 
-اعتماد المراحل (§15) لا يتم بهذه الخطوات. يحتاج اختبار Basecamp الحي (`spike/basecamp/README.md`) وملف Google Sheets حقيقياً.
+القبول الحي للمحطة (`docs/station-plan.md` §9، S0) يُسجَّل بعد هذه الخطوات على ملف حقيقي.
 
 ## 8. ملاحظات
 
 - **`naf-auth`** يُجلب أثناء التثبيت من GitHub بالوسم `v3.4.0`، والمستودع عام. `package-lock.json` يسجّل عنوانه بصيغة `git+ssh`. إن فشل التثبيت على Cloudflare بسبب SSH فهذه هي العلة، وتُعالج في المستودع لا في اللوحة.
-- **الجدولة:** المطابقة كل 15 دقيقة والنسخ الاحتياطي اليومي (`[triggers]` في `wrangler.toml`) يعملان تلقائياً بعد النشر.
+- **الجدولة:** فحص المحطة كل دقيقة (ومزامنة كاملة لكل ربط كل 15 دقيقة) والنسخ الاحتياطي اليومي (`[triggers]` في `wrangler.toml`) تعمل تلقائياً بعد النشر.
 - **الخطة:** الخادم يستخدم Queues وDurable Objects وCron، وخطة الحساب المدفوعة (Workers Paid) تشملها.
-- **الحجم:** كود الخادم حوالي 2.4 ميغابايت مضغوطاً (`wrangler deploy --dry-run`)، وحد الخطة المدفوعة 10. ملفات الواجهة (85 ملفاً، أكبرها 8.4 ميغابايت) تُرفع منفصلة عنه، وحد الملف الواحد 25 ميغابايت.
+- **الحجم:** بعد إزالة المحرّر صغر الخادم والواجهة كثيراً (الواجهة نحو 70 كيلوبايت مضغوطة).
+- **ما بقي من المحرّر في Cloudflare:** قائمتا `bc-outbound` و`bc-outbound-dlq` لم تعودا مربوطتين، وصنف `WorkbookRoom` باقٍ بلا عمل حتى لا تُحذف بياناته، وجداول D1 وملفات R2 القديمة باقية. حذف أي منها قرار للمالك.

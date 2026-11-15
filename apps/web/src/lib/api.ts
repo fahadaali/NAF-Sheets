@@ -1,7 +1,8 @@
-// REST client for the contract in packages/shared/src/api.ts. It calls exactly
-// those endpoints and turns every failure into an `ApiRequestError` whose
-// message is Arabic: the API's own `message` when it sent one, otherwise a
-// fallback that says what happened and what to do (spec §12.2).
+// REST client of the platform's own endpoints (sign-in, members, appearance).
+// The station has its own client (src/station/api.ts) on the same rules.
+// Every failure becomes an `ApiRequestError` whose message is Arabic: the
+// API's own `message` when it sent one, otherwise a fallback that says what
+// happened and what to do (spec §12.2).
 //
 // 401 (naf-auth: `{ ok:false, error:"unauthorized", login }`) calls
 // `onUnauthorized` with the login URL; the app sends the browser there.
@@ -9,65 +10,12 @@
 import type {
   AppearancePalette,
   AppearanceResponse,
-  DashboardResponse,
-  DashboardWidgetConfig,
-  WidgetListResponse,
-  WidgetResponse,
-  WidgetResult,
-  ApiTokenListResponse,
-  ApiTokenSummary,
-  ArchiveTemplateResponse,
-  BackupRetention,
-  BackupRetentionResponse,
-  BackupRunsResponse,
-  CreateApiTokenResponse,
-  CreateTemplateRequest,
-  SyncHealthResponse,
-  TemplateListResponse,
-  TemplateSummary,
-  UpdateTemplateRequest,
-  AssigneeOptionsResponse,
-  AttachmentSettingsResponse,
-  CreateCommentResponse,
-  TaskAttachmentsResponse,
-  TaskCommentsResponse,
-  UploadAttachmentResponse,
-  BasecampLinkResponse,
-  BasecampPeopleResponse,
-  BasecampProjectsResponse,
-  BasecampTodolistsResponse,
-  CreateExternalContactRequest,
-  CreateWorkbookRequest,
-  CreateWorkbookResponse,
-  ExternalContact,
-  GoogleLinkResponse,
-  GrantProjectPersonRequest,
-  ImportGsheetsLinkRequest,
-  ImportGsheetsRequest,
-  ImportGsheetsResponse,
-  ImportXlsxResponse,
-  ImportReportResponse,
-  LinkPlan,
-  LinkPreviewResponse,
-  LinkWorkbookResponse,
   MeResponse,
-  PeopleMatchesResponse,
   PlatformMembersResponse,
   UpdatePlatformMemberRequest,
   UpdatePlatformMemberResponse,
-  PutPeopleMatchRequest,
-  RestoreConflictResponse,
-  RevokeBasecampLinkResponse,
-  SaveSnapshotRequest,
-  SaveSnapshotResponse,
-  SyncNowResponse,
-  WorkbookConflictsResponse,
-  WorkbookListResponse,
-  WorkbookResponse,
-  WorkbookSyncResponse,
 } from '@naf-sheets/shared'
 import { t } from '../strings'
-import type { SaveErrorKind } from './autosave'
 
 export class ApiRequestError extends Error {
   /** HTTP status; 0 when the request never got a response. */
@@ -98,14 +46,6 @@ export function errorMessage(error: unknown): string {
   return t.errors.generic
 }
 
-/** How autosave treats a failed snapshot PUT: 409 stops it, transient failures retry, the rest wait for the user. */
-export function classifySaveError(error: unknown): { kind: SaveErrorKind; message: string } {
-  const message = errorMessage(error)
-  if (isConflictError(error)) return { kind: 'conflict', message }
-  if (isRetryableError(error)) return { kind: 'retryable', message }
-  return { kind: 'fatal', message }
-}
-
 type JsonObject = Record<string, unknown>
 const isObject = (v: unknown): v is JsonObject => typeof v === 'object' && v !== null && !Array.isArray(v)
 
@@ -120,7 +60,7 @@ export function fallbackMessage(status: number, body: JsonObject | null): string
   }
   if (status === 403) return t.errors.forbidden
   if (status === 404) return t.errors.notFound
-  if (status === 409) return t.editor.conflictFallback
+  if (status === 409) return t.errors.conflict
   if (status === 429) return t.errors.tooManyRequests
   if (status === 503 && code === 'auth_unavailable') return t.errors.authUnavailable
   if (status >= 500) return t.errors.server
@@ -191,167 +131,17 @@ export function createApiClient(options: ApiClientOptions = {}) {
     throw toApiRequestError(response.status, payload)
   }
 
-  const workbookPath = (id: string) => `/api/workbooks/${encodeURIComponent(id)}`
-  const projectPath = (projectId: number) => `/api/basecamp/projects/${encodeURIComponent(String(projectId))}`
-
   return {
     /** GET /api/me */
     me: (signal?: AbortSignal) => request<MeResponse>('GET', '/api/me', undefined, signal),
-    /** GET /api/workbooks?q= */
-    listWorkbooks: (q: string, signal?: AbortSignal) => {
-      const query = q.trim()
-      const path = query ? `/api/workbooks?q=${encodeURIComponent(query)}` : '/api/workbooks'
-      return request<WorkbookListResponse>('GET', path, undefined, signal)
-    },
-    /** POST /api/workbooks — a blank workbook (§7.1 option 1). */
-    createWorkbook: (title: string) => {
-      const body: CreateWorkbookRequest = { title, source: 'blank' }
-      return request<CreateWorkbookResponse>('POST', '/api/workbooks', body)
-    },
-    /** POST /api/workbooks — a copy of a template (§7.1 option 2). */
-    createWorkbookFromTemplate: (title: string, templateId: string) => {
-      const body: CreateWorkbookRequest = { title, source: 'template', templateId }
-      return request<CreateWorkbookResponse>('POST', '/api/workbooks', body)
-    },
-    /** GET /api/workbooks/:id */
-    getWorkbook: (id: string, signal?: AbortSignal) => request<WorkbookResponse>('GET', workbookPath(id), undefined, signal),
-    /** PUT /api/workbooks/:id/snapshot — 409 `version_conflict` when `baseVersion` is stale. */
-    saveSnapshot: (id: string, body: SaveSnapshotRequest) =>
-      request<SaveSnapshotResponse>('PUT', `${workbookPath(id)}/snapshot`, body),
-
-    // --- Wave 2: packages/shared/src/api-integrations.ts --------------------
-
-    /** GET /api/basecamp/link — the caller's own Basecamp account link (§3). */
-    getBasecampLink: (signal?: AbortSignal) => request<BasecampLinkResponse>('GET', '/api/basecamp/link', undefined, signal),
-    /** POST /api/basecamp/link/revoke — the stored token is discarded. */
-    revokeBasecampLink: () => request<RevokeBasecampLinkResponse>('POST', '/api/basecamp/link/revoke'),
-    /** GET /api/basecamp/projects */
-    listBasecampProjects: (signal?: AbortSignal) => request<BasecampProjectsResponse>('GET', '/api/basecamp/projects', undefined, signal),
-    /** GET /api/basecamp/projects/:projectId/todolists */
-    listBasecampTodolists: (projectId: number, signal?: AbortSignal) =>
-      request<BasecampTodolistsResponse>('GET', `${projectPath(projectId)}/todolists`, undefined, signal),
-    /** GET /api/basecamp/projects/:projectId/people */
-    listBasecampPeople: (projectId: number, signal?: AbortSignal) =>
-      request<BasecampPeopleResponse>('GET', `${projectPath(projectId)}/people`, undefined, signal),
-    /** GET /api/admin/people-matches (admins) */
-    getPeopleMatches: (signal?: AbortSignal) => request<PeopleMatchesResponse>('GET', '/api/admin/people-matches', undefined, signal),
-
-    /** «أعضاء المنصة»: every member with role, state and Basecamp match (admin). */
+    /** «أعضاء المنصة»: every member with role and state (admin). */
     listMembers: (signal?: AbortSignal) => request<PlatformMembersResponse>('GET', '/api/admin/members', undefined, signal),
-
     /** Changes a member's role and/or active state (admin; not oneself, never the last active admin). */
     updateMember: (userId: string, body: UpdatePlatformMemberRequest) =>
       request<UpdatePlatformMemberResponse>('PUT', `/api/admin/members/${encodeURIComponent(userId)}`, body),
-    /**
-     * PUT /api/admin/people-matches/:userId (admins).
-     * OPEN: the contract gives no success body; any 2xx counts and the caller
-     * reads the list again (OPEN_QUESTIONS.md #22).
-     */
-    putPeopleMatch: (userId: string, body: PutPeopleMatchRequest) =>
-      request<unknown>('PUT', `/api/admin/people-matches/${encodeURIComponent(userId)}`, body, undefined, true).then(() => undefined),
-    /** POST /api/workbooks/:id/link/preview — computes, changes nothing. */
-    previewLink: (id: string, plan: LinkPlan, signal?: AbortSignal) =>
-      request<LinkPreviewResponse>('POST', `${workbookPath(id)}/link/preview`, plan, signal),
-    /** POST /api/workbooks/:id/link — commits the plan and starts sync («بدء المزامنة»). */
-    linkWorkbook: (id: string, plan: LinkPlan) => request<LinkWorkbookResponse>('POST', `${workbookPath(id)}/link`, plan),
-    /** GET /api/google/link */
-    getGoogleLink: (signal?: AbortSignal) => request<GoogleLinkResponse>('GET', '/api/google/link', undefined, signal),
-    /** POST /api/import/gsheets */
-    importGsheets: (body: ImportGsheetsRequest) => request<ImportGsheetsResponse>('POST', '/api/import/gsheets', body),
-    /** POST /api/import/gsheets-link — a public Google Sheets file, downloaded as .xlsx without a Google account. */
-    importGsheetsLink: (body: ImportGsheetsLinkRequest) => request<ImportXlsxResponse>('POST', '/api/import/gsheets-link', body),
-    /** GET /api/workbooks/:id/import-report */
-    getImportReport: (id: string, signal?: AbortSignal) =>
-      request<ImportReportResponse>('GET', `${workbookPath(id)}/import-report`, undefined, signal),
-
-    // --- Wave 3: packages/shared/src/api-sync.ts ------------------------------
-
-    /** GET /api/workbooks/:id/sync — per-row sync state; every role that may open the workbook. */
-    getSync: (id: string, signal?: AbortSignal) => request<WorkbookSyncResponse>('GET', `${workbookPath(id)}/sync`, undefined, signal),
-    /** POST /api/workbooks/:id/sync-now → 202 «مزامنة الآن». */
-    syncNow: (id: string) => request<SyncNowResponse>('POST', `${workbookPath(id)}/sync-now`),
-    /** GET /api/workbooks/:id/conflicts — unresolved only. */
-    getConflicts: (id: string, signal?: AbortSignal) =>
-      request<WorkbookConflictsResponse>('GET', `${workbookPath(id)}/conflicts`, undefined, signal),
-    /** POST /api/workbooks/:id/conflicts/:conflictId/restore → 202: the losing value comes back. */
-    restoreConflict: (id: string, conflictId: string) =>
-      request<RestoreConflictResponse>('POST', `${workbookPath(id)}/conflicts/${encodeURIComponent(conflictId)}/restore`),
-    /** POST /api/workbooks/:id/conflicts/:conflictId/dismiss → 204: the winner stays. */
-    dismissConflict: (id: string, conflictId: string) =>
-      request<unknown>('POST', `${workbookPath(id)}/conflicts/${encodeURIComponent(conflictId)}/dismiss`, undefined, undefined, true).then(() => undefined),
-    /** GET /api/workbooks/:id/assignee-options — the assignee cell's sections (§8.2). */
-    getAssigneeOptions: (id: string, signal?: AbortSignal) =>
-      request<AssigneeOptionsResponse>('GET', `${workbookPath(id)}/assignee-options`, undefined, signal),
-    /** POST /api/external-contacts → 201 (§8.2 case 3). */
-    createExternalContact: (body: CreateExternalContactRequest) => request<ExternalContact>('POST', '/api/external-contacts', body),
-    /** POST /api/workbooks/:id/project-people — adds an account member to the project with the caller's token (§8.2 case 1). */
-    grantProjectPerson: (id: string, body: GrantProjectPersonRequest) =>
-      request<AssigneeOptionsResponse>('POST', `${workbookPath(id)}/project-people`, body),
-
-    // --- Phase 5: packages/shared/src/api-phase5.ts ----------------------------
-    // The upload itself (raw body, with progress) is `uploadAttachment` in ./upload.ts.
-
-    /** GET /api/attachment-settings — the size limit the editor checks before uploading. */
-    getAttachmentSettings: (signal?: AbortSignal) => request<AttachmentSettingsResponse>('GET', '/api/attachment-settings', undefined, signal),
-    /** GET /api/workbooks/:id/tasks/:uid/attachments */
-    getTaskAttachments: (id: string, uid: string, signal?: AbortSignal) =>
-      request<TaskAttachmentsResponse>('GET', `${workbookPath(id)}/tasks/${encodeURIComponent(uid)}/attachments`, undefined, signal),
-    /** POST /api/workbooks/:id/attachments/:attachmentId/remove — only after the person confirmed (§10). */
-    removeAttachment: (id: string, attachmentId: string) =>
-      request<TaskAttachmentsResponse>('POST', `${workbookPath(id)}/attachments/${encodeURIComponent(attachmentId)}/remove`, { confirmed: true }),
-    /** POST /api/workbooks/:id/attachments/:attachmentId/retry — sends a `failed` file to Basecamp again. */
-    retryAttachment: (id: string, attachmentId: string) =>
-      request<UploadAttachmentResponse>('POST', `${workbookPath(id)}/attachments/${encodeURIComponent(attachmentId)}/retry`),
-    /** GET /api/workbooks/:id/tasks/:uid/comments — with the caller's own Basecamp token. */
-    getTaskComments: (id: string, uid: string, signal?: AbortSignal) =>
-      request<TaskCommentsResponse>('GET', `${workbookPath(id)}/tasks/${encodeURIComponent(uid)}/comments`, undefined, signal),
-    /** POST /api/workbooks/:id/tasks/:uid/comments → 201 (a subtask's row comments on its to-do). */
-    createComment: (id: string, uid: string, content: string) =>
-      request<CreateCommentResponse>('POST', `${workbookPath(id)}/tasks/${encodeURIComponent(uid)}/comments`, { content }),
-
-    // --- Phase 7: packages/shared/src/api-phase7.ts (and sync health, api-sync.ts) ---
-
-    /** GET /api/templates — live templates. */
-    listTemplates: (signal?: AbortSignal) => request<TemplateListResponse>('GET', '/api/templates', undefined, signal),
-    /** POST /api/admin/templates → 201 (admins). */
-    createTemplate: (body: CreateTemplateRequest) => request<TemplateSummary>('POST', '/api/admin/templates', body),
-    /** PUT /api/admin/templates/:id (admins). */
-    updateTemplate: (id: string, body: UpdateTemplateRequest) => request<TemplateSummary>('PUT', `/api/admin/templates/${encodeURIComponent(id)}`, body),
-    /** POST /api/admin/templates/:id/archive (admins); nothing is deleted. */
-    archiveTemplate: (id: string) => request<ArchiveTemplateResponse>('POST', `/api/admin/templates/${encodeURIComponent(id)}/archive`),
-    /** GET /api/admin/sync-health (admins, §9.4). */
-    getSyncHealth: (signal?: AbortSignal) => request<SyncHealthResponse>('GET', '/api/admin/sync-health', undefined, signal),
-    /** GET /api/admin/backups (admins, §14). */
-    getBackups: (signal?: AbortSignal) => request<BackupRunsResponse>('GET', '/api/admin/backups', undefined, signal),
-    /** PUT /api/admin/backups/retention (admins): applied after the next successful backup. */
-    putBackupRetention: (body: BackupRetention) => request<BackupRetentionResponse>('PUT', '/api/admin/backups/retention', body),
-    /** GET /api/admin/api-tokens (admins, §13). */
-    listApiTokens: (signal?: AbortSignal) => request<ApiTokenListResponse>('GET', '/api/admin/api-tokens', undefined, signal),
-    /** POST /api/admin/api-tokens → 201; the secret is in this answer only. */
-    createApiToken: (name: string) => request<CreateApiTokenResponse>('POST', '/api/admin/api-tokens', { name }),
-    /** POST /api/admin/api-tokens/:id/revoke */
-    revokeApiToken: (id: string) => request<ApiTokenSummary>('POST', `/api/admin/api-tokens/${encodeURIComponent(id)}/revoke`),
-
-    // --- Dashboard and appearance: packages/shared/src/api-dashboard.ts ---
-
-    /** GET /api/workbooks/:id/dashboard — figures computed from the latest committed snapshot. */
-    getDashboard: (id: string, signal?: AbortSignal) => request<DashboardResponse>('GET', `${workbookPath(id)}/dashboard`, undefined, signal),
-    /** POST /api/workbooks/:id/dashboard/preview — a configuration computed, not stored. */
-    previewWidget: (id: string, config: DashboardWidgetConfig, signal?: AbortSignal) =>
-      request<WidgetResult>('POST', `${workbookPath(id)}/dashboard/preview`, config, signal),
-    /** POST /api/workbooks/:id/dashboard/widgets → 201 (owner, editors, admins). */
-    createWidget: (id: string, config: DashboardWidgetConfig) => request<WidgetResponse>('POST', `${workbookPath(id)}/dashboard/widgets`, config),
-    /** PUT /api/workbooks/:id/dashboard/widgets/:widgetId */
-    updateWidget: (id: string, widgetId: string, config: DashboardWidgetConfig) =>
-      request<WidgetResponse>('PUT', `${workbookPath(id)}/dashboard/widgets/${encodeURIComponent(widgetId)}`, config),
-    /** POST …/widgets/:widgetId/remove — after the person confirmed; nothing is deleted on the server. */
-    removeWidget: (id: string, widgetId: string) =>
-      request<WidgetListResponse>('POST', `${workbookPath(id)}/dashboard/widgets/${encodeURIComponent(widgetId)}/remove`, { confirmed: true }),
-    /** PUT …/widgets/order — every live widget id once. */
-    reorderWidgets: (id: string, ids: string[]) => request<WidgetListResponse>('PUT', `${workbookPath(id)}/dashboard/widgets/order`, { ids }),
-    /** GET /api/appearance — palette overrides (everyone signed in). */
+    /** GET /api/appearance — the palette overrides («المظهر»). */
     getAppearance: (signal?: AbortSignal) => request<AppearanceResponse>('GET', '/api/appearance', undefined, signal),
-    /** PUT /api/admin/appearance (admins); `{}` restores the defaults. */
+    /** PUT /api/admin/appearance (admins). */
     putAppearance: (palette: AppearancePalette) => request<AppearanceResponse>('PUT', '/api/admin/appearance', { palette }),
   }
 }
@@ -407,25 +197,6 @@ export function loginRedirectUrl(login: string, current: { origin: string; pathn
   const next = current.pathname + current.search
   if (next !== '/' && isSafeNext(next) && !url.searchParams.has('next')) url.searchParams.set('next', next)
   return url.toString()
-}
-
-// ---------------------------------------------------------------------------
-// Account-link navigations (not fetch): the API answers them with redirects
-// ---------------------------------------------------------------------------
-
-/** `next` for an OAuth start: the given path when it is safe, otherwise the files screen. */
-function safeNextOrHome(next: string): string {
-  return next !== '' && isSafeNext(next) ? next : '/'
-}
-
-/** GET /auth/basecamp/start?next=… — Launchpad authorisation for the caller's own account (§3). */
-export function basecampStartUrl(next: string): string {
-  return `/auth/basecamp/start?${new URLSearchParams({ next: safeNextOrHome(next) }).toString()}`
-}
-
-/** GET /auth/google/start?next=… — Google consent with the narrowest scope (§7.2). */
-export function googleStartUrl(next: string): string {
-  return `/auth/google/start?${new URLSearchParams({ next: safeNextOrHome(next) }).toString()}`
 }
 
 /** The page the browser shows now, as a `next` value. */

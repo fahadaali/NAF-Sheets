@@ -15,12 +15,4 @@ export default defineConfig({
     port: 4174,
     strictPort: true,
   },
-  build: {
-    // Univer is ~12 MB before compression. It is reachable only through the
-    // lazily imported editor screen, so Rollup puts it in that chunk and the
-    // files screen never loads it. No `manualChunks`: a manual Univer chunk
-    // would also absorb React, and the entry would then import all of Univer.
-    // The e2e smoke test checks the split.
-    chunkSizeWarningLimit: 13_000,
-  },
 })

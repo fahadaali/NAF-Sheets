@@ -7,15 +7,13 @@
 // screen explains both next to the controls it disables.
 
 import { useEffect, useState } from 'react'
-import { Ban, CircleCheck, CircleDashed, Link2, LoaderCircle, Mail, RefreshCw, Save, UserCheck, Users, UserX } from 'lucide-react'
-import type { LucideIcon } from 'lucide-react'
-import type { BasecampMatchState, CurrentUser, PlatformMember, PlatformRole, UpdatePlatformMemberResponse } from '@naf-sheets/shared'
+import { Ban, CircleCheck, LoaderCircle, RefreshCw, Save, Users } from 'lucide-react'
+import type { CurrentUser, PlatformMember, PlatformRole, UpdatePlatformMemberResponse } from '@naf-sheets/shared'
 import { AdminPage } from '../components/AdminPage'
 import { Notice } from '../components/Notice'
 import { api, errorMessage, isAbortError } from '../lib/api'
 import { formatDateTime } from '../lib/format'
-import { lastSeenDay, memberLock, peopleMatchHref } from '../lib/members'
-import { Link } from '../lib/router'
+import { lastSeenDay, memberLock } from '../lib/members'
 import { t } from '../strings'
 import '../styles/members.css'
 
@@ -24,14 +22,6 @@ type Load = { kind: 'loading' } | { kind: 'error'; message: string } | { kind: '
 type Outcome = { member: string; text: string; report: UpdatePlatformMemberResponse['nafIdReport'] }
 
 const ROLES: PlatformRole[] = ['admin', 'editor', 'viewer']
-
-// Never colour alone: every match state has an icon and a label.
-const MATCH: Record<BasecampMatchState, { Icon: LucideIcon; tone: string }> = {
-  auto: { Icon: Mail, tone: 'success' },
-  manual: { Icon: UserCheck, tone: 'success' },
-  declined: { Icon: UserX, tone: 'neutral' },
-  none: { Icon: CircleDashed, tone: 'warning' },
-}
 
 export function MembersScreen({ user, userSettled }: { user: CurrentUser | null; userSettled: boolean }) {
   return (
@@ -77,7 +67,7 @@ function Members({ selfId }: { selfId: string }) {
         testId="members-error"
         actions={
           <button type="button" className="button button--small" onClick={() => setAttempt((n) => n + 1)}>
-            {t.files.retry}
+            {t.common.retry}
           </button>
         }
       >
@@ -135,7 +125,6 @@ function Members({ selfId }: { selfId: string }) {
                 <th scope="col">{t.members.columns.role}</th>
                 <th scope="col">{t.members.columns.status}</th>
                 <th scope="col">{t.members.columns.lastSeen}</th>
-                <th scope="col">{t.members.columns.basecamp}</th>
               </tr>
             </thead>
             <tbody>
@@ -186,7 +175,6 @@ function MemberRow({
     }
   }
 
-  const match = MATCH[member.basecamp.state]
   const lastSeen = lastSeenDay(member.lastSeenAt)
 
   return (
@@ -296,28 +284,6 @@ function MemberRow({
         ) : (
           <span className="muted">{t.members.never}</span>
         )}
-      </td>
-      <td data-label={t.members.columns.basecamp}>
-        <div className="stack-tight">
-          <span className={`badge badge--${match.tone}`} data-match={member.basecamp.state}>
-            <match.Icon className="icon" aria-hidden="true" />
-            {t.members.match[member.basecamp.state]}
-          </span>
-          {member.basecamp.personName ? <bdi className="small">{member.basecamp.personName}</bdi> : null}
-          {member.active ? (
-            <Link
-              className="button button--small button--ghost"
-              href={peopleMatchHref(member.userId)}
-              aria-label={t.members.openMatchLabel(name)}
-              data-testid="member-open-match"
-            >
-              <Link2 className="icon" aria-hidden="true" />
-              {t.members.openMatch}
-            </Link>
-          ) : (
-            <span className="muted small">{t.members.suspendedMatchHint}</span>
-          )}
-        </div>
       </td>
     </tr>
   )

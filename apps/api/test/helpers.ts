@@ -72,19 +72,21 @@ export async function json<T = Record<string, unknown>>(response: Response): Pro
   return (await response.json()) as T
 }
 
-/** Creates a blank workbook as `owner` through the API and returns its id. */
-export async function createWorkbook(app: ReturnType<typeof createApp>, owner: { id: string }, title = 'خطة الاتصال المؤسسي'): Promise<string> {
-  const res = await call(app, 'POST', '/api/workbooks', { user: owner, body: { title, source: 'blank' } })
-  if (res.status !== 201) throw new Error(`createWorkbook: ${res.status} ${await res.text()}`)
-  return (await json<{ id: string }>(res)).id
-}
-
-export async function addMember(workbookId: string, userId: string, role: 'editor' | 'viewer', addedBy: string): Promise<void> {
+/**
+ * A workbook of the removed editor, as its rows and snapshot were left in D1
+ * and R2 (the daily backup still copies them). Written directly: the routes
+ * that created workbooks are gone.
+ */
+export async function createWorkbook(_app: unknown, owner: { id: string }, title = 'خطة الاتصال المؤسسي'): Promise<string> {
+  const id = crypto.randomUUID()
+  const at = new Date().toISOString()
+  await env.SNAPSHOTS.put(`workbooks/${id}/snapshots/1.json`, JSON.stringify({ id, name: title, sheets: {} }))
   await env.DB.prepare(
-    `INSERT INTO workbook_members (workbook_id, user_id, role, added_by, added_at) VALUES (?1, ?2, ?3, ?4, ?5)`,
+    `INSERT INTO workbooks (id, title, owner_id, source, current_snapshot_version, created_at, updated_at) VALUES (?1, ?2, ?3, 'blank', 1, ?4, ?4)`,
   )
-    .bind(workbookId, userId, role, addedBy, new Date().toISOString())
+    .bind(id, title, owner.id, at)
     .run()
+  return id
 }
 
 /** Arabic letters present: the message is user-facing Arabic, not a code. */

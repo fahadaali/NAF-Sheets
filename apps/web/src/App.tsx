@@ -1,27 +1,14 @@
-import { lazy, Suspense, useEffect, useState } from 'react'
-import { LoaderCircle } from 'lucide-react'
+import { useEffect, useState } from 'react'
 import type { CurrentUser } from '@naf-sheets/shared'
 import { api } from './lib/api'
 import { applyPalette } from './lib/theme-colors'
 import { useRoute } from './lib/router'
-import { ErrorBoundary } from './components/ErrorBoundary'
-import { Notice } from './components/Notice'
-import { FilesScreen } from './screens/FilesScreen'
-import { ImportReportScreen } from './screens/ImportReportScreen'
 import { DeniedScreen, NotFoundScreen } from './screens/MessageScreens'
 import { MembersScreen } from './screens/MembersScreen'
-import { PeopleMatchesScreen } from './screens/PeopleMatchesScreen'
 import { SettingsScreen } from './screens/SettingsScreen'
-import { ApiTokensScreen } from './screens/ApiTokensScreen'
-import { SyncHealthScreen } from './screens/SyncHealthScreen'
-import { TemplatesScreen } from './screens/TemplatesScreen'
 import { AppearanceScreen } from './screens/AppearanceScreen'
-import { t } from './strings'
-
-// Univer (~2 MB gzip) is reachable only through this chunk.
-const EditorScreen = lazy(() => import('./editor/EditorScreen'))
-// The linking wizard bundles the wizard helpers of @naf-sheets/gsheets-import.
-const LinkWizardScreen = lazy(() => import('./wizard/LinkWizardScreen'))
+import { LinkScreen, LinksScreen, NamesScreen, NewLinkScreen } from './station/screens'
+import './station/station.css'
 
 /**
  * The signed-in user, for the app bar and for hiding actions a platform
@@ -46,34 +33,6 @@ function useCurrentUser(enabled: boolean): { user: CurrentUser | null; settled: 
   return state
 }
 
-function EditorLoading({ text = t.editor.loading }: { text?: string }) {
-  return (
-    <div className="editor">
-      <div className="panel panel--plain editor-message" role="status">
-        <LoaderCircle className="panel__icon spin" aria-hidden="true" />
-        <p>{text}</p>
-      </div>
-    </div>
-  )
-}
-
-function EditorChunkFailed({ message = t.editor.chunkFailed }: { message?: string }) {
-  return (
-    <div className="editor-message">
-      <Notice
-        tone="danger"
-        actions={
-          <button type="button" className="button button--small" onClick={() => window.location.reload()}>
-            {t.editor.reloadPage}
-          </button>
-        }
-      >
-        <p>{message}</p>
-      </Notice>
-    </div>
-  )
-}
-
 /** The admins' palette overrides («المظهر»), applied once at load; theme.css stays in force without them. */
 function useAppearance(enabled: boolean): void {
   useEffect(() => {
@@ -93,40 +52,18 @@ export function App() {
   useAppearance(route.name !== 'denied')
 
   switch (route.name) {
-    case 'files':
-      return <FilesScreen initialQuery={route.q} initialImport={route.importSource} user={user} />
-    case 'editor':
-    case 'dashboard':
-      // One element for both views: switching between the grid and «اللوحة» keeps the mounted editor.
-      return (
-        <ErrorBoundary key={route.id} fallback={<EditorChunkFailed />}>
-          <Suspense fallback={<EditorLoading />}>
-            <EditorScreen key={route.id} id={route.id} target={route.name === 'editor' ? route.target : undefined} view={route.name === 'dashboard' ? 'dashboard' : 'sheets'} />
-          </Suspense>
-        </ErrorBoundary>
-      )
-    case 'importReport':
-      return <ImportReportScreen key={route.id} id={route.id} user={user} />
-    case 'linkWizard':
-      return (
-        <ErrorBoundary key={`link-${route.id}`} fallback={<EditorChunkFailed message={t.wizard.chunkFailed} />}>
-          <Suspense fallback={<EditorLoading text={t.wizard.loading} />}>
-            <LinkWizardScreen key={route.id} id={route.id} />
-          </Suspense>
-        </ErrorBoundary>
-      )
+    case 'stationLinks':
+      return <LinksScreen user={user} />
+    case 'stationNew':
+      return <NewLinkScreen user={user} />
+    case 'stationLink':
+      return <LinkScreen key={route.id} user={user} id={route.id} />
+    case 'stationNames':
+      return <NamesScreen user={user} focusName={route.focusName} suggest={route.suggest} />
     case 'settings':
       return <SettingsScreen user={user} />
     case 'members':
       return <MembersScreen user={user} userSettled={settled} />
-    case 'peopleMatches':
-      return <PeopleMatchesScreen user={user} userSettled={settled} />
-    case 'syncHealth':
-      return <SyncHealthScreen user={user} userSettled={settled} />
-    case 'templates':
-      return <TemplatesScreen user={user} userSettled={settled} />
-    case 'apiTokens':
-      return <ApiTokensScreen user={user} userSettled={settled} />
     case 'appearance':
       return <AppearanceScreen user={user} userSettled={settled} />
     case 'denied':

@@ -29,11 +29,11 @@ describe('naf-auth wiring (real middleware)', () => {
   })
 
   it('protects every path not declared public', async () => {
-    for (const path of ['/api/workbooks', '/api/workbooks/x/members', '/anything-else']) {
+    for (const path of ['/api/station/links', '/api/station/names', '/anything-else']) {
       const res = await call(app, 'GET', path, { headers: fetchMode })
       expect(res.status, path).toBe(401)
     }
-    const res = await call(app, 'POST', '/api/workbooks', { headers: fetchMode, body: { title: 'x', source: 'blank' } })
+    const res = await call(app, 'POST', '/api/station/links', { headers: fetchMode, body: { source: 'x' } })
     expect(res.status).toBe(401)
   })
 
@@ -43,7 +43,7 @@ describe('naf-auth wiring (real middleware)', () => {
   })
 
   it('sends a page navigation to naf-id to sign in', async () => {
-    const res = await call(app, 'GET', '/api/workbooks', { headers: { 'sec-fetch-mode': 'navigate' } })
+    const res = await call(app, 'GET', '/api/station/links', { headers: { 'sec-fetch-mode': 'navigate' } })
     expect(res.status).toBe(302)
     expect(res.headers.get('location')).toMatch(new RegExp(`^${issuer}/go/${env.PLATFORM_ID}\\?`))
   })

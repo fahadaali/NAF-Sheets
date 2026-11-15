@@ -1,39 +1,26 @@
-// NAF Sheets API Worker — entry point (spec §4).
+// NAF Sheets API Worker — the station (docs/station-plan.md): links between
+// Google Sheets files and Basecamp projects.
 
 import { createApp } from './app'
 import { handleQueue, handleScheduled } from './background'
 import type { QueueMessageBody } from './background'
 import { registerBasecampLinkRoutes } from './basecamp-link'
-import { registerDashboardRoutes } from './dashboard'
 import type { Env } from './env'
-import { registerGoogleImportRoutes } from './google-import'
-import { registerPhase5Routes } from './phase5'
-import { setOutboundDetection } from './room/outbound-seam'
-import { registerSyncRoutes } from './sync/outbound'
-import { registerXlsxImportRoutes } from './xlsx-import'
-import { detectAfterRoomCommit } from './sync/room-commit'
+import { stationRoutes } from './station'
 
 const app = createApp()
 // Registered here, after createApp's auth guard, and not inside createApp:
 // test apps built with createApp must not carry routes that reach real
-// Launchpad/Google. Each module throws if registered twice on one app.
+// Launchpad/Google/Basecamp.
+// The Basecamp sync account is connected through this flow (/auth/basecamp/start?service=1).
 registerBasecampLinkRoutes(app)
-registerGoogleImportRoutes(app)
-// .xlsx upload and public Google Sheets links (owner, 2026-11-11: no Google OAuth secret).
-registerXlsxImportRoutes(app)
-registerSyncRoutes(app)
-registerPhase5Routes(app)
-// The workbook dashboard and the appearance palette (src/dashboard). Reads only, no remote call.
-registerDashboardRoutes(app)
-// After each room commit, changed task rows go to Basecamp with the token of
-// the person who changed them (spec §3, §9.2; src/sync/room-commit.ts).
-setOutboundDetection(detectAfterRoomCommit)
+app.route('/api/station', stationRoutes())
 
 export default {
   fetch: (request, env, ctx) => app.fetch(request, env, ctx),
-  queue: handleQueue,
-  scheduled: handleScheduled,
+  queue: (batch, env) => handleQueue(batch, env),
+  scheduled: (controller, env) => handleScheduled(controller, env),
 } satisfies ExportedHandler<Env, QueueMessageBody>
 
-export { WorkbookRoom } from './room'
+export { WorkbookRoom } from './legacy-room'
 export { BasecampRateGate } from './basecamp-rate-gate'

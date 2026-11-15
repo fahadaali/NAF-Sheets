@@ -1,10 +1,11 @@
-# NAF Sheets — منصة إدارة مشاريع الاتصال المؤسسي
+# NAF Sheets — محطة ربط Google Sheets بـ Basecamp
 
-Internal NAF platform: a Google-Sheets-like workbook editor where every workbook
-is a Basecamp 5 project, every sheet a to-do list, every row a to-do and every
-indented row a subtask, kept in two-way sync. The full specification is
-`docs/spec.md` (code name `naf-comms`). Read it before changing anything; this
-file only records the decisions that govern the code and the commands.
+Internal NAF platform: a **station** that links existing Google Sheets files,
+left where they are, to Basecamp 5 projects, two-way, on fixed columns. Every
+linked tab is a to-do list, every to-do row a to-do and every row under it a
+subtask. People work in the sheet and in Basecamp; the platform only links,
+configures and reports. The reference is `docs/station-plan.md` (decisions in
+§11); `docs/spec.md` describes the removed workbook editor and is history.
 
 UI language: Arabic, RTL. Code, identifiers and comments: English.
 
@@ -23,154 +24,126 @@ That means, in this repository:
 - The `/check-drift` and `/link-platform` skills do not apply. Do not run them here, and do not "fix" this repo toward `naf-ui`.
 - The principle "the registry precedes the platform" does not apply. Decisions are recorded in this repository.
 
-What still applies, because the **spec itself** requires it (not because of `naf-ui`):
+What still applies:
 
-- Arabic-first, full RTL interface (§12.2). Logical CSS properties (`ms-*`, `pe-*`, `inset-inline-start` …), never physical ones.
-- Thmanyah font (§4.1). Self-host the official files — see `docs/phase-0-report.md` §2.6.
-- Lucide icons only (§12.2). No emoji in the interface.
-- Latin digits; Gregorian dates as `YYYY-MM-DD`, optional Hijri display (§12.2).
-- Every error message in Arabic, stating what happened and what to do (§12.2).
-
-**Decided (owner, 2026-11-10): the calm palette is the platform's look.**
-What replaces `naf-ui` for colours is `apps/web/src/styles/theme.css`, the one
-file that defines the theme, plus the admin screen «المظهر» (overrides stored
-in KV, apps/api `OPEN_QUESTIONS.md` D8). Consume its tokens everywhere — never
-scatter raw colour values through components. Components stay this repo's own.
+- Arabic-first, full RTL interface. Logical CSS properties (`ms-*`, `pe-*`, `inset-inline-start` …), never physical ones.
+- Thmanyah font, self-hosted (`@dawod/thmanyah-font-web`).
+- Lucide icons only. No emoji in the interface.
+- Latin digits; Gregorian dates as `YYYY-MM-DD`.
+- Every error message in Arabic, stating what happened and what to do.
+- **The calm palette is the platform's look** (owner, 2026-11-10): `apps/web/src/styles/theme.css` is the one file that defines the theme, plus the admin screen «المظهر» (overrides in KV). Consume its tokens everywhere — never raw colour values in components.
 
 `naf-id` (sign-in) is **not** part of the design system and still applies — §2.
 
 ---
 
-## 1. Phase gate — where the project stands
+## 1. Where the project stands
 
-The spec (§0.5, §15) orders the phases. **Decision by the owner, 2026-11-10:
-phase 0 is approved and phases 1–7 proceed in parallel.** Two phase 0 items
-could not run for lack of inputs; they are carried forward as acceptance
-prerequisites, not dropped:
+**Decision by the owner, 2026-11-15:** the workbook editor is replaced by the
+station (`docs/station-plan.md`); the editor's code was removed with the
+owner's approval. Its D1 tables, R2 objects, the `bc-outbound` queues and the
+`WorkbookRoom` Durable Object class (kept as a stub, `apps/api/src/legacy-room.ts`)
+still exist: removing any of them deletes data and needs the owner.
 
-| Carried forward | Blocks acceptance of | Needs |
-|---|---|---|
-| Live Basecamp test (`spike/basecamp/`) | phases 3–5 | test project, OAuth app, token, Cloudflare to deploy the recorder |
-| Real multi-sheet Google Sheets file | phase 2 | the file, or its `spreadsheets.get` JSON |
-
-| Phase | State |
+| Stage (`docs/station-plan.md` §9) | State |
 |---|---|
-| 0 — Spike | **Approved 2026-11-10.** Report: `docs/phase-0-report.md` |
-| 1 — Foundation | Built and tested locally; live acceptance needs naf-id (`PLATFORM_ID`) and Cloudflare |
-| 2 — Import | Built: one converter (`packages/gsheets-import`) fed by the Sheets API path (OAuth, unused: owner 2026-11-11, no `GOOGLE_CLIENT_SECRET`) and by `packages/xlsx-import` — **.xlsx upload** and **public Google Sheets links** downloaded as .xlsx, origin detected (Excel / Google export / other) and recorded in the report; tested on real Google exports and synthesised Excel files (apps/api `OPEN_QUESTIONS.md` G18–G31); live acceptance blocked on the real file |
-| 3 / 4 — Outbound / inbound sync | Built against a fake Basecamp; live acceptance blocked on Basecamp inputs and `PUBLIC_API_ORIGIN` |
-| 5 — Subtasks, assignment, attachments, comments | Built against a fake Basecamp, except external-contact email (provider undecided, spec §17-7) |
-| 6 — Realtime collaboration | Built: default (a) self-built per spec §5.3 (headless Univer in the `WorkbookRoom`) until §17-2 is decided; tested locally only |
-| 7 — Hardening | Built: templates, internal API (§13, read-only), sync-health screen, load test (`docs/load-test.md`), backups (`docs/backups.md`), user guide (`docs/user-guide.md`); open decisions in `apps/api/OPEN_QUESTIONS.md` |
+| S0 — live feasibility (row identity, Drive notification delay, quotas) | Waits for the deploy and the first real link |
+| S1 — remove the editor | Done |
+| S2–S5 — links, both directions, deletion, alerts, screens | Built and tested against a fake Google sheet and a fake Basecamp |
+| S6 — hardening, live acceptance | Waits for the deploy |
 
-Code is "done" only with tests passing. A phase is "accepted" only when its
-spec §15 criteria pass against real services — say which, never imply it.
+Code is "done" only with tests passing. A stage is "accepted" only against the
+real Google and Basecamp — say which, never imply it.
 
-`spike/` stays as phase 0 evidence. Production code lives in `apps/` and `packages/`.
+`spike/` stays as the old phase 0 evidence. Production code lives in `apps/` and `packages/`.
 
 ---
 
-## 2. Architecture (spec §4)
+## 2. Architecture
 
 | Layer | Choice |
 |---|---|
-| Web | React + TypeScript + Vite, Thmanyah font |
-| Grid engine | Univer open source, `@univerjs/*` **1.4.0 pinned exactly** — all `@univerjs/*` packages must share one version |
-| API | Cloudflare Workers + Hono |
-| Data | D1 (metadata, mappings), R2 (workbook snapshots, attachments), KV (settings, short-lived tokens) |
-| Realtime | Durable Object `WorkbookRoom` per workbook |
-| Sync jobs | Queue `bc-outbound` + DLQ; Cron reconciliation every 15 min |
+| Web | React + TypeScript + Vite (`apps/web`): the station screens (`src/station`), settings, members, appearance |
+| API | Cloudflare Workers + Hono (`apps/api`) |
+| Sheet ↔ task logic | `packages/station-sheet` (pure): fixed columns, rows → tasks, names, status, dates, Basecamp changes → cells, alert email |
+| Diff | `packages/sync-engine` (pure, field-level three-way diff), unchanged from the editor |
+| Basecamp client | `packages/basecamp` |
+| Data | D1 (`station_*` tables, `migrations/0010_station.sql`), KV (sessions, settings), R2 (backups; the old editor's objects) |
+| Triggers | Drive push notifications (`/webhooks/google/:secret`), Basecamp project webhooks (`/webhooks/basecamp/:secret`), cron every minute (changed files; each link's full pass every 15 min; channel and webhook upkeep; alert emails), «مزامنة الآن» — all become runs on the `bc-inbound` queue |
 | Auth | `naf-id` through the `naf-auth` package |
-| Hosting | **One Worker `naf-sheets`** on `sheets.naflaw.sa` (owner, 2026-11-11, replacing spec §4's Pages + Workers): the API, plus `apps/web/dist` as static assets (`[assets]` in `apps/api/wrangler.toml`; `/api/*`, `/auth/*`, `/webhooks/*`, `/health` run the Worker, any other path is the SPA). Built and deployed together by `scripts/deploy-api.sh` from `main` |
-
-Planned layout (§4.3): `apps/web`, `apps/api`, `packages/{shared,gsheets-import,basecamp,sync-engine}`, `migrations/`.
+| Hosting | **One Worker `naf-sheets`** on `sheets.naflaw.sa`: the API plus `apps/web/dist` as static assets. Deployed by `scripts/deploy-api.sh` from `main` (`docs/cloudflare-setup.md`) |
 
 ### Sign-in: `naf-id` via `naf-auth`
 
-- Depend on `"naf-auth": "github:fahadaali/naf-auth#v3.4.0"` — a tag, never `main`, never `v1.0.0`.
-- Hono wiring: `handleCallback`, `handleLogout`, `handleBackchannelLogout`, `honoMiddleware`; the user is `c.get('user')`.
+- Depend on `"naf-auth": "github:fahadaali/naf-auth#v3.4.0"` — a tag, never `main`.
 - `AUTH_ISSUER = "https://app.naflaw.sa"` (no trailing slash; compared literally).
-- `PLATFORM_ID` is **case-sensitive** and must equal the row registered in the naf-id admin panel. Not decided yet — ask.
-- `AUTH_CLIENT_SECRET` only via `wrangler secret put`.
-- Authentication is central, permissions are local: the platform's own `admin` / `editor` / `viewer` live in the local members table. `viewer` must be truly read-only in every route, not only hidden in the UI.
+- `PLATFORM_ID` is a dashboard variable (`naf-sheets`), **case-sensitive**, equal to the naf-id admin panel row.
+- Authentication is central, permissions are local: `admin` creates, changes and removes links, maps names, connects the sync account; everyone else reads. Enforced in every route, not only hidden in the UI.
 
-### Basecamp (spec Appendix A, re-checked against `basecamp/bc-api` on 2026-11-09)
+### The station's rules (owner decisions, `docs/station-plan.md` §11)
 
+- **Fixed columns**, found by header text, never by position: «المهمة الرئيسية», «المهمة», «القسم», «الحالة», «الموعد». Other columns are never read or written.
+- A row with only «المهمة الرئيسية» is a to-do; a row with «المهمة» is a subtask of the **nearest to-do row above it**; the platform rewrites a stale repeated to-do title.
+- **People come from the sheet**: «القسم» → the roles tab («المسميات» by default, per link) → names (several split on « - » or «،») → Basecamp people through the platform's name directory (`station_names`, one for every link; exact names map themselves). A people change made in Basecamp is put back and alerted. A row whose people cannot be resolved is **held back**, never sent with no assignee.
+- «منجزة» ↔ completed; un-completing in Basecamp writes «جارية».
+- **Deletion is automatic**: a row gone from the sheet trashes its to-do (subtasks go with it) or deletes its subtask for good after storing its snapshot (`station_deleted`). **Never** when a tab reads empty while it had tasks. A record deleted in Basecamp leaves the row with a note.
+- Records created in Basecamp get rows in the sheet; the sheet's order is the reference.
+- **Row identity** is row developer metadata (`naf_task_uid`), never a visible column.
+- One run per link at a time (D1 lease, `resync` coalesces bursts).
+- Problems are stored (`station_alerts`, one key per problem) and emailed once through Resend from `ALERT_EMAIL_FROM` to `ALERT_EMAIL_TO` (or every admin).
+
+### Google
+
+- A **service account** (`naf-sync@naf-sheets-station.iam.gserviceaccount.com`); its JSON key is the secret `GOOGLE_SERVICE_ACCOUNT_KEY`. Each linked file is shared with it as Editor. No Google OAuth, no `GOOGLE_CLIENT_*`.
+- Read values with `UNFORMATTED_VALUE` and `SERIAL_NUMBER`; write cells with `USER_ENTERED`.
+- Drive file channels last at most a day: renewed by the minute cron.
+
+### Basecamp (`docs/spec.md` Appendix A, still valid)
+
+- **Every write goes out with the sync account's token** (owner decision 7: Fahad Alotaibi's account, connected by an admin at `/auth/basecamp/start?service=1`). This replaces the editor's "each user's own token" rule.
 - Every request: `User-Agent: NAF Comms (info@naflaw.sa)`; POST/PUT also `Content-Type: application/json; charset=utf-8`.
-- `PUT /todos/{id}.json` **clears every field you omit.** Always send `content`, `description`, `assignee_ids`, `completion_subscriber_ids`, `due_on`, `starts_on`.
-- `PUT /subtasks/{id}.json` is partial. Clear with `"due_on": null` / `"assignee_ids": []`.
-- `DELETE /subtasks/{id}.json` is **permanent** (no trash). Snapshot the subtask before deleting.
-- Webhooks carry no signature and no `description` / `completed` / `assignees`: secret in the path, check `recording.bucket.id`, then always fetch the record.
-- No documented event for a due-date change or for completing a subtask. Do not rely on webhooks for those until phase 0's live test says otherwise; reconciliation covers them.
-- Writes go out with **the acting user's own token**. The service token is for webhooks, read-only reconciliation and member caches only. The single documented exception is the automatic parent-assignment rule (§8.1).
-- Retry `429` after `Retry-After` and `5xx` with backoff. Never retry `404`; `Reason: Account Inactive` stops the whole account's sync.
-
-### Univer — constraints and the RTL grid layer
-
-- **Univer's grid does not render RTL** (1.4.0, re-checked 2026-11-10): `direction: 'rtl'` mirrors only the UI chrome; `worksheet.rightToLeft` is never read by the renderer.
-- **Solved by `@naf-sheets/univer-rtl`** (`packages/univer-rtl/src/rtl-grid.ts`; phase 0 original in `spike/univer`). It flips the canvas container with CSS and flips back what must not be mirrored: text per line or glyph group, rotated cells as a whole, images, the cell editor. It mirrors popup anchors and placement directions, swaps arrow keys and the toolbar's left/right alignment, fixes touch hit testing and negates horizontal wheel deltas. The model is never changed by the mirror.
-- **Univer's document layout has no bidi** (1.4.0, verified 2026-11-10 on the stock grid too): the cell editor, the formula bar, rich-text and rotated cells laid Arabic words out left to right («إعداد خطة» shown as «خطة إعداد»), and an Arabic word was one glyph (Backspace deleted the whole word). `IParagraphStyle.direction` is declared but never read. **Solved by the text layer** (`src/bidi.ts`, a full UAX #9; `src/rtl-text.ts`): the layout and the model stay logical; lines are painted in visual order, Arabic runs are re-cut into one glyph per grapheme (painted joined), and caret, selection, hit testing and arrow keys follow the visual positions. The contract check and a text heartbeat judge it separately from the grid: a broken text hook leaves the editors stock and keeps the grid mirrored (`RtlGridStatus.text`).
-- **Formulas read left to right, token by token** (owner, 2026-11-11, «طبق من اليسار الى اليمين»; `src/formula-layout.ts`, rtl-text step 7, apps/web `OPEN_QUESTIONS.md` F5): an editor document starting with `=` gets an LTR paragraph, every string / quoted sheet name / Arabic bare name is a virtual bidi isolate (FSI … PDI, quotes outside it; boundaries from Univer's `LexerTreeBuilder`), and the line starts at the editor's left edge. Guarded by `checkFormulaLayoutContract()` plus a live lexer check (`RtlGridStatus.text.formula`): without it formulas keep plain UAX #9; plain text and grid cells are untouched.
-- **Alignment is logical** (owner decision 2026-11-10): model LEFT = start = visual right. The toolbar and alignment shortcuts are swapped so their buttons mean what they show; programmatic writes (Facade, import, sync — anything that passes an explicit `range`) are stored as given. The Google Sheets import must state which it writes.
-- **Upgrade safety (owner requirement: updates must not break it):**
-  1. Every `@univerjs/*` is pinned exactly, with the lockfile; `save-exact` in `.npmrc`. Nothing changes without a deliberate pull request.
-  2. `npm run check:pins` fails unless every `@univerjs/*` equals `VERIFIED_UNIVER_VERSION` in `rtl-grid.ts`. Raising Univer therefore means raising that constant in the same PR.
-  3. CI (`.github/workflows/rtl-grid.yml`) runs the interaction suite in Chromium, Firefox and WebKit; a Univer bump merges only when it is green.
-  4. At runtime `checkUniverContract()` verifies every hooked internal before applying anything. A missing or changed hook leaves the stock grid untouched and reports why (`RtlGridStatus`). A heartbeat withdraws the mirror if plain text stops flowing through the flip-back path. Both are covered by tests.
-- Never mutate a command's `params` object to change behaviour: shortcut parameters are shared between key presses. Wrap the handler and pass a copy.
-- **Formula colours** (owner, 2026-11-11; `packages/univer-rtl/src/formula-colours.ts`, apps/web `OPEN_QUESTIONS.md` F1–F4): Excel's reference sequence and outlines plus theme colours (`--formula-*`) for the other tokens. Hooks `ThemeService` `loop-color`, `ReplaceTextRunsCommand.handler` and `RefSelectionsRenderService.prototype.resetSelectionsByModelData`, guarded by `checkFormulaColourContract()` and a live lexer check: re-check them with any Univer bump.
-- Univer's automatic row height depends on timing (whether the cell editor is initialised before data is written). Tests and the app must wait for lifecycle `Steady` before mutating, or row heights differ between runs.
-- `FRange.getCellRect()` is raw skeleton geometry: it ignores scroll and zoom. Do not position anything with it after scrolling or zooming.
-- Sheet services and the render unit are created asynchronously after `createWorkbook`; resolve them after it.
-- Out of scope / Pro-only: XLSX import/export, built-in collaboration, pivot tables, charts, print, edit history.
-- **The dashboard is the first sheet tab «اللوحة»** (owner, 2026-11-10): a real Univer sheet, recognised only by `custom.nafSheetRole === 'dashboard'` (never by name), kept first in `sheetOrder` by `withDashboardSheet` (`packages/shared/src/dashboard-sheet.ts`), which the API and the room both apply when they serve or load a workbook. It is never in D1 `sheets`; everything that reads sheets skips it (`contentSheetIds`, sheet-model `dashboard_sheet`). Univer's embed-tab anchor (`custom.UNIVER_EMBED_SHEETS_TAB`, sheets-ui) hides its grid; `apps/web/src/dashboard/sheet-tab.ts` provides `ISheetEmbedRuntimeService` and draws the dashboard over the host. A workbook opens on it: `/workbooks/:id` is the dashboard tab, `?sheet=` a sheet (owner, 2026-11-11). Both the custom key and the host attribute are checked against the installed sources (`apps/web/test/unit/dashboard-sheet.test.ts`): re-check them with any Univer bump.
+- `PUT /todos/{id}.json` **clears every field you omit.** Always send `content`, `description`, `assignee_ids`, `completion_subscriber_ids`, `due_on`, `starts_on` (the station carries the description and start date it has no column for from the last synced base).
+- `PUT /subtasks/{id}.json` is partial. `DELETE /subtasks/{id}.json` is **permanent**: snapshot first.
+- Webhooks carry no signature: secret in the path, then always fetch the record. No documented event for a due-date change or a subtask completion: the 15-minute full pass covers them.
+- Retry `429` after `Retry-After` and `5xx` with backoff. Never retry `404`.
 
 ---
 
 ## 3. Working rules
 
-- Never delete a file, and never delete data locally, in Basecamp or in Drive, without explicit approval from the user.
+- Never delete a file, and never delete data locally, in Basecamp, in Drive or in Cloudflare (D1, R2, queues, Durable Objects), without explicit approval from the user.
 - Never edit an original asset: copy it and edit the copy.
-- When the spec and the docs disagree, or behaviour is uncertain: stop and ask. Do not guess.
-- Every sync rule and every import converter ships with tests (§0.6).
-- Pin exact versions (no `^` or `~`) for `@univerjs/*`, `lucide-react` and the font.
+- When the plan and the docs disagree, or behaviour is uncertain: stop and ask. Do not guess.
+- Every sync rule ships with tests (fake Google sheet `apps/api/test/station/fake-sheet.ts`, fake Basecamp `apps/api/test/support/fake-basecamp.ts`).
+- Pin exact versions (no `^` or `~`) for `lucide-react` and the font; `.npmrc` sets `save-exact`.
 - Commit messages: Conventional Commits (`feat:`, `fix:`, `docs:`, `test:`, `chore:` …).
-- Secrets only through `wrangler secret put` or the Worker's dashboard (type Secret, the same store), never in files, logs or chat.
-- No resource id and no undecided value in `wrangler.toml` (owner, 2026-11-11): resources are created by the first deploy, and `PLATFORM_ID`, `BASECAMP_ACCOUNT_ID`, `GOOGLE_CLIENT_ID` are dashboard variables (`keep_vars = true`). Deploy: `scripts/deploy-api.sh`; setup: `docs/cloudflare-setup.md`.
+- Secrets only through `wrangler secret put` or the Worker's dashboard (type Secret), never in files, logs or chat.
+- No resource id and no undecided value in `wrangler.toml`; dashboard variables survive deploys (`keep_vars = true`). Setup: `docs/cloudflare-setup.md`, `docs/google-service-account.md`.
 
 ---
 
 ## 4. Commands
 
-From the repository root (npm workspaces; `.npmrc` sets `save-exact` and `legacy-peer-deps`):
+From the repository root (npm workspaces):
 
 ```bash
 npm ci                     # install exactly what package-lock.json says
 npm run typecheck          # every workspace
-npm test                   # every workspace's unit/integration tests (vitest)
+npm test                   # every workspace's tests (vitest)
 ```
 
 Per package:
 
 ```bash
-# apps/api — Worker + D1/R2/KV/Queues tests on local Miniflare (no remote calls)
+# apps/api — Worker + D1/KV/R2/Queues on local Miniflare (no remote calls)
 cd apps/api && npx vitest run
+cd apps/api && npx vitest run test/station     # the station only
 
-# apps/web — unit tests, then the browser smoke test against a mocked API (:4174)
-cd apps/web && npx vitest run && npm run test:e2e
+# apps/web — unit tests; build
+cd apps/web && npx vitest run && npx vite build
 
-# packages/univer-rtl — the RTL grid layer
-cd packages/univer-rtl
-npm test                   # 294 unit tests (pure helpers, UAX #9 bidi with isolates, text geometry, formula mode, known-upstream rules, formula colours, Univer contract)
-npm run check:pins         # every @univerjs/* == VERIFIED_UNIVER_VERSION
-npm run harness:build && (npm run harness:preview &)   # test page on :4175
-npm run test:rtl           # 73 interaction checks (BROWSER=chromium|firefox|webkit; USER_AGENT for the Mac key map)
-npm run perf:rtl           # frame cost with and without the mirror
-
-# packages/gsheets-import — regenerate the Univer function list after a Univer bump
-cd packages/gsheets-import && npm run generate:functions
+# packages/station-sheet — pure sheet ↔ task logic
+cd packages/station-sheet && npx vitest run
 ```
 
-Never run `playwright install` locally: Chromium is pre-installed; CI installs Firefox and WebKit.
-
-Phase 0 evidence (frozen; do not develop there): `spike/univer`, `spike/basecamp` (live Basecamp kit: see its README).
+Never run `playwright install`: Chromium is pre-installed.

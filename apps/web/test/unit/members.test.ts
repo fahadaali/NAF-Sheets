@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { PlatformMember } from '@naf-sheets/shared'
 import { createApiClient } from '../../src/lib/api'
-import { lastSeenDay, memberLock, peopleMatchHref } from '../../src/lib/members'
+import { lastSeenDay, memberLock } from '../../src/lib/members'
 import { parseRoute, pathFor } from '../../src/lib/routes'
 import { t } from '../../src/strings'
 
@@ -34,12 +34,6 @@ describe('«أعضاء المنصة» route', () => {
     expect(pathFor({ name: 'members' })).toBe('/admin/members')
   })
 
-  it('links to the people-matching row of one member', () => {
-    expect(peopleMatchHref('sub-1')).toBe('/admin/people-matches#match-sub-1')
-    expect(peopleMatchHref('a/b c')).toBe('/admin/people-matches#match-a%2Fb%20c')
-    // The hash does not change the route.
-    expect(parseRoute('/admin/people-matches')).toEqual({ name: 'peopleMatches' })
-  })
 })
 
 describe('members API client', () => {

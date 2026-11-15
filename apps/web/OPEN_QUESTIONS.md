@@ -1,5 +1,7 @@
 # apps/web — open questions
 
+> **For history (2026-11-15):** these questions belong to the removed workbook editor. The station's open items are in `docs/station-plan.md` §11-ب.
+
 Each item states what the code does now (the narrowest safe behaviour) and what needs a decision. Items marked `// OPEN:` in the code point here.
 
 | # | Question | What the code does now | Where |

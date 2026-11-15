@@ -1,0 +1,139 @@
+// D1 access of the station (migrations/0010_station.sql).
+
+import type { SyncedBase } from '@naf-sheets/shared'
+import { alertKey, type StationAlert } from '@naf-sheets/station-sheet'
+
+export interface LinkRow {
+  id: string
+  spreadsheet_id: string
+  title: string
+  bc_project_id: number
+  bc_todoset_id: number
+  roles_tab: string
+  state: 'active' | 'paused'
+  notify_secret: string
+  last_modified: string | null
+  last_sync_at: string | null
+  last_error: string | null
+  created_by: string
+  created_at: string
+  updated_at: string
+}
+
+export interface TabRow {
+  link_id: string
+  google_sheet_id: number
+  title: string
+  bc_todolist_id: number | null
+}
+
+export interface TaskRow {
+  uid: string
+  link_id: string
+  google_sheet_id: number
+  level: 0 | 1
+  parent_uid: string | null
+  bc_id: number | null
+  base_json: string | null
+  subtasks_count: number | null
+  subtasks_done: number | null
+  deleted_remotely: 0 | 1
+  assign_from_sheet: 0 | 1
+}
+
+export async function getLink(db: D1Database, id: string): Promise<LinkRow | null> {
+  return db.prepare(`SELECT * FROM station_links WHERE id = ?1`).bind(id).first<LinkRow>()
+}
+
+export async function getTabs(db: D1Database, linkId: string): Promise<TabRow[]> {
+  const r = await db.prepare(`SELECT * FROM station_tabs WHERE link_id = ?1 ORDER BY rowid`).bind(linkId).all<TabRow>()
+  return r.results
+}
+
+export async function getTasks(db: D1Database, linkId: string): Promise<TaskRow[]> {
+  const r = await db.prepare(`SELECT * FROM station_tasks WHERE link_id = ?1`).bind(linkId).all<TaskRow>()
+  return r.results
+}
+
+export function baseOf(row: TaskRow | undefined): SyncedBase | null {
+  if (!row?.base_json) return null
+  return JSON.parse(row.base_json) as SyncedBase
+}
+
+export async function getNames(db: D1Database): Promise<Map<string, number>> {
+  const r = await db.prepare(`SELECT name, bc_person_id FROM station_names`).all<{ name: string; bc_person_id: number }>()
+  return new Map(r.results.map((n) => [n.name, n.bc_person_id]))
+}
+
+export function saveTaskStatement(
+  db: D1Database,
+  t: {
+    uid: string
+    linkId: string
+    googleSheetId: number
+    level: 0 | 1
+    parentUid: string | null
+    bcId: number | null
+    base: SyncedBase | null
+    assignFromSheet?: boolean
+  },
+  at: string,
+): D1PreparedStatement {
+  return db
+    .prepare(
+      `INSERT INTO station_tasks (uid, link_id, google_sheet_id, level, parent_uid, bc_id, base_json, assign_from_sheet, updated_at)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+       ON CONFLICT (uid) DO UPDATE SET google_sheet_id = excluded.google_sheet_id, parent_uid = excluded.parent_uid,
+         bc_id = COALESCE(excluded.bc_id, station_tasks.bc_id), base_json = COALESCE(excluded.base_json, station_tasks.base_json),
+         assign_from_sheet = excluded.assign_from_sheet, updated_at = excluded.updated_at`,
+    )
+    .bind(t.uid, t.linkId, t.googleSheetId, t.level, t.parentUid, t.bcId, t.base ? JSON.stringify(t.base) : null, t.assignFromSheet === false ? 0 : 1, at)
+}
+
+export function logStatement(
+  db: D1Database,
+  e: { linkId: string; direction: 'to_basecamp' | 'to_sheet' | 'none'; action: string; taskUid?: string | null; detail?: unknown },
+  at: string,
+): D1PreparedStatement {
+  return db
+    .prepare(`INSERT INTO station_log (link_id, at, direction, action, task_uid, detail_json) VALUES (?1, ?2, ?3, ?4, ?5, ?6)`)
+    .bind(e.linkId, at, e.direction, e.action, e.taskUid ?? null, e.detail === undefined ? null : JSON.stringify(e.detail))
+}
+
+/**
+ * Records the problems seen in this run for a link: new ones open, known ones
+ * stay open (not emailed again), and the link's problems not seen now are
+ * resolved. Name alerts are global (one name, every link): resolved when the
+ * name is mapped, whatever link reported it.
+ */
+export async function recordAlerts(db: D1Database, linkId: string, alerts: readonly StationAlert[], mappedNames: ReadonlySet<string>, at: string): Promise<void> {
+  const keys = new Set<string>()
+  const statements: D1PreparedStatement[] = []
+  for (const alert of alerts) {
+    const key = alertKey(alert)
+    if (keys.has(key)) continue
+    keys.add(key)
+    statements.push(
+      db
+        .prepare(
+          `INSERT INTO station_alerts (key, link_id, alert_json, first_seen, last_seen) VALUES (?1, ?2, ?3, ?4, ?4)
+           ON CONFLICT (key) DO UPDATE SET alert_json = excluded.alert_json, last_seen = excluded.last_seen,
+             first_seen = CASE WHEN station_alerts.resolved_at IS NULL THEN station_alerts.first_seen ELSE excluded.first_seen END,
+             emailed_at = CASE WHEN station_alerts.resolved_at IS NULL THEN station_alerts.emailed_at ELSE NULL END,
+             resolved_at = NULL`,
+        )
+        .bind(key, linkId, JSON.stringify(alert), at),
+    )
+  }
+  const open = await db
+    .prepare(`SELECT key, alert_json FROM station_alerts WHERE resolved_at IS NULL AND (link_id = ?1 OR key LIKE 'name_unmapped:%')`)
+    .bind(linkId)
+    .all<{ key: string; alert_json: string }>()
+  for (const row of open.results) {
+    if (keys.has(row.key)) continue
+    const alert = JSON.parse(row.alert_json) as StationAlert
+    const gone = alert.kind === 'name_unmapped' ? mappedNames.has(alert.name) : alert.linkId === linkId
+    if (gone) statements.push(db.prepare(`UPDATE station_alerts SET resolved_at = ?2 WHERE key = ?1`).bind(row.key, at))
+  }
+  if (statements.length > 0) await db.batch(statements)
+}
