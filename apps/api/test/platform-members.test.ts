@@ -8,7 +8,6 @@ import { createApp } from '../src/app'
 import type { AuthMiddleware } from '../src/auth'
 import { REVOKE_REASON } from '../src/routes/platform-members'
 import type { AccessReporter } from '../src/routes/platform-members'
-import { ROOM_CLOSE_ACCESS_CHANGED } from '../src/room'
 import { call, createWorkbook, isArabic, json, seedMember, testApp } from './helpers'
 import type { SeededMember } from './helpers'
 
@@ -128,9 +127,6 @@ describe('PUT /api/admin/members/:userId', () => {
     const admin = await seedMember('admin')
     const target = await seedMember('viewer')
 
-    // A viewer cannot create workbooks.
-    await expectApiError(await call(app, 'POST', '/api/workbooks', { user: target, body: { title: 'خطة', source: 'blank' } }), 403, 'forbidden')
-
     const res = await call(app, 'PUT', `/api/admin/members/${target.id}`, { user: admin, body: { role: 'editor' } })
     expect(res.status).toBe(200)
     const body = await json<UpdatePlatformMemberResponse>(res)
@@ -142,23 +138,8 @@ describe('PUT /api/admin/members/:userId', () => {
     expect(audit[0]).toMatchObject({ actor_id: admin.id, entity_type: 'member', entity_id: target.id })
     expect(JSON.parse(audit[0]!.details_json)).toEqual({ from: { role: 'viewer', active: true }, to: { role: 'editor', active: true } })
 
-    // Next request: /api/me shows the new role, and creating a workbook works.
+    // Next request: /api/me shows the new role.
     expect(await json(await call(app, 'GET', '/api/me', { user: target }))).toMatchObject({ user: { role: 'editor' } })
-    expect((await call(app, 'POST', '/api/workbooks', { user: target, body: { title: 'خطة', source: 'blank' } })).status).toBe(201)
-  })
-
-  it('caps workbook roles by the new platform role (demotion to viewer)', async () => {
-    const { app } = appWithReports()
-    const admin = await seedMember('admin')
-    const owner = await seedMember('editor')
-    const id = await createWorkbook(app, owner)
-
-    const before = await json<{ workbook: { access: string } }>(await call(app, 'GET', `/api/workbooks/${id}`, { user: owner }))
-    expect(before.workbook.access).toBe('owner')
-
-    expect((await call(app, 'PUT', `/api/admin/members/${owner.id}`, { user: admin, body: { role: 'viewer' } })).status).toBe(200)
-    const after = await json<{ workbook: { access: string } }>(await call(app, 'GET', `/api/workbooks/${id}`, { user: owner }))
-    expect(after.workbook.access).toBe('viewer')
   })
 
   it('suspends: the next request is refused; reactivating lets them back in; both reported to naf-id', async () => {
@@ -267,20 +248,6 @@ describe('PUT /api/admin/members/:userId', () => {
     await expectApiError(await call(app, 'PUT', '/api/admin/members/sub-nobody', { user: admin, body: { role: 'editor' } }), 404, 'not_found')
   })
 
-  it('closes the member’s open realtime connections so they reconnect under the new access', async () => {
-    const { app } = appWithReports()
-    const admin = await seedMember('admin')
-    const owner = await seedMember('editor')
-    const id = await createWorkbook(app, owner)
-    const res = await call(app, 'GET', `/api/workbooks/${id}/room`, { user: owner, headers: { upgrade: 'websocket' } })
-    expect(res.status).toBe(101)
-    const socket = res.webSocket!
-    const closed = new Promise<number>((resolve) => socket.addEventListener('close', (e) => resolve(e.code)))
-    socket.accept()
-
-    expect((await call(app, 'PUT', `/api/admin/members/${owner.id}`, { user: admin, body: { role: 'viewer' } })).status).toBe(200)
-    expect(await closed).toBe(ROOM_CLOSE_ACCESS_CHANGED)
-  })
 })
 
 describe('the last active admin', () => {

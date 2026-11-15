@@ -200,7 +200,6 @@ export function platformMemberRoutes(options: PlatformMemberRouteOptions = {}): 
     }
 
     const after = (await readMember(db, userId)) ?? { ...current, role: toRole, is_active: toActive ? 1 : 0 }
-    await disconnectEverywhere(c, userId, fromRole === 'admin')
 
     // naf-id matches its access table by email (naf-auth README).
     let nafIdReport: NafIdReport = 'skipped'
@@ -226,37 +225,4 @@ export function platformMemberRoutes(options: PlatformMemberRouteOptions = {}): 
   })
 
   return routes
-}
-
-/**
- * Closes the member's realtime connections in every room they could be in:
- * their own and shared workbooks, or every live workbook if they were an
- * admin. Best effort, after the response when the runtime allows it.
- */
-async function disconnectEverywhere(c: Context<AppEnv>, userId: string, wasAdmin: boolean): Promise<void> {
-  const env = c.env
-  if (!env.WORKBOOK_ROOM) return
-  const work = (async () => {
-    const sql = wasAdmin
-      ? `SELECT id FROM workbooks WHERE archived_at IS NULL`
-      : `SELECT id FROM workbooks w WHERE w.archived_at IS NULL
-           AND (w.owner_id = ?1 OR EXISTS (SELECT 1 FROM workbook_members wm WHERE wm.workbook_id = w.id AND wm.user_id = ?1))`
-    const statement = wasAdmin ? env.DB.prepare(sql) : env.DB.prepare(sql).bind(userId)
-    const { results } = await statement.all<{ id: string }>()
-    await Promise.all(
-      results.map((row) =>
-        env.WORKBOOK_ROOM.get(env.WORKBOOK_ROOM.idFromName(row.id))
-          .disconnectUser(userId)
-          .catch(() => 0),
-      ),
-    )
-  })().catch((error: unknown) => console.warn(`members: closing realtime connections failed (${error instanceof Error ? error.name : 'unknown'})`))
-  let ctx: { waitUntil(promise: Promise<unknown>): void } | null = null
-  try {
-    ctx = c.executionCtx
-  } catch {
-    // No execution context (tests): wait for it here instead.
-  }
-  if (ctx) ctx.waitUntil(work)
-  else await work
 }

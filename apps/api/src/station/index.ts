@@ -1,7 +1,7 @@
 // The station (docs/station-plan.md): links between Google Sheets and Basecamp.
 
 import type { BcInboundQueueMessage, Env } from '../env'
-import { defaultSyncDeps } from '../sync/deps'
+import { defaultSyncDeps } from './deps'
 import { requestRun, runStation, type StationDeps } from './runner'
 
 export { stationRoutes, stationWebhookRoutes } from './routes'

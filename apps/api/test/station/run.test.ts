@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { createBasecampClient } from '@naf-sheets/basecamp'
 import { syncLink } from '../../src/station/run'
 import { seedMember } from '../helpers'
-import { FakeBasecamp, uniqueId, type FakePerson, type FakeSubtask, type FakeTodo } from '../sync/fake-basecamp'
+import { FakeBasecamp, uniqueId, type FakePerson, type FakeSubtask, type FakeTodo } from '../support/fake-basecamp'
 import { FakeSheet } from './fake-sheet'
 
 const ROLES = [

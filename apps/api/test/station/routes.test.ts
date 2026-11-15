@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import type { BcInboundQueueMessage, Env } from '../../src/env'
 import { handleStationMessages, runStation, sendDueAlerts, stationRoutes, stationWebhookRoutes } from '../../src/station'
 import { call, isArabic, json, seedMember, testApp } from '../helpers'
-import { harness, linkService, type Harness } from '../sync/harness'
+import { harness, linkService, type Harness } from './harness'
 import { FakeSheet } from './fake-sheet'
 
 const HEADER = ['المهمة الرئيسية', 'المهمة', 'القسم', 'الحالة', 'الموعد', 'الاسم']

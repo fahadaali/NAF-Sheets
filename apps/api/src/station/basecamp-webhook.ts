@@ -6,11 +6,11 @@
 
 import { LimitReachedError, NAF_WEBHOOK_TYPES, NotFoundError } from '@naf-sheets/basecamp'
 import type { BasecampClient } from '@naf-sheets/basecamp'
-import { LinkFailure, withServiceToken } from '../../basecamp-link'
-import type { LinkContext } from '../../basecamp-link'
-import type { Env } from '../../env'
-import { defaultSyncDeps, readClient, syncContext } from '../deps'
-import type { SyncDeps } from '../deps'
+import { LinkFailure, withServiceToken } from '../basecamp-link'
+import type { LinkContext } from '../basecamp-link'
+import type { Env } from '../env'
+import { defaultSyncDeps, readClient, syncContext } from './deps'
+import type { SyncDeps } from './deps'
 
 export type WebhookStatus =
   | { status: 'active'; bcWebhookId: number }

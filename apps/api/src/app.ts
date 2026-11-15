@@ -6,21 +6,17 @@ import { handleBackchannelLogout, handleCallback, handleLogout } from 'naf-auth'
 import type { AppEnv, AuthMiddleware } from './auth'
 import { authConfig, nafAuthMiddleware } from './auth'
 import { ApiFailure, errorBody } from './errors'
-import { imageRoutes } from './images/routes'
-import { adminTemplateRoutes, apiTokenRoutes, backupRoutes, internalApiRoutes, templateRoutes } from './phase7'
+import { appearanceRoutes } from './appearance/routes'
+import { backupRoutes } from './phase7'
 import { meRoutes } from './routes/me'
 import type { AccessReporter } from './routes/platform-members'
 import { platformMemberRoutes } from './routes/platform-members'
 import { webhookRoutes } from './routes/webhooks'
 import { stationWebhookRoutes } from './station/routes'
-import { workbookRoutes } from './routes/workbooks'
-import { DEFAULT_SNAPSHOT_ORPHAN_AGE_MS } from './snapshot'
 
 export interface AppOptions {
   /** Guards every non-public route. Default: naf-auth (`nafAuthMiddleware`). */
   auth?: AuthMiddleware
-  /** See DEFAULT_SNAPSHOT_ORPHAN_AGE_MS. */
-  snapshotOrphanAgeMs?: number
   /** Reports «أعضاء المنصة» changes to naf-id. Default: naf-auth's reportAccessChange. Tests pass a fake. */
   reportAccess?: AccessReporter
 }
@@ -46,9 +42,6 @@ export function createApp(options: AppOptions = {}): Hono<AppEnv> {
   app.route('/webhooks', webhookRoutes())
   // Drive push notifications of the station's linked files (src/station).
   app.route('/webhooks', stationWebhookRoutes())
-  // Internal API of the NAF ecosystem (§13): service tokens, never a naf-id
-  // session. Before the guard so naf-auth never sees these requests.
-  app.route('/api/v1', internalApiRoutes())
 
   // ── Everything else is protected.
   app.use('*', options.auth ?? nafAuthMiddleware)
@@ -61,14 +54,11 @@ export function createApp(options: AppOptions = {}): Hono<AppEnv> {
   })
 
   app.route('/api/me', meRoutes())
-  app.route('/api/workbooks', workbookRoutes({ snapshotOrphanAgeMs: options.snapshotOrphanAgeMs ?? DEFAULT_SNAPSHOT_ORPHAN_AGE_MS }))
-  // Pictures over and in cells (src/images): R2 only, never Basecamp.
-  app.route('/api/workbooks', imageRoutes())
-  // Phase 7: templates (§7.1), service tokens (§13), backups (§14).
-  app.route('/api/templates', templateRoutes())
-  app.route('/api/admin/templates', adminTemplateRoutes())
-  app.route('/api/admin/api-tokens', apiTokenRoutes())
+  // Backups (§14) and the appearance «المظهر».
   app.route('/api/admin/backups', backupRoutes())
+  const appearance = appearanceRoutes()
+  app.route('/api/appearance', appearance.read)
+  app.route('/api/admin/appearance', appearance.admin)
   // Platform roles and active state «أعضاء المنصة» (§3, §14).
   app.route('/api/admin/members', platformMemberRoutes({ report: options.reportAccess }))
 

@@ -4,11 +4,10 @@
 import { env } from 'cloudflare:workers'
 import { describe, expect, it } from 'vitest'
 import type { BackupRunsResponse } from '@naf-sheets/shared'
-import { DASHBOARD_SHEET_ID } from '@naf-sheets/shared'
 import { BACKUP_CRON, handleScheduled } from '../../src/background'
 import type { Env } from '../../src/env'
 import { runBackup } from '../../src/phase7'
-import { snapshotKey } from '../../src/snapshot'
+const snapshotKey = (id: string, v: number): string => `workbooks/${id}/snapshots/${v}.json`
 import { call, createWorkbook, isArabic, json, seedMember, testApp } from '../helpers'
 
 const app = testApp()
@@ -52,14 +51,10 @@ describe('runBackup', () => {
     expect(await bucket.head(`${prefix}/schema.json`)).not.toBeNull()
     expect(await bucket.head(`snapshots/${snapshotKey(id, 1)}`)).not.toBeNull()
     expect((await listAll(bucket, `${prefix}/r2-inventory/`)).length).toBeGreaterThan(0)
-    // The snapshot is copied byte for byte, dashboard tab «اللوحة» included (restoring it needs
-    // nothing more); D1's sheets list it nowhere, so the export holds only the content sheet.
+    // The old editor's snapshot is copied byte for byte; the station's tables are exported too.
     const copied = await (await bucket.get(`snapshots/${snapshotKey(id, 1)}`))!.text()
     expect(copied).toBe(await (await env.SNAPSHOTS.get(snapshotKey(id, 1)))!.text())
-    expect((JSON.parse(copied) as { sheetOrder: string[] }).sheetOrder[0]).toBe(DASHBOARD_SHEET_ID)
-    const sheetRows = (await readNdjson(bucket, await listAll(bucket, `${prefix}/sheets/`))).filter((r) => r.workbook_id === id)
-    expect(sheetRows.map((r) => r.title)).toEqual(['ورقة 1'])
-    expect(sheetRows.some((r) => r.univer_sheet_id === DASHBOARD_SHEET_ID)).toBe(false)
+    for (const table of ['station_links', 'station_tasks', 'station_names', 'station_alerts']) expect(names).toContain(table)
 
     // A second run copies nothing already there and replaces nothing.
     const firstCopy = await bucket.head(`snapshots/${snapshotKey(id, 1)}`)
@@ -100,7 +95,7 @@ describe('runBackup', () => {
   it('runs from the daily cron only; the 15-minute cron stays the reconciliation', async () => {
     const before = (await env.DB.prepare('SELECT COUNT(*) AS n FROM backup_runs').first<{ n: number }>())!.n
     const ctx = { waitUntil: () => {}, passThroughOnException: () => {}, props: {} } as unknown as ExecutionContext
-    await handleScheduled({ cron: BACKUP_CRON, scheduledTime: Date.now(), noRetry: () => {} } as ScheduledController, env as Env, ctx)
+    await handleScheduled({ cron: BACKUP_CRON, scheduledTime: Date.now(), noRetry: () => {} } as ScheduledController, env as Env)
     expect((await env.DB.prepare('SELECT COUNT(*) AS n FROM backup_runs').first<{ n: number }>())!.n).toBe(before + 1)
   })
 })

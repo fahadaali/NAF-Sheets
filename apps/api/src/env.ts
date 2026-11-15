@@ -1,23 +1,7 @@
 // Bindings of the API Worker (apps/api/wrangler.toml).
 
 import type { BasecampRateGate } from './basecamp-rate-gate'
-import type { WorkbookRoom } from './room'
-
-/**
- * One message on `bc-outbound` (spec §9.2.2–3): a task changed in the
- * platform and must be written to Basecamp with the token of the user who
- * made the change. The consumer rebuilds the full state from D1 + the
- * snapshot, so the message carries identities only, and a duplicate message
- * is a harmless no-op.
- */
-export interface BcOutboundMessage {
-  kind: 'task_changed'
-  workbookId: string
-  taskUid: string
-  /** members.user_id of the person whose token must be used (§3). */
-  actorUserId: string
-  enqueuedAt: string
-}
+import type { WorkbookRoom } from './legacy-room'
 
 /**
  * One message on `bc-inbound` (spec §9.3.2–4): a Basecamp webhook delivery,
@@ -34,19 +18,6 @@ export interface BcInboundMessage {
 }
 
 /**
- * «مزامنة الآن» (§9.4): reconcile one workbook now, ignoring stored ETags.
- * Sent by POST /api/workbooks/:id/sync-now; processed on `bc-inbound`
- * because it only reads Basecamp (service token) and writes the sheet.
- */
-export interface BcReconcileMessage {
-  kind: 'reconcile'
-  workbookId: string
-  /** members.user_id of the person who asked. */
-  requestedBy: string
-  enqueuedAt: string
-}
-
-/**
  * The station (docs/station-plan.md §4): run one link's sync. Sent on a Drive
  * notification, a Basecamp webhook of a linked project, the minute check and
  * «مزامنة الآن».
@@ -58,7 +29,7 @@ export interface StationSyncMessage {
 }
 
 /** Everything `bc-inbound` carries. */
-export type BcInboundQueueMessage = BcInboundMessage | BcReconcileMessage | StationSyncMessage
+export type BcInboundQueueMessage = BcInboundMessage | StationSyncMessage
 
 export interface Env {
   DB: D1Database
@@ -66,7 +37,7 @@ export interface Env {
   AUTH_KV: KVNamespace
   /** Settings, short-lived tokens, and the reconciliation ETag cache. */
   SETTINGS: KVNamespace
-  /** Univer snapshots: workbooks/{id}/snapshots/{version}.json */
+  /** The removed editor's snapshots and pictures; still copied by the daily backup, never written. */
   SNAPSHOTS: R2Bucket
   ATTACHMENTS: R2Bucket
   /**
@@ -75,14 +46,8 @@ export interface Env {
    * skipped and nothing is written.
    */
   BACKUPS?: R2Bucket
-  BC_OUTBOUND: Queue<BcOutboundMessage>
   BC_INBOUND: Queue<BcInboundQueueMessage>
-  /**
-   * Producer on `bc-outbound-dlq`: a message given up after its last attempt
-   * is sent here explicitly (and recorded in D1 `sync_dead_letters`), §9.2.8.
-   * Optional so a missing binding is reported, not assumed.
-   */
-  BC_OUTBOUND_DLQ?: Queue<BcOutboundMessage>
+  /** The removed editor's room class, kept as a stub so its storage is not deleted (src/legacy-room.ts). */
   WORKBOOK_ROOM: DurableObjectNamespace<WorkbookRoom>
   /**
    * The platform-wide Basecamp rate limit (src/basecamp-rate-gate.ts): every

@@ -38,15 +38,17 @@ import { Hono } from 'hono'
 import type { AppEnv } from '../auth'
 import type { Env } from '../env'
 import { auditStatement } from '../audit'
-import { cleanUpImages } from '../images/cleanup'
-import type { ImageCleanupOutcome } from '../images/cleanup'
 import { ApiFailure } from '../errors'
 import { callerOf } from '../request'
-import { snapshotKey } from '../snapshot'
 import { backupRetention, isValidRetention, pruneBackups, saveBackupRetention, SNAPSHOT_LIST_FILE } from './retention'
 import type { PruneOutcome } from './retention'
 
 export const BACKUP_PAGE_ROWS = 1000
+
+/** R2 key of a workbook snapshot of the old editor (kept in backups; the editor is gone). */
+function snapshotKey(workbookId: string, version: number): string {
+  return `workbooks/${workbookId}/snapshots/${version}.json`
+}
 const INVENTORY_PAGE = 1000
 
 export interface BackupDetails {
@@ -64,7 +66,6 @@ export interface BackupDetails {
   /** The retention policy applied after this run succeeded. */
   retention?: PruneOutcome
   /** The picture clean-up run after the retention policy (src/images/cleanup.ts). */
-  imageCleanup?: ImageCleanupOutcome
 }
 
 export interface BackupResult {
@@ -238,8 +239,6 @@ export async function runBackup(env: Env, at: Date = new Date()): Promise<Backup
       .run()
     // Retention (B2): only now that this run succeeded and its manifest is written.
     details.retention = await pruneBackups(env, bucket, runId, new Date().toISOString())
-    // I9: pictures nothing refers to, only after this run copied them (never throws).
-    details.imageCleanup = await cleanUpImages(env, bucket, at)
     await db.prepare(`UPDATE backup_runs SET details_json = ?2 WHERE id = ?1`).bind(runId, JSON.stringify(details)).run()
     return { runId, status: 'succeeded', details, error: null }
   } catch (error) {

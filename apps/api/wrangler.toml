@@ -110,48 +110,21 @@ bucket_name = "naf-sheets-backups"
 
 # ─────────────────────────────────────────────────────────────
 # Queues
-#   created by the first deploy: bc-outbound
-#   created by the first deploy: bc-outbound-dlq
-#   created by the first deploy: bc-inbound
-#   created by the first deploy: bc-inbound-dlq
-#
-# bc-outbound: platform → Basecamp writes (§9.2). The consumer retries with
-#              message.retry (Retry-After on 429, exponential backoff on 5xx)
-#              and gives a message up after its 5th attempt itself: it sends
-#              it to bc-outbound-dlq (BC_OUTBOUND_DLQ), records it in D1
-#              sync_dead_letters and puts the row in `error` (§9.2.8).
-#              max_retries / dead_letter_queue below are the platform's
-#              backstop for a consumer that crashes.
-# bc-inbound: raw Basecamp webhook deliveries, acknowledged with 200 at once
-#             and processed here (§9.3.3), and «مزامنة الآن» requests.
+#   bc-inbound: the station's runs (one message per link to sync: Drive
+#               notification, Basecamp webhook, minute check, «مزامنة الآن»)
+#               and raw Basecamp webhook deliveries, acknowledged with 200 at
+#               once and turned into runs here.
+#   bc-inbound-dlq: bound so the first deploy creates it (dead_letter_queue).
+# The editor's bc-outbound queues are no longer bound; Cloudflare keeps the
+# queues themselves until someone deletes them.
 # ─────────────────────────────────────────────────────────────
-[[queues.producers]]
-binding = "BC_OUTBOUND"
-queue = "bc-outbound"
-
 [[queues.producers]]
 binding = "BC_INBOUND"
 queue = "bc-inbound"
 
 [[queues.producers]]
-binding = "BC_OUTBOUND_DLQ"
-queue = "bc-outbound-dlq"
-
-# Not used by the code: bound so that the first deploy creates the queue
-# (only bound queues are provisioned), which bc-inbound's dead_letter_queue names.
-[[queues.producers]]
 binding = "BC_INBOUND_DLQ"
 queue = "bc-inbound-dlq"
-
-# 50 per batch (was 10): the consumer loads each workbook once per batch
-# (docs/load-test.md L2), so a larger batch saves loads; 50 tasks at about
-# 1.2 Basecamp requests each fit in under 15 s at 45 requests per 10 s.
-[[queues.consumers]]
-queue = "bc-outbound"
-max_batch_size = 50
-max_batch_timeout = 5
-max_retries = 5
-dead_letter_queue = "bc-outbound-dlq"
 
 [[queues.consumers]]
 queue = "bc-inbound"
@@ -160,7 +133,8 @@ max_retries = 5
 dead_letter_queue = "bc-inbound-dlq"
 
 # ─────────────────────────────────────────────────────────────
-# Durable Object — one WorkbookRoom per workbook (§11)
+# Durable Objects — WorkbookRoom is the removed editor's class, kept as a stub
+# (src/legacy-room.ts) so its stored data is not deleted by a class migration.
 # ─────────────────────────────────────────────────────────────
 [[durable_objects.bindings]]
 name = "WORKBOOK_ROOM"
@@ -182,9 +156,9 @@ tag = "v2"
 new_sqlite_classes = ["BasecampRateGate"]
 
 # ─────────────────────────────────────────────────────────────
-# Cron — reconciliation every 15 minutes (§9.4), the daily backup (§14) at
-# 00:23 UTC = 03:23 Riyadh (src/background.ts BACKUP_CRON), and the station's
-# minute check (docs/station-plan.md §4.1; src/background.ts STATION_CRON).
+# Cron — the daily backup (§14) at 00:23 UTC = 03:23 Riyadh (src/background.ts
+# BACKUP_CRON), and the station's minute check, which also runs each link's
+# full pass every 15 minutes (docs/station-plan.md §4.1; STATION_CRON).
 # ─────────────────────────────────────────────────────────────
 [triggers]
-crons = ["*/15 * * * *", "23 0 * * *", "* * * * *"]
+crons = ["23 0 * * *", "* * * * *"]
