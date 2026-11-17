@@ -74,6 +74,8 @@ export type TabIssueCode =
   | 'duplicate_identity'
   | 'parent_held'
   | 'role_empty'
+  | 'copy_of_existing'
+  | 'titles_cleared'
 
 export interface TabIssue {
   code: TabIssueCode
@@ -112,13 +114,19 @@ export interface ReadTabResult {
 
 const human = (row: number): number => row + 1
 
+/** A task as its row reads: a to-do by its title, a subtask by its to-do's title (repeated in its row) and its own. */
+function taskKey(level: TaskLevel, main: string, sub: string): string {
+  return level === 0 ? `0\u0000${main}` : `1\u0000${main}\u0000${sub}`
+}
+
 export function readTab(input: ReadTabInput): ReadTabResult {
   const { values, columns } = input
   const result: ReadTabResult = { rows: [], tasks: [], issues: [], fixes: [], newIdentities: [], autoDue: new Set() }
   /** Latest readable subtask date per to-do uid (held subtasks included: their date is still the plan). */
   const latestSubDue = new Map<TaskUid, string>()
   const usedUids = new Set<TaskUid>()
-  let currentMain: { row: TabRow; title: string; held: boolean } | null = null
+  /** `cleared`: the to-do's title cells were emptied; its subtasks keep it as their parent, unrewritten. */
+  let currentMain: { row: TabRow; title: string; held: boolean; cleared?: boolean } | null = null
   let mainPosition = 0
   let subPosition = 0
 
@@ -126,12 +134,55 @@ export function readTab(input: ReadTabInput): ReadTabResult {
     result.issues.push(subject === undefined ? { code, row, blocking, message } : { code, row, blocking, message, subject })
   }
 
+  // Titles of the tasks already in Basecamp, as their rows read now: a new row
+  // with one of them is a copy (plan §10-2; owner, 2026-11-17).
+  const syncedKeys = new Set<string>()
+  const seenUids = new Set<TaskUid>()
+  for (let r = 1; r < values.length; r++) {
+    const known = input.identities.get(r)
+    // The first row with an identity is the task; a later one is its copy (metadata copied too).
+    if (known?.bcId == null || seenUids.has(known.uid)) continue
+    seenUids.add(known.uid)
+    const cells = values[r] ?? []
+    const main = cellText(cells[columns.main])
+    const sub = cellText(cells[columns.sub])
+    if (sub !== '') syncedKeys.add(taskKey(1, main, sub))
+    else if (main !== '') syncedKeys.add(taskKey(0, main, ''))
+  }
+
   for (let r = 1; r < values.length; r++) {
     const cells = values[r] ?? []
     const mainText = cellText(cells[columns.main])
     const subText = cellText(cells[columns.sub])
     const level: TaskLevel | null = subText !== '' ? 1 : mainText !== '' ? 0 : null
-    if (level === null) continue
+    if (level === null) {
+      // Both title cells emptied on a row whose task is in Basecamp: not a
+      // deletion (owner, 2026-11-17; deleting is deleting the row). Kept and held.
+      const known = input.identities.get(r)
+      if (known !== undefined && known.bcId !== null && !usedUids.has(known.uid)) {
+        usedUids.add(known.uid)
+        const keptLevel: TaskLevel = known.level ?? 0
+        const row: TabRow = {
+          row: r,
+          uid: known.uid,
+          bcId: known.bcId,
+          level: keptLevel,
+          parentUid: keptLevel === 1 ? (currentMain?.row.uid ?? null) : null,
+          mainCell: '',
+          status: cellText(cells[columns.status]),
+        }
+        result.rows.push(row)
+        if (keptLevel === 0) {
+          mainPosition += 1
+          subPosition = 0
+          currentMain = { row, title: '', held: true, cleared: true }
+        } else {
+          subPosition += 1
+        }
+        issue('titles_cleared', r, true, `الصف ${human(r)}: مُسح عنوان المهمة فتوقفت مزامنتها، ولم تُحذف من Basecamp. أعد العنوان، أو احذف الصف نفسه إن أردت حذفها.`)
+      }
+      continue
+    }
 
     const identity = identityFor(r, level)
     if (level === 1 && currentMain === null) {
@@ -152,6 +203,12 @@ export function readTab(input: ReadTabInput): ReadTabResult {
       status: cellText(cells[columns.status]),
     }
     result.rows.push(row)
+
+    if (identity.bcId === null && syncedKeys.has(taskKey(level, mainText, subText))) {
+      blocked = true
+      const title = level === 0 ? mainText : subText
+      issue('copy_of_existing', r, true, `الصف ${human(r)}: نسخة من مهمة موجودة بالعنوان نفسه «${title}»، فلم تُنشأ مرة ثانية. إن كانت مهمة أخرى فغيّر عنوانها، وإلا فاحذف الصف.`, title)
+    }
 
     const due = readDate(cells[columns.due])
     if (!due.ok) {
@@ -186,7 +243,7 @@ export function readTab(input: ReadTabInput): ReadTabResult {
         const prev = latestSubDue.get(currentMain!.row.uid)
         if (prev === undefined || due.value > prev) latestSubDue.set(currentMain!.row.uid, due.value)
       }
-      if (mainText !== currentMain!.title) result.fixes.push({ row: r, column: columns.main, value: textCell(currentMain!.title) })
+      if (!currentMain!.cleared && mainText !== currentMain!.title) result.fixes.push({ row: r, column: columns.main, value: textCell(currentMain!.title) })
       // A subtask under a held to-do waits with it: it has no Basecamp parent to go to.
       if (currentMain!.held && currentMain!.row.bcId === null && !blocked) {
         issue('parent_held', r, true, `الصف ${human(r)}: ينتظر مهمته الرئيسية «${currentMain!.title}» المتوقفة؛ يُرسل حين تُحلّ مشكلتها.`, currentMain!.title)

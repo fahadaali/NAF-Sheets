@@ -288,6 +288,62 @@ describe('readTab', () => {
   })
 })
 
+describe('copies and cleared titles (owner, 2026-11-17)', () => {
+  const synced = () =>
+    new Map<number, RowIdentity>([
+      [1, { uid: 'todo', bcId: 10, level: 0 }],
+      [2, { uid: 'sub', bcId: 11, level: 1 }],
+    ])
+
+  it('holds a new row that copies a task already in Basecamp, instead of creating it twice', () => {
+    const values = [
+      HEADER,
+      ['التأسيس'],
+      ['التأسيس', 'اعتماد المحتوى', 'مسؤول السوشل ميديا', 'لم تبدأ'],
+      ['التأسيس', 'اعتماد المحتوى', 'مسؤول السوشل ميديا', 'لم تبدأ'], // pasted copy, no identity
+      ['التأسيس', 'مهمة جديدة فعلاً', 'مسؤول السوشل ميديا', 'لم تبدأ'],
+      ['التأسيس'], // pasted copy of the to-do
+    ]
+    const r = read(values, synced())
+    expect(r.issues.filter((i) => i.code === 'copy_of_existing').map((i) => [i.row, i.subject])).toEqual([
+      [3, 'اعتماد المحتوى'],
+      [5, 'التأسيس'],
+    ])
+    expect(r.tasks.map((t) => [t.uid, t.title])).toEqual([
+      ['todo', 'التأسيس'],
+      ['sub', 'اعتماد المحتوى'],
+      ['u2', 'مهمة جديدة فعلاً'],
+    ])
+    // Held rows are rows: nothing is taken for deleted.
+    expect(r.rows).toHaveLength(5)
+  })
+
+  it('keeps a row whose two title cells were emptied: held with an alert, never taken for deleted', () => {
+    const values = [HEADER, ['التأسيس'], ['', '', 'مسؤول السوشل ميديا', 'لم تبدأ']]
+    const r = read(values, synced())
+    expect(r.issues.map((i) => [i.code, i.row])).toEqual([['titles_cleared', 2]])
+    expect(r.tasks.map((t) => t.uid)).toEqual(['todo'])
+    const known = [
+      { uid: 'todo', level: 0 as const, parentUid: null, bcId: 10 },
+      { uid: 'sub', level: 1 as const, parentUid: 'todo', bcId: 11 },
+    ]
+    expect(deletedTasks(known, r.rows)).toEqual([])
+  })
+
+  it('a to-do row emptied keeps its subtasks under it, without rewriting their to-do title', () => {
+    const values = [HEADER, ['', ''], ['التأسيس', 'اعتماد المحتوى', 'مسؤول السوشل ميديا', 'لم تبدأ']]
+    const r = read(values, synced())
+    expect(r.tasks.map((t) => [t.uid, t.parentUid])).toEqual([['sub', 'todo']])
+    expect(r.fixes).toEqual([])
+  })
+
+  it('lets an empty row with no task in Basecamp go unnoticed', () => {
+    const r = read([HEADER, ['التأسيس'], ['', '']], new Map([[2, { uid: 'never-sent', bcId: null }]]))
+    expect(r.issues).toEqual([])
+    expect(r.rows.map((x) => x.uid)).toEqual(['u1'])
+  })
+})
+
 describe('deletedTasks (decision 9-ب: automatic)', () => {
   it('deletes rows gone from the sheet, letting subtasks go with their to-do', () => {
     const known = [

@@ -394,6 +394,37 @@ describe('held rows', () => {
   })
 })
 
+describe('copies and cleared titles (owner, 2026-11-17)', () => {
+  it('never creates a pasted copy of a task twice; it waits with an alert', async () => {
+    const w = await world(SOCIAL)
+    await w.run()
+    const before = w.subtasks().length
+    w.sheet.set(TAB, 6, COL.main, 'المناسبات')
+    w.sheet.set(TAB, 6, COL.sub, 'اعتماد قائمة نوفمبر')
+    w.sheet.set(TAB, 6, COL.role, 'المحامي الرئيسي')
+    const report = await w.run()
+    await w.run()
+    expect(w.subtasks()).toHaveLength(before)
+    expect(report.alerts).toContainEqual(expect.objectContaining({ kind: 'rows_held', code: 'copy_of_existing', rowNumbers: [7] }))
+  })
+
+  it('does not delete a subtask whose title cells were emptied; it comes back when the title does', async () => {
+    const w = await world(SOCIAL)
+    await w.run()
+    const sub = w.subtasks().find((x) => x.title === 'اعتماد قائمة نوفمبر')!
+    w.sheet.set(TAB, 5, COL.main, '')
+    w.sheet.set(TAB, 5, COL.sub, '')
+    const report = await w.run()
+    expect(w.fake.subtasks.has(sub.id)).toBe(true)
+    expect(report.deleted).toBe(0)
+    expect(report.alerts).toContainEqual(expect.objectContaining({ kind: 'rows_held', code: 'titles_cleared', rowNumbers: [6] }))
+    w.sheet.set(TAB, 5, COL.main, 'المناسبات')
+    w.sheet.set(TAB, 5, COL.sub, 'اعتماد قائمة نوفمبر المعدّلة')
+    await w.run()
+    expect(w.fake.subtasks.get(sub.id)!.title).toBe('اعتماد قائمة نوفمبر المعدّلة')
+  })
+})
+
 describe('a subtask row moved under another to-do', () => {
   it('stops that row with an alert, and leaves Basecamp as it was', async () => {
     const w = await world(SOCIAL)
