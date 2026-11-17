@@ -280,7 +280,12 @@ export async function syncLink(linkId: string, deps: RunDeps): Promise<RunReport
       const row = known.get(local.uid)
       const assignFromSheet = row?.assign_from_sheet !== 0 || local.assignees.length > 0
       let b = baseOf(row)
-      if (local.level === 1 && !assignFromSheet && b) local.assignees = b.bcAssigneeIds.map((id) => ({ kind: 'bc_person', bcPersonId: id, source: 'manual' }))
+      // A record created in Basecamp whose people match no title: Basecamp's people stay
+      // until a title is chosen in the sheet (decision 2-أ never clears people by omission).
+      if (!assignFromSheet && b) {
+        local.assignees = b.bcAssigneeIds.map((id) => ({ kind: 'bc_person', bcPersonId: id, source: 'manual' }))
+        local.assignMode = 'manual'
+      }
       let remote: RemoteState = null
       if (local.bcId !== null) {
         remote = (local.level === 0 ? todoById.get(local.bcId) : subtaskById.get(local.bcId)) ?? null
@@ -298,7 +303,7 @@ export async function syncLink(linkId: string, deps: RunDeps): Promise<RunReport
       }
       // Decision 2-أ: people changed in Basecamp only → send the sheet's people back.
       // (A to-do in automatic mode takes its subtasks' people; the engine handles it.)
-      const sheetOwnsPeople = local.level === 1 ? assignFromSheet : local.assignMode === 'manual'
+      const sheetOwnsPeople = assignFromSheet && (local.level === 1 || local.assignMode === 'manual')
       if (sheetOwnsPeople && b && remote && remote.type !== 'deleted' && !sameIds(remote.assigneeIds, b.bcAssigneeIds) && sameIds(idsOf(local), b.bcAssigneeIds)) {
         reverted.push(rowOf(local.uid))
         b = { ...b, bcAssigneeIds: [...remote.assigneeIds] }
@@ -371,8 +376,16 @@ export async function syncLink(linkId: string, deps: RunDeps): Promise<RunReport
     for (const todo of remoteTodos) {
       if (knownBc.has(todo.id) || todo.status !== 'active') continue
       const uid = newUid()
-      inserts.push({ sheetId: tab.google_sheet_id, before: lastRow, values: rowValues(columns, { main: todo.content, due: todo.dueOn, completed: todo.completed }), uid })
-      afterSheetWrite.push(saveTaskStatement(db, { uid, linkId: link.id, googleSheetId: tab.google_sheet_id, level: 0, parentUid: null, bcId: todo.id, base: baseFromRemote(uid, todo) }, at()))
+      const role = roleFor(todo.assigneeIds)
+      inserts.push({ sheetId: tab.google_sheet_id, before: lastRow, values: rowValues(columns, { main: todo.content, role, due: todo.dueOn, completed: todo.completed }), uid })
+      afterSheetWrite.push(
+        saveTaskStatement(
+          db,
+          { uid, linkId: link.id, googleSheetId: tab.google_sheet_id, level: 0, parentUid: null, bcId: todo.id, base: baseFromRemote(uid, todo), assignFromSheet: role !== '' || todo.assigneeIds.length === 0 },
+          at(),
+        ),
+      )
+      if (role === '' && todo.assigneeIds.length > 0) noRole.push(todo.content)
       const subs = todo.subtasksCount > 0 ? (subtasksByTodo.get(todo.id) ?? (await basecamp.subtasks.list(token, todo.id).all())) : []
       for (const sub of subs) insertSubtask(sub, todo.content, lastRow, uid)
       report.toSheet += 1 + subs.length
@@ -681,10 +694,10 @@ function rowValues(
   const width = Math.max(columns.main, columns.sub, columns.role, columns.status, columns.due) + 1
   const out: (string | number | null)[] = Array.from({ length: width }, () => null)
   out[columns.main] = v.main
+  if (v.role) out[columns.role] = v.role
   if (v.sub !== undefined) {
     out[columns.sub] = v.sub
     out[columns.status] = v.completed ? STATUS.done : STATUS.notStarted
-    if (v.role) out[columns.role] = v.role
   } else if (v.completed) {
     out[columns.status] = STATUS.done
   }

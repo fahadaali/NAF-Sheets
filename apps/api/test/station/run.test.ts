@@ -319,6 +319,23 @@ describe('Basecamp → sheet', () => {
     expect(writesTo(w.fake)).toBe(settled)
   })
 
+  it('keeps the people of a to-do created in Basecamp: «القسم» from them, or Basecamp’s people while none matches', async () => {
+    const w = await world(SOCIAL)
+    await w.run()
+    const listId = [...w.fake.lists.values()][0]!.id
+    const known = w.fake.addTodo(listId, { content: 'متابعة الإعلانات', assigneeIds: [w.people.omar.id] })
+    const unknown = w.fake.addTodo(listId, { content: 'مراجعة العقود', assigneeIds: [w.people.musnad.id] })
+    const report = await w.run()
+    const rows = w.sheet.tab(TAB).rows
+    expect(rows.find((r) => r[COL.main] === 'متابعة الإعلانات')![COL.role]).toBe('مسؤول السوشل ميديا')
+    expect(rows.find((r) => r[COL.main] === 'مراجعة العقود')![COL.role] ?? '').toBe('')
+    expect(report.alerts).toContainEqual(expect.objectContaining({ kind: 'rows_held', code: 'role_missing' }))
+    await w.run()
+    await w.run()
+    expect(w.fake.todos.get(known.id)!.assigneeIds).toEqual([w.people.omar.id])
+    expect(w.fake.todos.get(unknown.id)!.assigneeIds).toEqual([w.people.musnad.id])
+  })
+
   it('marks a row whose to-do was deleted in Basecamp, without deleting the row', async () => {
     const w = await world(SOCIAL)
     await w.run()
