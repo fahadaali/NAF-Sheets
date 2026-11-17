@@ -5,17 +5,6 @@
 
 import type { IsoDateTime, PlatformRole } from './domain'
 
-/**
- * The member's Basecamp identity, read from the people matching
- * (GET /api/admin/people-matches, apps/api/src/basecamp-link/people.ts):
- *
- *   auto     matched automatically by email
- *   manual   matched by an admin
- *   declined an admin recorded "no Basecamp person" (the email match never overrides it)
- *   none     not matched yet
- */
-export type BasecampMatchState = 'auto' | 'manual' | 'declined' | 'none'
-
 export interface PlatformMember {
   /** members.user_id = the `sub` from naf-id. */
   userId: string
@@ -28,12 +17,6 @@ export interface PlatformMember {
   lastSeenAt: IsoDateTime | null
   /** First sign-in, when naf-auth created the member. */
   createdAt: IsoDateTime | null
-  basecamp: {
-    state: BasecampMatchState
-    bcPersonId: number | null
-    /** The Basecamp person's name from the account cache; null when unknown. */
-    personName: string | null
-  }
 }
 
 /** GET /api/admin/members (platform admin only): every member, active first, then by name. */

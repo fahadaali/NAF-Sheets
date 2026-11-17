@@ -26,20 +26,14 @@ export type ApiErrorCode =
   | 'member_changed'
   // Appearance «المظهر» (apps/api/src/appearance/routes.ts)
   | 'invalid_palette'
-  // The Basecamp sync account (apps/api/src/basecamp-link/errors.ts)
+  // The Basecamp sync account (apps/api/src/basecamp-link/errors.ts; basecamp_project_not_found also from the station)
   | 'basecamp_not_configured'
   | 'basecamp_state_invalid'
   | 'basecamp_authorization_denied'
   | 'basecamp_unavailable'
   | 'basecamp_account_missing'
-  | 'basecamp_person_taken'
-  | 'basecamp_not_linked'
-  | 'basecamp_link_expired'
-  | 'basecamp_link_revoked'
   | 'basecamp_service_not_linked'
   | 'basecamp_project_not_found'
-  | 'basecamp_todoset_disabled'
-  | 'person_already_matched'
   // The station (apps/api/src/station/routes.ts)
   | 'admin_only'
   | 'invalid_source'

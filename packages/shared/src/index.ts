@@ -1,6 +1,5 @@
 export * from './domain'
 export * from './api'
-export * from './api-integrations'
 export * from './api-phase7'
 export * from './api-dashboard'
 export * from './api-members'

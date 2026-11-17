@@ -1,8 +1,8 @@
-// GET /auth/basecamp/start and /auth/basecamp/callback (spec §3, §14).
+// GET /auth/basecamp/start and /auth/basecamp/callback: an admin connects the
+// sync account (CLAUDE.md §2, owner decision 7; spec §14).
 
 import { env } from 'cloudflare:workers'
 import { describe, expect, it } from 'vitest'
-import type { BasecampLinkResponse } from '@naf-sheets/shared'
 import { decryptJson } from '../../src/crypto'
 import { LAUNCHPAD_AUTHORIZATION_URL, LAUNCHPAD_AUTHORIZE_URL, LAUNCHPAD_TOKEN_URL } from '../../src/basecamp-link/oauth'
 import { stateKey } from '../../src/basecamp-link/state'
@@ -19,7 +19,6 @@ import {
   linkAccount,
   linkApp,
   linkEnv,
-  linkRow,
   person,
   startLink,
 } from './fake'
@@ -35,8 +34,8 @@ function setup() {
 describe('GET /auth/basecamp/start', () => {
   it('sends the browser to Launchpad with the documented parameters and a state bound to the user', async () => {
     const { app } = setup()
-    const viewer = await seedMember('viewer')
-    const { res, location, state } = await startLink(app, ACCOUNT, viewer, '?next=%2Fworkbooks%2Fabc%3Ftab%3D2')
+    const admin = await seedMember('admin')
+    const { res, location, state } = await startLink(app, ACCOUNT, admin, '?service=1&next=%2Fsettings%3Ftab%3D2')
 
     expect(res.status).toBe(302)
     expect(res.headers.get('cache-control')).toBe('no-store')
@@ -51,7 +50,7 @@ describe('GET /auth/basecamp/start', () => {
     // Stored under its hash, never the state itself; bound to the user and to the sanitised next.
     expect(await env.SETTINGS.get(`bc-oauth-state:${state}`)).toBeNull()
     const stored = JSON.parse((await env.SETTINGS.get(await stateKey(state as string))) as string) as Record<string, unknown>
-    expect(stored).toMatchObject({ userId: viewer.id, next: '/workbooks/abc?tab=2', service: false, redirectUri: 'http://localhost/auth/basecamp/callback' })
+    expect(stored).toMatchObject({ userId: admin.id, next: '/settings?tab=2', service: true, redirectUri: 'http://localhost/auth/basecamp/callback' })
   })
 
   it('needs a signed-in user', async () => {
@@ -64,29 +63,31 @@ describe('GET /auth/basecamp/start', () => {
     'replaces the unsafe next %j with "/" (naf-auth safeNext), and the callback lands on "/"',
     async (unsafe) => {
       const { app, fake } = setup()
-      const user = await seedMember('editor')
-      const { state } = await startLink(app, ACCOUNT, user, `?next=${encodeURIComponent(unsafe)}`)
+      const user = await seedMember('admin')
+      const { state } = await startLink(app, ACCOUNT, user, `?service=1&next=${encodeURIComponent(unsafe)}`)
       const stored = JSON.parse((await env.SETTINGS.get(await stateKey(state as string))) as string) as { next: string }
       expect(stored.next).toBe('/')
 
-      const res = await callback(app, ACCOUNT, user, { code: fake.grantCode(person()), state: state as string })
+      const res = await callback(app, ACCOUNT, user, { code: fake.grantCode(person({ admin: true })), state: state as string })
       expect(res.status).toBe(302)
       expect(res.headers.get('location')).toBe('/')
     },
   )
 
-  it('refuses ?service=1 to editors and viewers, with an Arabic message', async () => {
+  it('refuses editors and viewers, with or without ?service=1, with an Arabic message (no personal links any more)', async () => {
     const { app } = setup()
     for (const role of ['editor', 'viewer'] as const) {
       const member = await seedMember(role)
-      const { res } = await startLink(app, ACCOUNT, member, '?service=1')
-      await expectLinkError(res, 403, 'forbidden', 'مسؤول المنصة')
+      for (const query of ['?service=1', '']) {
+        const { res } = await startLink(app, ACCOUNT, member, query)
+        await expectLinkError(res, 403, 'forbidden', 'مسؤول المنصة')
+      }
     }
   })
 
   it('answers 503 in Arabic when the Launchpad secrets are not configured, naming no secret', async () => {
     const { app } = setup()
-    const user = await seedMember('editor')
+    const user = await seedMember('admin')
     const res = await call(app, 'GET', '/auth/basecamp/start', { user, env: linkEnv(ACCOUNT, { BASECAMP_CLIENT_SECRET: undefined }) })
     expect(res.status).toBe(503)
     const body = await json<{ error: string; message: string }>(res)
@@ -104,14 +105,13 @@ describe('GET /auth/basecamp/start', () => {
 })
 
 describe('GET /auth/basecamp/callback', () => {
-  it('links a viewer: exchanges the code, reads the account and /my/profile.json, stores encrypted tokens, audits, redirects to next', async () => {
-    const { app, fake, clock } = setup()
-    const viewer = await seedMember('viewer')
-    const who = person({ name: 'أحمد السالم' })
-    const res = await linkAccount(app, fake, viewer, who, { next: '/workbooks/w1' })
+  it('exchanges the code, reads the account and /my/profile.json, then redirects to next', async () => {
+    const { app, fake } = setup()
+    const admin = await seedMember('admin')
+    const res = await linkAccount(app, fake, admin, person({ admin: true }), { service: true, next: '/settings' })
 
     expect(res.status).toBe(302)
-    expect(res.headers.get('location')).toBe('/workbooks/w1')
+    expect(res.headers.get('location')).toBe('/settings')
 
     // Code exchange: documented `type=web_server`, form body, secret never in the URL.
     const [exchange] = fake.tokenCalls('web_server')
@@ -128,128 +128,86 @@ describe('GET /auth/basecamp/callback', () => {
     // Then the account list and the person inside NAF's account.
     expect(fake.callsTo(LAUNCHPAD_AUTHORIZATION_URL)).toHaveLength(1)
     expect(fake.apiCalls().map((c) => c.url)).toEqual([`${fake.apiBase}/my/profile.json`])
-
-    const row = await linkRow(viewer.id)
-    expect(row).toMatchObject({ bc_person_id: who.id, bc_account_id: ACCOUNT, status: 'active', bc_person_name: 'أحمد السالم' })
-    expect(row?.expires_at).toBe(new Date(clock.now + fake.expiresIn * 1000).toISOString())
-    expect(row?.encrypted_tokens.startsWith('v1:')).toBe(true)
-    const tokens = await decryptJson<{ access_token: string; refresh_token: string }>(ENCRYPTION_KEY, row?.encrypted_tokens as string, `user_basecamp_links:${viewer.id}`)
-    expect(fake.issued).toContain(tokens.access_token)
-    expect(fake.issued).toContain(tokens.refresh_token)
-
-    const audit = await auditFor(viewer.id, 'basecamp.link.create')
-    expect(audit).toHaveLength(1)
-    expect(audit[0]).toMatchObject({ actor_id: viewer.id, entity_type: 'basecamp_link' })
-    expect(JSON.parse(audit[0]?.details_json as string)).toMatchObject({ bcAccountId: ACCOUNT, bcPersonId: who.id, previous: null })
-
-    const link = await call(app, 'GET', '/api/basecamp/link', { user: viewer, env: linkEnv(ACCOUNT) })
-    expect(link.status).toBe(200)
-    expect(await json<BasecampLinkResponse>(link)).toEqual({ state: 'active', bcPersonId: who.id, bcAccountId: ACCOUNT, name: 'أحمد السالم' })
-  })
-
-  it('reports `unlinked` before any link', async () => {
-    const { app } = setup()
-    const user = await seedMember('editor')
-    const res = await call(app, 'GET', '/api/basecamp/link', { user, env: linkEnv(ACCOUNT) })
-    expect(await json(res)).toEqual({ state: 'unlinked', bcPersonId: null, bcAccountId: null, name: null })
   })
 
   it('refuses a state started by another user, links nothing, and the state cannot be used again', async () => {
     const { app, fake } = setup()
-    const owner = await seedMember('editor')
-    const intruder = await seedMember('editor')
-    const { state } = await startLink(app, ACCOUNT, owner)
-    const code = fake.grantCode(person())
+    const owner = await seedMember('admin')
+    const intruder = await seedMember('admin')
+    const { state } = await startLink(app, ACCOUNT, owner, '?service=1')
+    const code = fake.grantCode(person({ admin: true }))
 
     await expectLinkError(await callback(app, ACCOUNT, intruder, { code, state: state as string }), 403, 'basecamp_state_invalid', 'ابدأ')
     expect(fake.tokenCalls()).toHaveLength(0)
-    expect(await linkRow(intruder.id)).toBeNull()
 
     // Single use: consumed by the failed attempt, so the owner cannot finish with it either.
     await expectLinkError(await callback(app, ACCOUNT, owner, { code, state: state as string }), 403, 'basecamp_state_invalid')
-    expect(await linkRow(owner.id)).toBeNull()
+    expect(fake.tokenCalls()).toHaveLength(0)
   })
 
   it('refuses an unknown, malformed or reused state', async () => {
     const { app, fake } = setup()
-    const user = await seedMember('editor')
+    const user = await seedMember('admin')
     await expectLinkError(await callback(app, ACCOUNT, user, { code: 'c', state: 'a'.repeat(64) }), 403, 'basecamp_state_invalid')
     await expectLinkError(await callback(app, ACCOUNT, user, { code: 'c', state: 'not-a-state' }), 403, 'basecamp_state_invalid')
     await expectLinkError(await callback(app, ACCOUNT, user, { code: 'c' }), 403, 'basecamp_state_invalid')
 
-    const { state } = await startLink(app, ACCOUNT, user)
-    expect((await callback(app, ACCOUNT, user, { code: fake.grantCode(person()), state: state as string })).status).toBe(302)
-    await expectLinkError(await callback(app, ACCOUNT, user, { code: fake.grantCode(person()), state: state as string }), 403, 'basecamp_state_invalid')
+    const { state } = await startLink(app, ACCOUNT, user, '?service=1')
+    expect((await callback(app, ACCOUNT, user, { code: fake.grantCode(person({ admin: true })), state: state as string })).status).toBe(302)
+    await expectLinkError(await callback(app, ACCOUNT, user, { code: fake.grantCode(person({ admin: true })), state: state as string }), 403, 'basecamp_state_invalid')
+  })
+
+  it('refuses a state left from a personal link (removed), without calling Launchpad', async () => {
+    const { app, fake } = setup()
+    const user = await seedMember('admin')
+    const state = 'b'.repeat(64)
+    await env.SETTINGS.put(await stateKey(state), JSON.stringify({ userId: user.id, next: '/', service: false, redirectUri: 'http://localhost/auth/basecamp/callback', createdAt: new Date().toISOString() }))
+    await expectLinkError(await callback(app, ACCOUNT, user, { code: fake.grantCode(person({ admin: true })), state }), 403, 'basecamp_state_invalid')
+    expect(fake.tokenCalls()).toHaveLength(0)
   })
 
   it('stops when the user declines at Launchpad, without calling the token endpoint', async () => {
     const { app, fake } = setup()
-    const user = await seedMember('editor')
-    const { state } = await startLink(app, ACCOUNT, user)
+    const user = await seedMember('admin')
+    const { state } = await startLink(app, ACCOUNT, user, '?service=1')
     await expectLinkError(await callback(app, ACCOUNT, user, { error: 'user_denied', state: state as string }), 403, 'basecamp_authorization_denied', 'الإذن')
     expect(fake.tokenCalls()).toHaveLength(0)
-    expect(await linkRow(user.id)).toBeNull()
   })
 
   it("refuses a Basecamp identity that cannot reach NAF's account", async () => {
     const { app, fake } = setup()
-    const user = await seedMember('editor')
-    const { state } = await startLink(app, ACCOUNT, user)
-    const code = fake.grantCode(person(), [
+    const user = await seedMember('admin')
+    const { state } = await startLink(app, ACCOUNT, user, '?service=1')
+    const code = fake.grantCode(person({ admin: true }), [
       { product: 'bc3', id: ACCOUNT + 1 },
       { product: 'bcx', id: ACCOUNT },
     ])
     await expectLinkError(await callback(app, ACCOUNT, user, { code, state: state as string }), 403, 'basecamp_account_missing', 'حساب ناف')
-    expect(await linkRow(user.id)).toBeNull()
     expect(fake.apiCalls()).toHaveLength(0)
   })
 
   it('refuses a Basecamp person that is not a human account', async () => {
     const { app, fake } = setup()
-    const user = await seedMember('editor')
-    const res = await linkAccount(app, fake, user, person({ personable_type: 'Agent' }))
+    const user = await seedMember('admin')
+    const res = await linkAccount(app, fake, user, person({ personable_type: 'Agent', admin: true }), { service: true })
     await expectLinkError(res, 403, 'forbidden')
-    expect(await linkRow(user.id)).toBeNull()
-  })
-
-  it('refuses to link a Basecamp person already actively linked to another member', async () => {
-    const { app, fake } = setup()
-    const first = await seedMember('editor')
-    const second = await seedMember('viewer')
-    const who = person()
-    expect((await linkAccount(app, fake, first, who)).status).toBe(302)
-    await expectLinkError(await linkAccount(app, fake, second, who), 409, 'basecamp_person_taken', 'عضو آخر')
-    expect(await linkRow(second.id)).toBeNull()
-    expect((await linkRow(first.id))?.status).toBe('active')
-    expect(await auditFor(second.id)).toHaveLength(0)
   })
 
   it('maps a refused code exchange to 403 and a Launchpad outage to 503, storing nothing', async () => {
     const { app, fake } = setup()
-    const user = await seedMember('editor')
+    const user = await seedMember('admin')
+    const connect = () => linkAccount(app, fake, user, person({ admin: true }), { service: true })
+    const before = await env.DB.prepare(`SELECT COUNT(*) AS n FROM integrations WHERE account_id = ?1`).bind(String(ACCOUNT)).first<{ n: number }>()
 
     fake.exchangeAnswer = { status: 400, body: { error: 'invalid_grant' } }
-    await expectLinkError(await linkAccount(app, fake, user, person()), 403, 'forbidden')
+    await expectLinkError(await connect(), 403, 'forbidden')
     fake.exchangeAnswer = { status: 502, body: { error: 'bad_gateway' } }
-    await expectLinkError(await linkAccount(app, fake, user, person()), 503, 'basecamp_unavailable', 'أعد المحاولة')
+    await expectLinkError(await connect(), 503, 'basecamp_unavailable', 'أعد المحاولة')
     // Wrong client credentials are the platform's configuration, not the user's fault.
     fake.exchangeAnswer = { status: 401, body: { error: 'invalid_client' } }
-    await expectLinkError(await linkAccount(app, fake, user, person()), 503, 'basecamp_not_configured', 'مسؤول المنصة')
-    expect(await linkRow(user.id)).toBeNull()
-  })
-
-  it('relinks after a revocation: active again, audited as a relink', async () => {
-    const { app, fake } = setup()
-    const user = await seedMember('viewer')
-    const who = person()
-    expect((await linkAccount(app, fake, user, who)).status).toBe(302)
-    expect((await call(app, 'POST', '/api/basecamp/link/revoke', { user, env: linkEnv(ACCOUNT) })).status).toBe(200)
-    expect((await linkAccount(app, fake, user, who)).status).toBe(302)
-
-    expect((await linkRow(user.id))?.status).toBe('active')
-    const relink = await auditFor(user.id, 'basecamp.link.relink')
-    expect(relink).toHaveLength(1)
-    expect(JSON.parse(relink[0]?.details_json as string)).toMatchObject({ previous: { status: 'revoked', bcPersonId: who.id } })
+    await expectLinkError(await connect(), 503, 'basecamp_not_configured', 'مسؤول المنصة')
+    const after = await env.DB.prepare(`SELECT COUNT(*) AS n FROM integrations WHERE account_id = ?1`).bind(String(ACCOUNT)).first<{ n: number }>()
+    expect(after).toEqual(before)
   })
 })
 
@@ -269,21 +227,25 @@ describe('service token (?service=1, admins only)', () => {
     return env.DB.prepare(`SELECT * FROM integrations WHERE provider = 'basecamp' AND account_id = ?1`).bind(String(ACCOUNT)).first<IntegrationRow>()
   }
 
-  it('lets an admin connect the service token; stored encrypted in `integrations`, audited; not a personal link', async () => {
+  it('lets an admin connect the sync account; stored encrypted in `integrations` with its name, audited', async () => {
     const { app, fake } = setup()
+    // Other tests of this file connected one already: start from none.
+    await env.DB.prepare(`DELETE FROM integrations WHERE provider = 'basecamp' AND account_id = ?1`).bind(String(ACCOUNT)).run()
     const admin = await seedMember('admin')
-    const bcAdmin = person({ admin: true })
-    const res = await linkAccount(app, fake, admin, bcAdmin, { service: true, next: '/admin/basecamp' })
+    const bcAdmin = person({ admin: true, name: 'فهد العتيبي' })
+    const res = await linkAccount(app, fake, admin, bcAdmin, { service: true, next: '/settings' })
     expect(res.status).toBe(302)
-    expect(res.headers.get('location')).toBe('/admin/basecamp')
+    expect(res.headers.get('location')).toBe('/settings')
 
     const row = await integration()
     expect(row).toMatchObject({ provider: 'basecamp', status: 'active', bc_person_id: bcAdmin.id, created_by: admin.id })
     const tokens = await decryptJson<{ access_token: string }>(ENCRYPTION_KEY, row?.encrypted_tokens as string, `integrations:${row?.id}`)
     expect(fake.issued).toContain(tokens.access_token)
     // Copied to another row's identity, it does not decrypt.
-    await expect(decryptJson(ENCRYPTION_KEY, row?.encrypted_tokens as string, `user_basecamp_links:${admin.id}`)).rejects.toThrow()
-    expect(await linkRow(admin.id)).toBeNull()
+    await expect(decryptJson(ENCRYPTION_KEY, row?.encrypted_tokens as string, `integrations:other`)).rejects.toThrow()
+    // Its name, for Settings («مربوط: …»).
+    const cached = await env.DB.prepare(`SELECT name FROM bc_account_people_cache WHERE bc_person_id = ?1`).bind(bcAdmin.id).first<{ name: string }>()
+    expect(cached?.name).toBe('فهد العتيبي')
 
     const audit = await auditFor(row?.id as string, 'basecamp.service.connect')
     expect(audit.length).toBeGreaterThanOrEqual(1)
