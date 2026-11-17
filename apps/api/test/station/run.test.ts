@@ -110,6 +110,21 @@ describe('first sync', () => {
     expect(w.sheet.tab(TAB).ids.slice(1).every((id) => id !== null)).toBe(true)
   })
 
+  it('never creates a row twice when a run fails half-way', async () => {
+    const w = await world(SOCIAL)
+    // The third create fails for good (a 400 is not retried): the first two are in Basecamp.
+    let creates = 0
+    w.fake.fail((c) => c.method === 'POST' && /\/(todos|subtasks)\.json$/.test(c.path) && ++creates === 3, 400, { times: 1 })
+    await expect(w.run()).rejects.toThrow()
+    const before = w.todos().length + w.subtasks().length
+    expect(before).toBeGreaterThan(0)
+    await w.run()
+    // Every row exactly once, nothing trashed.
+    expect(w.todos().map((t) => t.content).sort()).toEqual(['المناسبات', 'فيديو الموشن'])
+    expect(w.subtasks().map((t) => t.title).sort()).toEqual(['اعتماد بنك الأفكار', 'اعتماد قائمة نوفمبر', 'بناء بنك أفكار للموشن'])
+    expect([...w.fake.todos.values()].filter((t) => t.status !== 'active')).toEqual([])
+  })
+
   it('does nothing on a second run with nothing changed', async () => {
     const w = await world(SOCIAL)
     await w.run()
@@ -279,6 +294,20 @@ describe('Basecamp → sheet', () => {
     await w.run()
     await w.run()
     expect(w.sheet.version).toBe(version)
+  })
+
+  it('puts the note on the right row when rows are inserted above it in the same run', async () => {
+    const w = await world(SOCIAL)
+    await w.run()
+    const motion = w.todos().find((t) => t.content === 'فيديو الموشن')!
+    w.fake.addSubtask(motion.id, { title: 'مهمة من Basecamp' })
+    motion.updatedAt = w.fake.tick()
+    w.fake.todos.delete(w.todos().find((t) => t.content === 'المناسبات')!.id)
+    await w.run()
+    const tab = w.sheet.tab(TAB)
+    const noted = [...w.sheet.notes.keys()].map((k) => Number(k.split(':')[1]))
+    expect(noted.map((row) => tab.rows[row]![COL.main])).toEqual(['المناسبات'])
+    expect(noted.map((row) => tab.rows[row]![COL.sub] ?? null)).toEqual([null])
   })
 })
 

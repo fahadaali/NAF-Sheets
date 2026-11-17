@@ -149,7 +149,6 @@ export async function syncLink(linkId: string, deps: RunDeps): Promise<RunReport
   // --- Each tab -----------------------------------------------------------------
   const known = new Map((await getTasks(db, link.id)).map((t) => [t.uid, t]))
   const cellWrites: { tabTitle: string; row: number; column: number; value: string | number | null }[] = []
-  const newIdentities: { sheetId: number; row: number; uid: string }[] = []
   const inserts: Parameters<SheetPort['insertRows']>[1] = []
   const notes: Parameters<SheetPort['setNotes']>[1] = []
   const afterSheetWrite: D1PreparedStatement[] = []
@@ -197,7 +196,13 @@ export async function syncLink(linkId: string, deps: RunDeps): Promise<RunReport
     const reverted: number[] = []
     const noRole: string[] = []
     const rowOf = (uid: string): number => (read.rows.find((r) => r.uid === uid)?.row ?? -1) + 1
-    for (const n of read.newIdentities) newIdentities.push({ sheetId: tab.google_sheet_id, row: n.row, uid: n.uid })
+    // New rows get their identity in the sheet before anything is created in
+    // Basecamp: a run that fails half-way must find the same uid next time,
+    // whose Basecamp id `execute` saved at once, or the row would be created twice.
+    if (read.newIdentities.length > 0) {
+      const identities = read.newIdentities.map((n) => ({ sheetId: tab.google_sheet_id, row: n.row, uid: n.uid }))
+      if (!(await writeOrStop(() => google.write(link.spreadsheet_id, { identities })))) return { ...report, status: 'stopped' }
+    }
     for (const f of read.fixes) cellWrites.push({ tabTitle: tab.title, ...f })
     heldAlerts(read.issues, tab.title)
 
@@ -275,7 +280,7 @@ export async function syncLink(linkId: string, deps: RunDeps): Promise<RunReport
       // Engine contract item 2: the fetched record becomes the base, then outbound writes move it on.
       let next: SyncedBase | null = remote && remote.type !== 'deleted' ? baseFromRemote(local.uid, remote as RemoteTask, b?.position ?? local.position) : b
       for (const action of result.outbound) {
-        next = await execute(action, next, local)
+        next = await execute(action, next, local, assignFromSheet)
         report.toBasecamp += 1
         if (action.type === 'create_todo' || action.type === 'create_subtask') bcIdOf.set(local.uid, next!.bcId)
       }
@@ -413,16 +418,13 @@ export async function syncLink(linkId: string, deps: RunDeps): Promise<RunReport
   }
 
   // --- Write the sheet once, then the bases ----------------------------------------
-  try {
-    await google.write(link.spreadsheet_id, { identities: newIdentities, cells: cellWrites })
-    await google.insertRows(link.spreadsheet_id, inserts)
+  // Cells and notes use the row numbers as read, so both go before the inserts move rows.
+  const written = await writeOrStop(async () => {
+    await google.write(link.spreadsheet_id, { cells: cellWrites })
     await google.setNotes(link.spreadsheet_id, notes)
-  } catch (error) {
-    if (!(error instanceof GoogleError)) throw error
-    alert({ kind: 'link_stopped', ...base, reason: googleErrorMessage(error.code, google.serviceAccountEmail) })
-    await finish('stopped', googleErrorMessage(error.code, google.serviceAccountEmail))
-    return { ...report, status: 'stopped' }
-  }
+    await google.insertRows(link.spreadsheet_id, inserts)
+  })
+  if (!written) return { ...report, status: 'stopped' }
   if (cellWrites.length + inserts.length > 0) {
     afterSheetWrite.push(logStatement(db, { linkId: link.id, direction: 'to_sheet', action: 'write', detail: { cells: cellWrites.length, rows: inserts.length } }, at()))
   }
@@ -431,6 +433,19 @@ export async function syncLink(linkId: string, deps: RunDeps): Promise<RunReport
   return report
 
   // --- helpers ------------------------------------------------------------------------
+
+  /** Runs a sheet write; a Google failure stops the link with its reason (false). */
+  async function writeOrStop(fn: () => Promise<void>): Promise<boolean> {
+    try {
+      await fn()
+      return true
+    } catch (error) {
+      if (!(error instanceof GoogleError)) throw error
+      alert({ kind: 'link_stopped', ...base, reason: googleErrorMessage(error.code, google.serviceAccountEmail) })
+      await finish('stopped', googleErrorMessage(error.code, google.serviceAccountEmail))
+      return false
+    }
+  }
 
   function heldAlerts(issues: ReturnType<typeof readTab>['issues'], tab: string): void {
     const groups = new Map<string, { code: string; subject: string; message: string; rows: number[] }>()
@@ -476,7 +491,7 @@ export async function syncLink(linkId: string, deps: RunDeps): Promise<RunReport
     }
   }
 
-  async function execute(action: OutboundAction, current: SyncedBase | null, local: LocalTask): Promise<SyncedBase> {
+  async function execute(action: OutboundAction, current: SyncedBase | null, local: LocalTask, assignFromSheet: boolean): Promise<SyncedBase> {
     const need = (): SyncedBase => {
       if (current === null) throw new Error(`station: ${action.type} without a base`)
       return current
@@ -529,7 +544,7 @@ export async function syncLink(linkId: string, deps: RunDeps): Promise<RunReport
     }
     // Saved at once: a create must never be repeated (engine contract, §9.1).
     await db.batch([
-      saveTaskStatement(db, { uid: local.uid, linkId: link!.id, googleSheetId: Number(local.sheetId), level: local.level, parentUid: local.parentUid, bcId: next.bcId, base: next }, at()),
+      saveTaskStatement(db, { uid: local.uid, linkId: link!.id, googleSheetId: Number(local.sheetId), level: local.level, parentUid: local.parentUid, bcId: next.bcId, base: next, assignFromSheet }, at()),
       logStatement(db, { linkId: link!.id, direction: 'to_basecamp', action: action.type, taskUid: local.uid }, at()),
     ])
     return next

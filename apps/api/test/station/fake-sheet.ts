@@ -118,6 +118,13 @@ export class FakeSheet implements SheetPort {
       const t = this.tabs.find((x) => x.sheetId === ins.sheetId)!
       t.rows.splice(ins.before, 0, [...ins.values])
       t.ids.splice(ins.before, 0, ins.uid)
+      // Notes move with their cells.
+      const moved = [...this.notes].map(([key, note]) => {
+        const [sheet, row, column] = key.split(':').map(Number) as [number, number, number]
+        return [sheet === t.sheetId && row >= ins.before ? `${sheet}:${row + 1}:${column}` : key, note] as const
+      })
+      this.notes.clear()
+      for (const [key, note] of moved) this.notes.set(key, note)
     }
     if (inserts.length > 0) this.version += 1
   }
