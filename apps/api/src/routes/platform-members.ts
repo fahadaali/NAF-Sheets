@@ -22,8 +22,6 @@ import { reportAccessChange } from 'naf-auth'
 import type { PlatformMember, PlatformMembersResponse, PlatformRole, UpdatePlatformMemberResponse, NafIdReport } from '@naf-sheets/shared'
 import type { AppEnv } from '../auth'
 import { authConfig } from '../auth'
-import { storedMatches } from '../basecamp-link/people'
-import type { StoredMatch } from '../basecamp-link/people'
 import { auditIf } from '../basecamp-link/store'
 import type { Env } from '../env'
 import { ApiFailure } from '../errors'
@@ -56,7 +54,6 @@ interface MemberRow {
 
 const MEMBER_COLUMNS = 'user_id, display_name, email, role, is_active, last_seen_at, created_at'
 const ROLES: ReadonlySet<string> = new Set(['admin', 'editor', 'viewer'])
-const NO_MATCH: StoredMatch = { state: 'none', bcPersonId: null, personName: null }
 
 /** naf-auth writes epoch seconds (MEMBERS_TIME_FORMAT `epoch`, migrations/0001). */
 function isoFromEpoch(seconds: number | null): string | null {
@@ -68,7 +65,7 @@ function roleOf(role: string): PlatformRole {
   return role === 'admin' || role === 'editor' ? role : 'viewer'
 }
 
-function toMember(row: MemberRow, match: StoredMatch | undefined): PlatformMember {
+function toMember(row: MemberRow): PlatformMember {
   return {
     userId: row.user_id,
     name: row.display_name,
@@ -77,7 +74,6 @@ function toMember(row: MemberRow, match: StoredMatch | undefined): PlatformMembe
     active: Number(row.is_active) === 1,
     lastSeenAt: isoFromEpoch(row.last_seen_at),
     createdAt: isoFromEpoch(row.created_at),
-    basecamp: { ...(match ?? NO_MATCH) },
   }
 }
 
@@ -115,11 +111,8 @@ export function platformMemberRoutes(options: PlatformMemberRouteOptions = {}): 
   routes.get('/', async (c) => {
     requireAdmin(c)
     const db = c.env.DB
-    const [{ results }, matches] = await Promise.all([
-      db.prepare(`SELECT ${MEMBER_COLUMNS} FROM members ORDER BY is_active DESC, display_name, user_id`).all<MemberRow>(),
-      storedMatches(db),
-    ])
-    return c.json<PlatformMembersResponse>({ members: results.map((row) => toMember(row, matches.get(row.user_id))) })
+    const { results } = await db.prepare(`SELECT ${MEMBER_COLUMNS} FROM members ORDER BY is_active DESC, display_name, user_id`).all<MemberRow>()
+    return c.json<PlatformMembersResponse>({ members: results.map(toMember) })
   })
 
   routes.put('/:userId', async (c) => {
@@ -140,8 +133,7 @@ export function platformMemberRoutes(options: PlatformMemberRouteOptions = {}): 
     const activeChanged = toActive !== fromActive
 
     if (!roleChanged && !activeChanged) {
-      const matches = await storedMatches(db)
-      return c.json<UpdatePlatformMemberResponse>({ member: toMember(current, matches.get(userId)), changed: false, nafIdReport: 'not_needed' })
+      return c.json<UpdatePlatformMemberResponse>({ member: toMember(current), changed: false, nafIdReport: 'not_needed' })
     }
 
     // An admin cannot demote or suspend themselves (the only changes left to
@@ -220,8 +212,7 @@ export function platformMemberRoutes(options: PlatformMemberRouteOptions = {}): 
       }
     }
 
-    const matches = await storedMatches(db)
-    return c.json<UpdatePlatformMemberResponse>({ member: toMember(after, matches.get(userId)), changed: true, nafIdReport })
+    return c.json<UpdatePlatformMemberResponse>({ member: toMember(after), changed: true, nafIdReport })
   })
 
   return routes

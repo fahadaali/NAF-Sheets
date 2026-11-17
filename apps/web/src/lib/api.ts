@@ -34,12 +34,6 @@ export class ApiRequestError extends Error {
 export const isAbortError = (error: unknown): boolean =>
   typeof error === 'object' && error !== null && (error as { name?: unknown }).name === 'AbortError'
 
-export const isConflictError = (error: unknown): boolean => error instanceof ApiRequestError && error.status === 409
-
-/** Worth retrying without user action: no response, rate limited, or a server failure. */
-export const isRetryableError = (error: unknown): boolean =>
-  error instanceof ApiRequestError && (error.status === 0 || error.status === 429 || error.status >= 500)
-
 /** The Arabic message to show for any error, API or not. */
 export function errorMessage(error: unknown): string {
   if (error instanceof ApiRequestError) return error.message
@@ -199,18 +193,9 @@ export function loginRedirectUrl(login: string, current: { origin: string; pathn
   return url.toString()
 }
 
-/** The page the browser shows now, as a `next` value. */
-export function currentPath(): string {
-  return typeof window === 'undefined' ? '/' : window.location.pathname + window.location.search
-}
-
 let redirecting = false
 
-/**
- * Send the browser to sign in; several parallel 401s navigate once.
- * OPEN: unsaved editor changes are guarded only by the browser's leave-page
- * prompt (OPEN_QUESTIONS.md #9).
- */
+/** Send the browser to sign in; several parallel 401s navigate once. */
 export function redirectToLogin(login: string | undefined): void {
   if (redirecting || typeof window === 'undefined' || !login) return
   const target = loginRedirectUrl(login, window.location)

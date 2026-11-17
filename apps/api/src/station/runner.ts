@@ -8,7 +8,7 @@ import type { Env } from '../env'
 import { defaultSyncDeps, readClient, syncContext, type SyncDeps } from './deps'
 import { ensureProjectWebhook, publicOrigin } from './basecamp-webhook'
 import { GoogleClient, GoogleError, googleErrorMessage, parseServiceAccountKey, type FetchLike } from './google'
-import { syncLink, type RunReport, type SheetPort } from './run'
+import { FULL_PASS_MS, syncLink, type RunReport, type SheetPort } from './run'
 import { recordAlerts } from './store'
 
 /** A run holds its link this long at most; a crashed run frees it after that. */
@@ -16,8 +16,6 @@ export const LEASE_MS = 5 * 60_000
 /** Drive caps a file channel at one day; renew when less than this is left. */
 const CHANNEL_RENEW_BEFORE_MS = 3 * 3600_000
 const CHANNEL_TTL_MS = 24 * 3600_000
-/** Full pass of every link (catches Basecamp changes no webhook announces). */
-export const FULL_PASS_MS = 15 * 60_000
 
 export interface StationDeps extends SyncDeps {
   /** Tests inject a fake sheet; production builds a GoogleClient from the secret. */
@@ -68,12 +66,12 @@ async function runOnce(env: Env, linkId: string, deps: StationDeps): Promise<Run
     if (!(error instanceof GoogleError)) throw error
     const link = await env.DB.prepare(`SELECT title FROM station_links WHERE id = ?1`).bind(linkId).first<{ title: string }>()
     const alert: StationAlert = { kind: 'link_stopped', linkId, linkTitle: link?.title ?? '', reason: googleErrorMessage(error.code) }
-    await recordAlerts(env.DB, linkId, [alert], new Set(), new Date(deps.now()).toISOString())
+    await recordAlerts(env.DB, linkId, [alert], new Set(), new Date(deps.now()).toISOString(), { complete: false })
     return { status: 'stopped', toBasecamp: 0, toSheet: 0, deleted: 0, alerts: [alert] }
   }
   const ctx = syncContext(env, deps)
   try {
-    return await withServiceToken(ctx, (token) => syncLink(linkId, { db: env.DB, google, basecamp: readClient(ctx), token, now: deps.now }))
+    return await withServiceToken(ctx, (token) => syncLink(linkId, { db: env.DB, google, basecamp: readClient(ctx), token, now: deps.now, keepLease: leaseKeeper(env.DB, linkId, deps.now) }))
   } catch (error) {
     // A run that stops half-way must not leave the admin with stale problems
     // and no word: say so on the link (the queue retries the run).
@@ -81,24 +79,31 @@ async function runOnce(env: Env, linkId: string, deps: StationDeps): Promise<Run
     const name = error instanceof Error ? error.name : 'Error'
     const reason = basecampReason(error) ?? `توقفت المزامنة قبل أن تكتمل (${name}). ستُعاد المحاولة تلقائياً؛ وإن تكرر ذلك فأبلغ مسؤول المنصة.`
     const at = new Date(deps.now()).toISOString()
-    await env.DB.batch([
-      env.DB.prepare(`INSERT INTO station_alerts (key, link_id, alert_json, first_seen, last_seen) VALUES (?1, ?2, ?3, ?4, ?4)
-        ON CONFLICT (key) DO UPDATE SET alert_json = excluded.alert_json, last_seen = excluded.last_seen, resolved_at = NULL`).bind(
-        `link_stopped:${linkId}`,
-        linkId,
-        JSON.stringify({ kind: 'link_stopped', linkId, linkTitle: link?.title ?? '', reason } satisfies StationAlert),
-        at,
-      ),
-      env.DB.prepare(`UPDATE station_links SET last_error = ?2, updated_at = ?3 WHERE id = ?1`).bind(linkId, reason, at),
-    ])
+    // Like any problem: a crash that comes back after a good run is emailed again.
+    await recordAlerts(env.DB, linkId, [{ kind: 'link_stopped', linkId, linkTitle: link?.title ?? '', reason }], new Set(), at, { complete: false })
+    await env.DB.prepare(`UPDATE station_links SET last_error = ?2, updated_at = ?3 WHERE id = ?1`).bind(linkId, reason, at).run()
     throw error
+  }
+}
+
+/**
+ * Pushes the lease forward while a long run works (a first sync of hundreds of
+ * rows under Basecamp's rate limit can pass LEASE_MS): without it a second run
+ * could take the link alongside. At most one write a minute.
+ */
+function leaseKeeper(db: D1Database, linkId: string, now: () => number): () => Promise<void> {
+  let renewed = now()
+  return async () => {
+    if (now() - renewed < 60_000) return
+    renewed = now()
+    await db.prepare(`UPDATE station_links SET lock_until = ?2 WHERE id = ?1 AND lock_until IS NOT NULL`).bind(linkId, new Date(renewed + LEASE_MS).toISOString()).run()
   }
 }
 
 /** Arabic reason for the Basecamp failures an admin can act on. */
 function basecampReason(error: unknown): string | null {
-  if (error instanceof LinkFailure && error.key === 'service_not_linked') return 'حساب المزامنة في Basecamp غير مربوط. اضغط «اربط حساب المزامنة» في صفحة الروابط.'
-  if (error instanceof LinkFailure) return 'تعذّر استخدام حساب المزامنة في Basecamp. أعد ربطه من صفحة الروابط.'
+  if (error instanceof LinkFailure && error.key === 'service_not_linked') return 'حساب المزامنة في Basecamp غير مربوط. اضغط «اربط حساب المزامنة» في صفحة الإعدادات.'
+  if (error instanceof LinkFailure) return 'تعذّر استخدام حساب المزامنة في Basecamp. أعد ربطه من صفحة الإعدادات.'
   return null
 }
 
@@ -114,12 +119,12 @@ export async function requestRun(env: Env, linkId: string, reason: 'drive' | 'ba
  */
 export async function stationMinute(env: Env, deps: StationDeps = defaultSyncDeps()): Promise<void> {
   const now = deps.now()
-  const links = await env.DB.prepare(`SELECT id, spreadsheet_id, bc_project_id, last_modified, last_sync_at FROM station_links WHERE state = 'active'`).all<{
+  const links = await env.DB.prepare(`SELECT id, spreadsheet_id, bc_project_id, last_modified, last_full_at FROM station_links WHERE state = 'active'`).all<{
     id: string
     spreadsheet_id: string
     bc_project_id: number
     last_modified: string | null
-    last_sync_at: string | null
+    last_full_at: string | null
   }>()
   let google: (SheetPort & Partial<Pick<GoogleClient, 'watch' | 'stopChannel'>>) | null = null
   try {
@@ -129,12 +134,18 @@ export async function stationMinute(env: Env, deps: StationDeps = defaultSyncDep
   }
   for (const link of links.results) {
     try {
-      const full = link.last_sync_at === null || now - Date.parse(link.last_sync_at) >= FULL_PASS_MS
+      const full = link.last_full_at === null || now - Date.parse(link.last_full_at) >= FULL_PASS_MS
       let changed = false
       if (!full && google) changed = (await google.modifiedTime(link.spreadsheet_id)) !== link.last_modified
       if (full || changed || google === null) await requestRun(env, link.id, 'schedule')
-      if (full) {
-        await ensureChannel(env, link.id, link.spreadsheet_id, google, now)
+      // Upkeep on its own clock, not the full pass's: a link that syncs often
+      // never reaches a full pass. The channel check is one D1 read until a
+      // renewal is due; the webhook is checked in Basecamp every FULL_PASS_MS.
+      await ensureChannel(env, link.id, link.spreadsheet_id, google, now)
+      const hook = await env.DB.prepare(`SELECT MAX(checked_at) AS checked FROM bc_webhooks WHERE bc_project_id = ?1 AND replaced_at IS NULL`)
+        .bind(link.bc_project_id)
+        .first<{ checked: string | null }>()
+      if (!hook?.checked || now - Date.parse(hook.checked) >= FULL_PASS_MS) {
         await ensureProjectWebhook(env, { workbookId: `station:${link.id}`, bcProjectId: link.bc_project_id }, deps)
       }
     } catch (error) {
@@ -212,7 +223,10 @@ export async function sendDueAlerts(env: Env, deps: { fetch: FetchLike; now: () 
     { origin },
   )
   const keys = due.map((r) => r.key).sort()
-  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(keys.join('\n'))))
+  // The same problems opened at the same time are one email, whatever retries;
+  // a problem that came back (a new first_seen) is a new email.
+  const occurrences = due.map((r) => `${r.key}@${r.firstSeen}`).sort()
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(occurrences.join('\n'))))
   const idempotencyKey = [...digest.slice(0, 16)].map((b) => b.toString(16).padStart(2, '0')).join('')
   const request = resendRequest(email, { apiKey: env.RESEND_API_KEY, to, idempotencyKey, from: env.ALERT_EMAIL_FROM?.trim() || ALERT_SENDER })
   const res = await deps.fetch(request.url, { method: 'POST', headers: request.headers, body: await request.text() })
@@ -225,4 +239,4 @@ export async function sendDueAlerts(env: Env, deps: { fetch: FetchLike; now: () 
   return due.length
 }
 
-export { BATCH_WINDOW_MS }
+export { BATCH_WINDOW_MS, FULL_PASS_MS }

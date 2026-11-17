@@ -2,7 +2,7 @@
 // name matching. The platform shows no sheet of its own: it only links.
 
 import { useEffect, useState, type ReactNode } from 'react'
-import { ArrowLeftRight, ChevronLeft, CircleCheck, ExternalLink, FileSpreadsheet, LoaderCircle, Pause, Play, Plus, RefreshCw, Trash2, TriangleAlert, Unlink } from 'lucide-react'
+import { ArrowLeftRight, ChevronLeft, CircleCheck, ExternalLink, FileSpreadsheet, LoaderCircle, Pause, Play, Plus, RefreshCw, RotateCcw, Trash2, TriangleAlert, Unlink } from 'lucide-react'
 import type { CurrentUser } from '@naf-sheets/shared'
 import { AppBar } from '../components/AppBar'
 import { PageHeader } from '../components/PageHeader'
@@ -11,7 +11,7 @@ import { errorMessage } from '../lib/api'
 import { Link, navigate } from '../lib/router'
 import { useDocumentTitle } from '../lib/use-document-title'
 import { t } from '../strings'
-import { stationApi, type Inspection, type LinkDetail, type LinkSummary, type NamesResponse, type StationAlert } from './api'
+import { stationApi, type FirstSyncReference, type Inspection, type LinkDetail, type LinkRequest, type LinkSummary, type NamesResponse, type Preview, type StationAlert } from './api'
 import { s } from './strings'
 
 type Load<T> = { kind: 'loading' } | { kind: 'error'; message: string } | { kind: 'ready'; data: T }
@@ -110,22 +110,41 @@ export function LinksScreen({ user }: { user: CurrentUser | null }) {
         ) : null
       }
     >
-      {load.kind === 'loading' ? <Loading text={s.links.loading} /> : null}
-      {load.kind === 'error' ? <Failed message={load.message} retry={retry} /> : null}
-      {load.kind === 'ready' && links.length === 0 ? (
-        <section className="panel">
-          <ArrowLeftRight className="panel__icon" aria-hidden="true" />
-          <p>{s.links.empty}</p>
-        </section>
-      ) : null}
-      {load.kind === 'ready' ? (
-        <div className="station-cards">
-          {links.map((l) => (
-            <LinkCard key={l.id} link={l} />
-          ))}
-        </div>
-      ) : null}
+      <div className="stack">
+        <SetupWarning />
+        {load.kind === 'loading' ? <Loading text={s.links.loading} /> : null}
+        {load.kind === 'error' ? <Failed message={load.message} retry={retry} /> : null}
+        {load.kind === 'ready' && links.length === 0 ? (
+          <section className="panel">
+            <ArrowLeftRight className="panel__icon" aria-hidden="true" />
+            <p>{s.links.empty}</p>
+          </section>
+        ) : null}
+        {load.kind === 'ready' ? (
+          <div className="station-cards">
+            {links.map((l) => (
+              <LinkCard key={l.id} link={l} />
+            ))}
+          </div>
+        ) : null}
+      </div>
     </Page>
+  )
+}
+
+/** On the links page: a link cannot sync without the sync account and the Google key; says where to fix it. */
+function SetupWarning() {
+  const [load] = useLoad((signal) => stationApi.status(signal), [])
+  if (load.kind !== 'ready') return null
+  const { basecamp, google } = load.data
+  if (basecamp?.status === 'active' && google !== null) return null
+  return (
+    <Notice tone="warning">
+      <p>
+        <strong>{s.setup.incomplete}</strong>{' '}
+        <Link href="/settings">{s.setup.open}</Link>
+      </p>
+    </Notice>
   )
 }
 
@@ -197,14 +216,6 @@ function LinkCard({ link }: { link: LinkSummary }) {
 // --- ربط جديد -----------------------------------------------------------------------
 
 export function NewLinkScreen({ user }: { user: CurrentUser | null }) {
-  const [source, setSource] = useState('')
-  const [rolesTab, setRolesTab] = useState('المسميات')
-  const [inspection, setInspection] = useState<Load<Inspection> | null>(null)
-  const [tabs, setTabs] = useState<number[]>([])
-  const [projectId, setProjectId] = useState('')
-  const [projects] = useLoad((signal) => stationApi.projects(signal), [])
-  const [submit, setSubmit] = useState<{ kind: 'idle' } | { kind: 'saving' } | { kind: 'error'; message: string }>({ kind: 'idle' })
-
   if (user && user.role !== 'admin') {
     return (
       <Page user={user} title={s.wizard.title} screen="station-new" back={{ href: '/', label: s.links.title }} subtitle={s.wizard.lead}>
@@ -213,6 +224,68 @@ export function NewLinkScreen({ user }: { user: CurrentUser | null }) {
         </Notice>
       </Page>
     )
+  }
+  return <NewLinkWizard user={user} />
+}
+
+function NewLinkWizard({ user }: { user: CurrentUser | null }) {
+  const [source, setSource] = useState('')
+  const [rolesTab, setRolesTab] = useState('المسميات')
+  const [inspection, setInspection] = useState<Load<Inspection> | null>(null)
+  const [tabs, setTabs] = useState<number[]>([])
+  const [projectId, setProjectId] = useState('')
+  const [projects] = useLoad((signal) => stationApi.projects(signal), [])
+  /** Tab → existing list id ('' = a new list). */
+  const [listOf, setListOf] = useState<Record<number, string>>({})
+  const [reference, setReference] = useState<FirstSyncReference>('merge')
+  const [lists, setLists] = useState<Load<{ id: number; name: string; linked: boolean }[]> | null>(null)
+  const [preview, setPreview] = useState<{ kind: 'loading' } | { kind: 'ready'; data: Preview; for: string } | { kind: 'error'; message: string } | null>(null)
+  const [submit, setSubmit] = useState<{ kind: 'idle' } | { kind: 'saving' } | { kind: 'error'; message: string }>({ kind: 'idle' })
+
+  useEffect(() => {
+    setListOf({})
+    if (!projectId) return setLists(null)
+    const controller = new AbortController()
+    setLists({ kind: 'loading' })
+    stationApi.lists(Number(projectId), controller.signal).then(
+      (data) => setLists({ kind: 'ready', data: data.lists }),
+      (error: unknown) => {
+        if (!controller.signal.aborted) setLists({ kind: 'error', message: errorMessage(error) })
+      },
+    )
+    return () => controller.abort()
+  }, [projectId])
+
+  const request = (): LinkRequest => ({
+    source,
+    bcProjectId: Number(projectId),
+    tabs: tabs.map((sheetId) => ({ sheetId, listId: listOf[sheetId] ? Number(listOf[sheetId]) : null })),
+    rolesTab,
+    reference,
+  })
+  // The preview stands for exactly these choices; any change asks for a new one.
+  const requestKey = JSON.stringify(request())
+  const previewed = preview?.kind === 'ready' && preview.for === requestKey
+  const usesExisting = tabs.some((t) => Boolean(listOf[t]))
+
+  const showPreview = async () => {
+    if (tabs.length === 0) return setSubmit({ kind: 'error', message: s.wizard.needTabs })
+    if (!projectId) return setSubmit({ kind: 'error', message: s.wizard.needProject })
+    setSubmit({ kind: 'idle' })
+    setPreview({ kind: 'loading' })
+    try {
+      setPreview({ kind: 'ready', data: await stationApi.preview(request()), for: requestKey })
+    } catch (error) {
+      setPreview({ kind: 'error', message: errorMessage(error) })
+    }
+  }
+
+  // A changed file or roles tab makes the inspection stale: inspect again before linking.
+  const changeInput = (set: (value: string) => void, value: string) => {
+    set(value)
+    setInspection(null)
+    setTabs([])
+    setSubmit({ kind: 'idle' })
   }
 
   const inspect = async () => {
@@ -230,9 +303,10 @@ export function NewLinkScreen({ user }: { user: CurrentUser | null }) {
   const create = async () => {
     if (tabs.length === 0) return setSubmit({ kind: 'error', message: s.wizard.needTabs })
     if (!projectId) return setSubmit({ kind: 'error', message: s.wizard.needProject })
+    if (!previewed) return setSubmit({ kind: 'error', message: s.wizard.previewFirst })
     setSubmit({ kind: 'saving' })
     try {
-      const { id } = await stationApi.createLink({ source, bcProjectId: Number(projectId), tabs, rolesTab })
+      const { id } = await stationApi.createLink(request())
       navigate(`/links/${encodeURIComponent(id)}`)
     } catch (error) {
       setSubmit({ kind: 'error', message: errorMessage(error) })
@@ -247,12 +321,12 @@ export function NewLinkScreen({ user }: { user: CurrentUser | null }) {
         <h2>1. {s.wizard.step1}</h2>
         <div className="field">
           <label htmlFor="source">{s.wizard.step1}</label>
-          <input id="source" dir="ltr" value={source} onChange={(e) => setSource(e.target.value)} placeholder="https://docs.google.com/spreadsheets/d/…" />
+          <input id="source" dir="ltr" value={source} onChange={(e) => changeInput(setSource, e.target.value)} placeholder="https://docs.google.com/spreadsheets/d/…" />
           <p className="field-hint">{s.wizard.sourceHint}</p>
         </div>
         <div className="field">
           <label htmlFor="roles-tab">{s.wizard.rolesTab}</label>
-          <input id="roles-tab" value={rolesTab} onChange={(e) => setRolesTab(e.target.value)} />
+          <input id="roles-tab" value={rolesTab} onChange={(e) => changeInput(setRolesTab, e.target.value)} />
           <p className="field-hint">{s.wizard.rolesTabHint}</p>
         </div>
         <div className="card__actions">
@@ -337,16 +411,123 @@ export function NewLinkScreen({ user }: { user: CurrentUser | null }) {
                 </select>
               </div>
             ) : null}
+          </section>
+
+          <section className="card stack">
+            <h2>4. {s.wizard.step4}</h2>
+            {lists?.kind === 'loading' ? <Loading text={s.wizard.loadingLists} /> : null}
+            {lists?.kind === 'error' ? (
+              <Notice tone="danger">
+                <p>{lists.message}</p>
+              </Notice>
+            ) : null}
+            {lists?.kind === 'ready'
+              ? ready.tabs
+                  .filter((tab) => tabs.includes(tab.sheetId))
+                  .map((tab) => (
+                    <div className="field" key={tab.sheetId}>
+                      <label htmlFor={`list-${tab.sheetId}`}>{s.wizard.listFor(tab.title)}</label>
+                      <select
+                        id={`list-${tab.sheetId}`}
+                        className="select"
+                        value={listOf[tab.sheetId] ?? ''}
+                        onChange={(e) => setListOf((cur) => ({ ...cur, [tab.sheetId]: e.target.value }))}
+                      >
+                        <option value="">{s.wizard.newList}</option>
+                        {lists.data.map((l) => (
+                          <option key={l.id} value={String(l.id)} disabled={l.linked}>
+                            {l.name} {l.linked ? s.wizard.listLinked : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  ))
+              : null}
+            {usesExisting ? (
+              <fieldset className="stack-tight station-reference">
+                <legend>
+                  <strong>{s.wizard.referenceTitle}</strong>
+                </legend>
+                <p className="muted small">{s.wizard.referenceHint}</p>
+                {(['merge', 'file', 'basecamp'] as const).map((r) => (
+                  <label key={r} className="station-tab">
+                    <input type="radio" name="reference" value={r} checked={reference === r} onChange={() => setReference(r)} />
+                    <span>
+                      <strong>{s.wizard.references[r].label}</strong> <span className="muted small">{s.wizard.references[r].hint}</span>
+                    </span>
+                  </label>
+                ))}
+              </fieldset>
+            ) : null}
             <Notice tone="info">
               <p>{s.wizard.firstSync}</p>
             </Notice>
+            <div className="card__actions">
+              <button type="button" className="button" onClick={() => void showPreview()} disabled={preview?.kind === 'loading' || !projectId || tabs.length === 0}>
+                {preview?.kind === 'loading' ? <LoaderCircle className="icon spin" aria-hidden="true" /> : <RefreshCw className="icon" aria-hidden="true" />}
+                {preview?.kind === 'loading' ? s.wizard.previewing : s.wizard.preview}
+              </button>
+            </div>
+            {preview?.kind === 'error' ? (
+              <Notice tone="danger">
+                <p>{preview.message}</p>
+              </Notice>
+            ) : null}
+            {preview?.kind === 'ready' ? (
+              <>
+                {!previewed ? (
+                  <Notice tone="warning">
+                    <p>{s.wizard.previewStale}</p>
+                  </Notice>
+                ) : null}
+                <div className="table-wrap">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        {(['tab', 'matched', 'changed', 'toBasecamp', 'toSheet', 'ignored', 'held'] as const).map((k) => (
+                          <th key={k} scope="col">
+                            {s.wizard.previewColumns[k]}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {preview.data.tabs.map((t) =>
+                        t.ok ? (
+                          <tr key={t.sheetId}>
+                            <td>
+                              <bdi>{t.title}</bdi>
+                            </td>
+                            <td>{t.matched}</td>
+                            <td>{t.changed}</td>
+                            <td>{t.toBasecamp}</td>
+                            <td>{t.toSheet}</td>
+                            <td>{t.ignored}</td>
+                            <td>{t.held}</td>
+                          </tr>
+                        ) : (
+                          <tr key={t.sheetId}>
+                            <td>
+                              <bdi>{t.title}</bdi>
+                            </td>
+                            <td colSpan={6} className="muted">
+                              {t.reason}
+                            </td>
+                          </tr>
+                        ),
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            ) : null}
             {submit.kind === 'error' ? (
               <p className="field-error" role="alert">
                 {submit.message}
               </p>
             ) : null}
             <div className="card__actions">
-              <button type="button" className="button button--primary" onClick={() => void create()} disabled={submit.kind === 'saving'}>
+              <button type="button" className="button button--primary" onClick={() => void create()} disabled={submit.kind === 'saving' || !previewed}>
                 {submit.kind === 'saving' ? <LoaderCircle className="icon spin" aria-hidden="true" /> : <ArrowLeftRight className="icon" aria-hidden="true" />}
                 {submit.kind === 'saving' ? s.wizard.creating : s.wizard.create}
               </button>
@@ -360,21 +541,6 @@ export function NewLinkScreen({ user }: { user: CurrentUser | null }) {
 }
 
 // --- ربط واحد -------------------------------------------------------------------------
-
-export function alertText(a: StationAlert): string {
-  switch (a.kind) {
-    case 'name_unmapped':
-      return s.alert.name_unmapped(a)
-    case 'not_project_member':
-      return s.alert.not_project_member(a)
-    case 'rows_held':
-      return `«${a.tab}»: ${a.reason}${a.rows > 1 ? ` (${s.rows(a.rows)})` : ''}`
-    case 'tab_stopped':
-      return `«${a.tab}»: ${a.reason}`
-    case 'link_stopped':
-      return a.reason
-  }
-}
 
 export function LinkScreen({ user, id }: { user: CurrentUser | null; id: string }) {
   const [load, reload] = useLoad((signal) => stationApi.link(id, signal), [id])
@@ -412,7 +578,7 @@ export function LinkScreen({ user, id }: { user: CurrentUser | null; id: string 
           </>
         ) : undefined
       }
-      actions={detail ? <LinkActions link={detail.link} isAdmin={isAdmin} busy={busy} act={act} /> : undefined}
+      actions={detail ? <LinkActions link={detail.link} projectUrl={detail.projectUrl} isAdmin={isAdmin} busy={busy} act={act} /> : undefined}
     >
       {load.kind === 'loading' ? <Loading text={s.link.loading} /> : null}
       {load.kind === 'error' ? <Failed message={load.message} retry={reload} /> : null}
@@ -426,13 +592,31 @@ export function LinkScreen({ user, id }: { user: CurrentUser | null; id: string 
   )
 }
 
-function LinkActions({ link, isAdmin, busy, act }: { link: LinkDetail['link']; isAdmin: boolean; busy: boolean; act: (fn: () => Promise<unknown>, done?: string) => Promise<void> }) {
+function LinkActions({
+  link,
+  projectUrl,
+  isAdmin,
+  busy,
+  act,
+}: {
+  link: LinkDetail['link']
+  projectUrl: string | null
+  isAdmin: boolean
+  busy: boolean
+  act: (fn: () => Promise<unknown>, done?: string) => Promise<void>
+}) {
   return (
     <>
       <a className="button button--ghost" href={`https://docs.google.com/spreadsheets/d/${encodeURIComponent(link.spreadsheet_id)}/edit`} target="_blank" rel="noreferrer">
         <ExternalLink className="icon" aria-hidden="true" />
         {s.link.file}
       </a>
+      {projectUrl ? (
+        <a className="button button--ghost" href={projectUrl} target="_blank" rel="noreferrer">
+          <ExternalLink className="icon" aria-hidden="true" />
+          {s.link.project}
+        </a>
+      ) : null}
       {isAdmin ? (
         <>
           <button type="button" className="button button--primary" disabled={busy} onClick={() => void act(() => stationApi.syncNow(link.id), s.link.syncQueued)}>
@@ -460,15 +644,40 @@ function LinkActions({ link, isAdmin, busy, act }: { link: LinkDetail['link']; i
   )
 }
 
-type LinkTab = 'problems' | 'tabs' | 'history'
+type LinkTab = 'problems' | 'tabs' | 'history' | 'deleted'
+
+interface ConflictDetail {
+  field: string
+  localValue: unknown
+  remoteValue: unknown
+  winner: 'local' | 'remote'
+  restoredAt?: string
+}
+
+/** A conflict's losing value, as the sheet would show it. */
+function lostValue(c: ConflictDetail): string {
+  const v = c.winner === 'local' ? c.remoteValue : c.localValue
+  if (c.field === 'completed') return s.link.doneValue(v === true)
+  return typeof v === 'string' && v !== '' ? v : s.link.emptyValue
+}
+
+function conflictOf(detailJson: string | null): ConflictDetail | null {
+  if (!detailJson) return null
+  try {
+    return JSON.parse(detailJson) as ConflictDetail
+  } catch {
+    return null
+  }
+}
 
 function LinkBody({ detail, isAdmin, busy, act }: { detail: LinkDetail; isAdmin: boolean; busy: boolean; act: (fn: () => Promise<unknown>, done?: string) => Promise<void> }) {
-  const { link, tabs, problems, log } = detail
+  const { link, tabs, problems, log, deleted } = detail
   const [view, setView] = useState<LinkTab>(problems.length > 0 ? 'problems' : 'tabs')
   const views: { id: LinkTab; label: string }[] = [
     { id: 'problems', label: s.link.problemsTab(problems.length) },
     { id: 'tabs', label: s.link.tabs },
     { id: 'history', label: s.link.history },
+    { id: 'deleted', label: s.link.deletedTab(deleted.filter((d) => !d.restoredAt).length) },
   ]
   return (
     <div className="stack">
@@ -532,13 +741,16 @@ function LinkBody({ detail, isAdmin, busy, act }: { detail: LinkDetail; isAdmin:
           <div className="table-wrap">
             <table className="data-table">
               <tbody>
-                {log.map((l, i) => (
-                  <tr key={i}>
+                {log.map((l) => (
+                  <tr key={l.id}>
                     <td>
                       <bdi dir="ltr">{s.date(l.at)}</bdi>
                     </td>
                     <td>{l.direction === 'to_sheet' ? s.link.toSheet : s.link.toBasecamp}</td>
-                    <td>{s.link.actions[l.action] ?? l.action}</td>
+                    <td>
+                      {s.link.actions[l.action] ?? l.action}
+                      {l.action === 'conflict' ? <ConflictLine linkId={link.id} logId={l.id} conflict={conflictOf(l.detail_json)} isAdmin={isAdmin} busy={busy} act={act} /> : null}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -546,7 +758,91 @@ function LinkBody({ detail, isAdmin, busy, act }: { detail: LinkDetail; isAdmin:
           </div>
         </section>
       ) : null}
+      {view === 'deleted' ? <DeletedPanel linkId={link.id} deleted={deleted} isAdmin={isAdmin} busy={busy} act={act} /> : null}
     </div>
+  )
+}
+
+function ConflictLine({
+  linkId,
+  logId,
+  conflict,
+  isAdmin,
+  busy,
+  act,
+}: {
+  linkId: string
+  logId: number
+  conflict: ConflictDetail | null
+  isAdmin: boolean
+  busy: boolean
+  act: (fn: () => Promise<unknown>, done?: string) => Promise<void>
+}) {
+  if (!conflict) return null
+  const field = s.link.conflictField[conflict.field]
+  return (
+    <div className="row-actions small">
+      <span className="muted">{field ? s.link.conflictLost(field, lostValue(conflict)) : null}</span>
+      {conflict.restoredAt ? (
+        <span className="badge badge--neutral">{s.link.valueRestored}</span>
+      ) : isAdmin && field ? (
+        <button type="button" className="button button--small button--ghost" disabled={busy} onClick={() => void act(() => stationApi.restoreConflict(linkId, logId), s.link.restoreValueDone)}>
+          <RotateCcw className="icon" aria-hidden="true" />
+          {s.link.restoreValue}
+        </button>
+      ) : null}
+    </div>
+  )
+}
+
+function DeletedPanel({
+  linkId,
+  deleted,
+  isAdmin,
+  busy,
+  act,
+}: {
+  linkId: string
+  deleted: LinkDetail['deleted']
+  isAdmin: boolean
+  busy: boolean
+  act: (fn: () => Promise<unknown>, done?: string) => Promise<void>
+}) {
+  return (
+    <section className="card stack" role="tabpanel" id="panel-deleted" aria-labelledby="view-deleted">
+      <p className="muted small">{s.link.deletedLead}</p>
+      {deleted.length === 0 ? <p className="muted">{s.link.noDeleted}</p> : null}
+      {deleted.length > 0 ? (
+        <div className="table-wrap">
+          <table className="data-table">
+            <tbody>
+              {deleted.map((d) => (
+                <tr key={d.id}>
+                  <td>
+                    <strong>
+                      <bdi>{d.title}</bdi>
+                    </strong>
+                  </td>
+                  <td className="muted small">
+                    {s.link.deletedAt} <bdi dir="ltr">{s.date(d.deletedAt)}</bdi>
+                  </td>
+                  <td>
+                    {d.restoredAt ? (
+                      <span className="badge badge--neutral">{s.link.restored}</span>
+                    ) : isAdmin ? (
+                      <button type="button" className="button button--small" disabled={busy} onClick={() => void act(() => stationApi.restoreDeleted(linkId, d.id), s.link.restoreDone)}>
+                        <RotateCcw className="icon" aria-hidden="true" />
+                        {s.link.restore}
+                      </button>
+                    ) : null}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
+    </section>
   )
 }
 
@@ -554,7 +850,7 @@ type Problem = LinkDetail['problems'][number]
 
 /** Problems by sheet tab (the file-wide ones first), in a stable order. */
 export function problemGroups(problems: readonly Problem[]): { tab: string; items: Problem[] }[] {
-  const order: Record<StationAlert['kind'], number> = { link_stopped: 0, tab_stopped: 1, name_unmapped: 2, not_project_member: 3, rows_held: 4 }
+  const order: Record<StationAlert['kind'], number> = { link_stopped: 0, tab_stopped: 1, name_unmapped: 2, not_project_member: 3, roles_conflict: 4, rows_held: 5 }
   const tabOf = (a: StationAlert): string => ('tab' in a ? a.tab : s.link.wholeFile)
   const groups = new Map<string, Problem[]>()
   for (const p of [...problems].sort((x, y) => order[x.alert.kind] - order[y.alert.kind] || x.firstSeen.localeCompare(y.firstSeen))) {
@@ -600,6 +896,8 @@ function problemTitle(a: StationAlert): string {
       return s.problem.nameUnmapped(a.name)
     case 'not_project_member':
       return s.problem.notMember(a.personName)
+    case 'roles_conflict':
+      return s.problem.rolesConflict(a.role)
     case 'rows_held':
       return s.problem.held[a.code] ?? s.problem.heldDefault
     case 'tab_stopped':
@@ -615,6 +913,8 @@ function problemDetail(a: StationAlert): string {
       return s.problem.nameUnmappedDetail(a.role, a.rows)
     case 'not_project_member':
       return s.problem.notMemberDetail(a.projectName, a.rows)
+    case 'roles_conflict':
+      return s.problem.rolesConflictDetail(a.names)
     default:
       return a.reason
   }
@@ -705,7 +1005,7 @@ function NamesBody({ data, isAdmin, reload, focusName, suggest }: { data: NamesR
                   </td>
                   {isAdmin ? (
                     <td>
-                      <NameRow name={n.name} initial={String(n.bc_person_id)} people={people} isAdmin={isAdmin} focus={n.name === focusName} onSaved={reload} compact />
+                      <UnmapButton name={n.name} onDone={reload} />
                     </td>
                   ) : null}
                 </tr>
@@ -714,6 +1014,33 @@ function NamesBody({ data, isAdmin, reload, focusName, suggest }: { data: NamesR
           </table>
         </div>
       </section>
+    </div>
+  )
+}
+
+function UnmapButton({ name, onDone }: { name: string; onDone: () => void }) {
+  const [status, setStatus] = useState<{ kind: 'idle' | 'removing' } | { kind: 'error'; message: string }>({ kind: 'idle' })
+  const remove = async () => {
+    if (!window.confirm(s.names.removeConfirm(name))) return
+    setStatus({ kind: 'removing' })
+    try {
+      await stationApi.deleteName(name)
+      onDone()
+    } catch (error) {
+      setStatus({ kind: 'error', message: errorMessage(error) })
+    }
+  }
+  return (
+    <div className="row-actions">
+      <button type="button" className="button button--small button--ghost" data-name={name} disabled={status.kind === 'removing'} onClick={() => void remove()}>
+        <Trash2 className="icon" aria-hidden="true" />
+        {status.kind === 'removing' ? s.names.removing : s.names.remove}
+      </button>
+      {status.kind === 'error' ? (
+        <span className="field-error" role="alert">
+          {status.message}
+        </span>
+      ) : null}
     </div>
   )
 }
@@ -727,7 +1054,6 @@ function NameRow({
   isAdmin,
   focus,
   onSaved,
-  compact,
 }: {
   name: string
   hint?: string
@@ -737,7 +1063,6 @@ function NameRow({
   isAdmin: boolean
   focus?: boolean
   onSaved: () => void
-  compact?: boolean
 }) {
   const [value, setValue] = useState(initial)
   const [status, setStatus] = useState<{ kind: 'idle' | 'saving' | 'saved' } | { kind: 'error'; message: string }>({ kind: 'idle' })
@@ -755,19 +1080,6 @@ function NameRow({
       setStatus({ kind: 'error', message: errorMessage(error) })
     }
   }
-  if (compact) {
-    return isAdmin ? (
-      <button
-        type="button"
-        className="button button--small button--ghost"
-        data-name={name}
-        onClick={() => void stationApi.deleteName(name).then(onSaved, (e: unknown) => setStatus({ kind: 'error', message: errorMessage(e) }))}
-      >
-        <Trash2 className="icon" aria-hidden="true" />
-        {status.kind === 'error' ? status.message : s.names.remove}
-      </button>
-    ) : null
-  }
   return (
     <div className={focus ? 'station-name station-name--focus' : 'station-name'} data-name={name}>
       <div className="stack-tight">
@@ -777,7 +1089,7 @@ function NameRow({
         {hint ? <span className="muted small">{hint}</span> : null}
         {suggestion ? <span className="small">{suggestion}</span> : null}
       </div>
-      {isAdmin && !compact ? (
+      {isAdmin ? (
         <div className="row-actions">
           <label htmlFor={id} className="sr-only">
             {s.names.choose}
@@ -804,16 +1116,6 @@ function NameRow({
             </span>
           ) : null}
         </div>
-      ) : null}
-      {isAdmin && compact ? (
-        <button
-          type="button"
-          className="button button--small button--ghost"
-          onClick={() => void stationApi.deleteName(name).then(onSaved, (e: unknown) => setStatus({ kind: 'error', message: errorMessage(e) }))}
-        >
-          <Trash2 className="icon" aria-hidden="true" />
-          {s.names.remove}
-        </button>
       ) : null}
     </div>
   )

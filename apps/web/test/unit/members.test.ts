@@ -23,7 +23,6 @@ function member(userId: string, role: PlatformMember['role'], active = true): Pl
     active,
     lastSeenAt: null,
     createdAt: null,
-    basecamp: { state: 'none', bcPersonId: null, personName: null },
   }
 }
 

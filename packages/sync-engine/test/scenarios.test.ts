@@ -18,7 +18,6 @@ import {
   MANAGED_BLOCK_TITLE,
   planDeletion,
   recreateSubtaskFromSnapshot,
-  sortRows,
   splitDescription,
   undoDeletion,
   type DeletionAction,
@@ -73,6 +72,17 @@ describe('§16 scenario 2 — sorting the sheet by date never changes identity',
       ? remoteTodo({ id: bcIdOf[row.uid], position: row.position, content: row.title, dueOn: row.dueOn })
       : remoteSubtask({ id: bcIdOf[row.uid], position: row.position, title: row.title, dueOn: row.dueOn, todoId: bcIdOf[row.parentUid ?? ''] })
   const byDate = (x: LocalTask, y: LocalTask): number => (x.dueOn ?? '9999').localeCompare(y.dueOn ?? '9999')
+
+  /** What a sort of the sheet does: to-dos by `compare` with their subtasks under them, positions renumbered. */
+  function sortRows(input: readonly LocalTask[], compare: (a: LocalTask, b: LocalTask) => number): LocalTask[] {
+    const families: { parent: LocalTask; children: LocalTask[] }[] = []
+    for (const row of input) {
+      if (row.level === 0) families.push({ parent: row, children: [] })
+      else families[families.length - 1]!.children.push(row)
+    }
+    families.sort((a, b) => compare(a.parent, b.parent))
+    return families.flatMap((f, i) => [{ ...f.parent, position: i + 1 }, ...[...f.children].sort(compare).map((c, j) => ({ ...c, position: j + 1 }))])
+  }
 
   it('scenario 2: rows keep their uid, data and parent; families stay together', () => {
     const sorted = sortRows(rows, byDate)

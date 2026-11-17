@@ -14,6 +14,12 @@ export interface LinkRow {
   notify_secret: string
   last_modified: string | null
   last_sync_at: string | null
+  /** When the last full pass (every to-do's subtasks read) finished; migrations/0012. */
+  last_full_at: string | null
+  /** Set when an admin unlinked it (the record is kept, migrations/0013); null while linked. */
+  unlinked_at: string | null
+  /** Per title of the roles tab, the last names all mapped to Basecamp people (JSON; migrations/0015). */
+  roles_json: string | null
   last_error: string | null
   created_by: string
   created_at: string
@@ -25,6 +31,8 @@ export interface TabRow {
   google_sheet_id: number
   title: string
   bc_todolist_id: number | null
+  /** The reference of this tab's first sync while its rows are not matched yet (migrations/0017). */
+  first_sync: 'file' | 'basecamp' | 'merge' | null
 }
 
 export interface TaskRow {
@@ -38,7 +46,11 @@ export interface TaskRow {
   subtasks_count: number | null
   subtasks_done: number | null
   deleted_remotely: 0 | 1
+  /** «الحالة» before the record was deleted in Basecamp (migrations/0014). */
+  status_before_delete: string | null
   assign_from_sheet: 0 | 1
+  /** A record only in Basecamp when the file was the first sync's reference: left alone (migrations/0017). */
+  ignored: 0 | 1
   /** Project members last put on the to-do's completion list and subscribers (sorted ids). */
   notify_key: string | null
 }
@@ -48,7 +60,7 @@ export async function getLink(db: D1Database, id: string): Promise<LinkRow | nul
 }
 
 export async function getTabs(db: D1Database, linkId: string): Promise<TabRow[]> {
-  const r = await db.prepare(`SELECT * FROM station_tabs WHERE link_id = ?1 ORDER BY rowid`).bind(linkId).all<TabRow>()
+  const r = await db.prepare(`SELECT * FROM station_tabs WHERE link_id = ?1 AND unlinked_at IS NULL ORDER BY rowid`).bind(linkId).all<TabRow>()
   return r.results
 }
 
@@ -85,7 +97,7 @@ export function saveTaskStatement(
     .prepare(
       `INSERT INTO station_tasks (uid, link_id, google_sheet_id, level, parent_uid, bc_id, base_json, assign_from_sheet, updated_at)
        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
-       ON CONFLICT (uid) DO UPDATE SET google_sheet_id = excluded.google_sheet_id, parent_uid = excluded.parent_uid,
+       ON CONFLICT (uid) DO UPDATE SET link_id = excluded.link_id, google_sheet_id = excluded.google_sheet_id, parent_uid = excluded.parent_uid,
          bc_id = COALESCE(excluded.bc_id, station_tasks.bc_id), base_json = COALESCE(excluded.base_json, station_tasks.base_json),
          assign_from_sheet = excluded.assign_from_sheet, updated_at = excluded.updated_at`,
     )
@@ -94,7 +106,7 @@ export function saveTaskStatement(
 
 export function logStatement(
   db: D1Database,
-  e: { linkId: string; direction: 'to_basecamp' | 'to_sheet' | 'none'; action: string; taskUid?: string | null; detail?: unknown },
+  e: { linkId: string; direction: 'to_basecamp' | 'to_sheet'; action: string; taskUid?: string | null; detail?: unknown },
   at: string,
 ): D1PreparedStatement {
   return db
@@ -102,13 +114,34 @@ export function logStatement(
     .bind(e.linkId, at, e.direction, e.action, e.taskUid ?? null, e.detail === undefined ? null : JSON.stringify(e.detail))
 }
 
+/** What a run saw, for `recordAlerts`. */
+export interface AlertScope {
+  /** The run read every tab it could; false when it stopped early (nothing it did not see is resolved). */
+  complete: boolean
+  /** Tabs the run skipped (missing header, read empty, deleted): their problems stay as they were. */
+  skippedTabs?: ReadonlySet<string>
+}
+
+/** Problems raised once, by the run where they happened: kept open until emailed. */
+function isEvent(alert: StationAlert): boolean {
+  return alert.kind === 'rows_held' && (alert.code === 'people_reverted' || alert.code === 'role_missing')
+}
+
 /**
- * Records the problems seen in this run for a link: new ones open, known ones
- * stay open (not emailed again), and the link's problems not seen now are
- * resolved. Name alerts are global (one name, every link): resolved when the
- * name is mapped, whatever link reported it.
+ * Records the problems seen in this run for a link: new ones open (a problem
+ * that comes back after it was resolved is new: emailed again), known ones
+ * stay open (not emailed again), and the link's problems the run looked for
+ * and did not see are resolved. Name alerts are global (one name, every link):
+ * resolved when the name is mapped, whatever link reported it.
  */
-export async function recordAlerts(db: D1Database, linkId: string, alerts: readonly StationAlert[], mappedNames: ReadonlySet<string>, at: string): Promise<void> {
+export async function recordAlerts(
+  db: D1Database,
+  linkId: string,
+  alerts: readonly StationAlert[],
+  mappedNames: ReadonlySet<string>,
+  at: string,
+  scope: AlertScope,
+): Promise<void> {
   const keys = new Set<string>()
   const statements: D1PreparedStatement[] = []
   for (const alert of alerts) {
@@ -128,13 +161,17 @@ export async function recordAlerts(db: D1Database, linkId: string, alerts: reado
     )
   }
   const open = await db
-    .prepare(`SELECT key, alert_json FROM station_alerts WHERE resolved_at IS NULL AND (link_id = ?1 OR key LIKE 'name_unmapped:%')`)
+    .prepare(`SELECT key, alert_json, emailed_at FROM station_alerts WHERE resolved_at IS NULL AND (link_id = ?1 OR key LIKE 'name_unmapped:%')`)
     .bind(linkId)
-    .all<{ key: string; alert_json: string }>()
+    .all<{ key: string; alert_json: string; emailed_at: string | null }>()
   for (const row of open.results) {
     if (keys.has(row.key)) continue
     const alert = JSON.parse(row.alert_json) as StationAlert
-    const gone = alert.kind === 'name_unmapped' ? mappedNames.has(alert.name) : alert.linkId === linkId
+    let gone: boolean
+    if (alert.kind === 'name_unmapped') gone = mappedNames.has(alert.name)
+    else if (alert.linkId !== linkId || !scope.complete) gone = false
+    else if ('tab' in alert && scope.skippedTabs?.has(alert.tab)) gone = false
+    else gone = !(isEvent(alert) && row.emailed_at === null)
     if (gone) statements.push(db.prepare(`UPDATE station_alerts SET resolved_at = ?2 WHERE key = ?1`).bind(row.key, at))
   }
   if (statements.length > 0) await db.batch(statements)

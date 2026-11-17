@@ -1,18 +1,13 @@
-// Stored Basecamp tokens (spec §3, §6.2, §14).
-//
-//   user_basecamp_links — each user's own token. Every write to Basecamp on a
-//                         user's behalf uses it (`withUserToken`).
-//   integrations        — the service token (provider 'basecamp'). Only for
-//                         work with no human author: webhooks, read-only
-//                         reconciliation, member caches (`withServiceToken`).
-//                         Never used to write on a user's behalf.
+// The stored Basecamp token of the sync account (CLAUDE.md §2, owner
+// decision 7): `integrations`, provider 'basecamp'. Every station read and
+// write goes out with it (`withServiceToken`). The editor's per-user links
+// (`user_basecamp_links`) are no longer read or written; their rows are kept.
 //
 // Tokens are AES-GCM ciphertext (src/crypto.ts) whose `aad` is the row's
 // identity, so a value copied to another row does not decrypt. A token is
 // refreshed shortly before it expires; when Launchpad refuses the refresh the
-// row turns `expired` and its tokens are discarded — the caller's changes stay
-// pending and nothing is sent with another account's token (§3).
-// Rows are never deleted: revoking keeps the row with `status = 'revoked'`.
+// row turns `expired` and its tokens are discarded, and the station stops
+// with «اربط حساب المزامنة» until an admin connects it again. Rows are never deleted.
 
 import { createBasecampClient, UnauthorizedError } from '@naf-sheets/basecamp'
 import type { BasecampClient } from '@naf-sheets/basecamp'
@@ -39,10 +34,6 @@ export const NO_TOKEN = ''
 interface StoredTokens {
   access_token: string
   refresh_token: string | null
-}
-
-export function userLinkAad(userId: string): string {
-  return `user_basecamp_links:${userId}`
 }
 
 export function serviceAad(integrationId: string): string {
@@ -82,47 +73,14 @@ export function auditIf(db: D1Database, entry: AuditEntry, at: string, condition
 // Rows
 // ---------------------------------------------------------------------------
 
-export type UserLinkStatus = 'active' | 'expired' | 'revoked'
-
-export interface UserLinkRow {
-  user_id: string
-  bc_person_id: number
-  bc_account_id: number
-  encrypted_tokens: string
-  expires_at: string | null
-  linked_at: string
-  status: UserLinkStatus
-  bc_person_name: string | null
-  updated_at: string | null
-}
-
-export async function getUserLinkRow(db: D1Database, userId: string): Promise<UserLinkRow | null> {
-  return db
-    .prepare(
-      `SELECT user_id, bc_person_id, bc_account_id, encrypted_tokens, expires_at, linked_at, status, bc_person_name, updated_at
-       FROM user_basecamp_links WHERE user_id = ?1`,
-    )
-    .bind(userId)
-    .first<UserLinkRow>()
-}
-
-/** The caller's link when it can be used now; otherwise the failure that says why. */
-export async function activeUserLink(ctx: LinkContext, userId: string): Promise<UserLinkRow> {
-  const row = await getUserLinkRow(ctx.db, userId)
-  if (!row) throw new LinkFailure('not_linked')
-  if (row.status === 'revoked') throw new LinkFailure('link_revoked')
-  if (row.status !== 'active' || row.encrypted_tokens === NO_TOKEN) throw new LinkFailure('link_expired')
-  // A link made in another Basecamp account than the one the platform works in.
-  if (row.bc_account_id !== ctx.config.accountId) throw new LinkFailure('not_linked')
-  return row
-}
+export type LinkStatus = 'active' | 'expired' | 'revoked'
 
 export interface ServiceRow {
   id: string
   account_id: string
   encrypted_tokens: string
   expires_at: string | null
-  status: UserLinkStatus
+  status: LinkStatus
   bc_person_id: number | null
   created_by: string
   created_at: string
@@ -160,20 +118,9 @@ interface Holder {
 }
 
 /**
- * Runs `fn` with the user's own access token (spec §3: every edit under its
- * author). Refreshes first when the token is about to expire; on a 401 from
- * Basecamp refreshes once and retries once. Throws `LinkFailure`
- * (`not_linked`, `link_revoked`, `link_expired`, `basecamp_unavailable`,
- * `not_configured`) — never falls back to another token.
- */
-export async function withUserToken<T>(ctx: LinkContext, userId: string, fn: (token: string) => Promise<T>): Promise<T> {
-  return withHolder(ctx, await userHolder(ctx, userId), fn)
-}
-
-/**
- * Runs `fn` with the service token. Only for webhooks, read-only
- * reconciliation and member caches (spec §3) — never for a write on a user's
- * behalf. Throws `LinkFailure('service_not_linked')` when there is none.
+ * Runs `fn` with the sync account's token. Refreshes first when it is about to
+ * expire; on a 401 from Basecamp refreshes once and retries once. Throws
+ * `LinkFailure('service_not_linked')` when there is none (or it expired).
  */
 export async function withServiceToken<T>(ctx: LinkContext, fn: (token: string) => Promise<T>): Promise<T> {
   return withHolder(ctx, await serviceHolder(ctx), fn)
@@ -251,53 +198,6 @@ async function open(ctx: LinkContext, holder: Holder): Promise<StoredTokens> {
   }
 }
 
-async function userHolder(ctx: LinkContext, userId: string): Promise<Holder> {
-  const row = await activeUserLink(ctx, userId)
-  const db = ctx.db
-  return {
-    aad: userLinkAad(userId),
-    encrypted: row.encrypted_tokens,
-    expiresAt: row.expires_at,
-    gone: 'link_expired',
-    async save(next, expiresAt, at) {
-      const result = await db
-        .prepare(
-          `UPDATE user_basecamp_links SET encrypted_tokens = ?1, expires_at = ?2, updated_at = ?3
-           WHERE user_id = ?4 AND status = 'active' AND encrypted_tokens = ?5`,
-        )
-        .bind(next, expiresAt, at, userId, row.encrypted_tokens)
-        .run()
-      return result.meta.changes === 1
-    },
-    async expire(at, reason) {
-      const [update] = await db.batch([
-        db
-          .prepare(
-            `UPDATE user_basecamp_links SET status = 'expired', encrypted_tokens = ?1, updated_at = ?2
-             WHERE user_id = ?3 AND status = 'active' AND encrypted_tokens = ?4`,
-          )
-          .bind(NO_TOKEN, at, userId, row.encrypted_tokens),
-        auditIf(
-          db,
-          {
-            actorId: null,
-            action: 'basecamp.link.expire',
-            entityType: 'basecamp_link',
-            entityId: userId,
-            workbookId: null,
-            details: { bcAccountId: row.bc_account_id, bcPersonId: row.bc_person_id, reason },
-          },
-          at,
-          `SELECT 1 FROM user_basecamp_links WHERE user_id = ?8 AND status = 'expired' AND updated_at = ?9`,
-          [userId, at],
-        ),
-      ])
-      return update?.meta.changes === 1
-    },
-    reload: () => userHolder(ctx, userId),
-  }
-}
-
 async function serviceHolder(ctx: LinkContext): Promise<Holder> {
   const row = await getServiceRow(ctx.db, ctx.config.accountId)
   if (!row || row.status !== 'active' || row.encrypted_tokens === NO_TOKEN) throw new LinkFailure('service_not_linked')
@@ -355,82 +255,7 @@ export interface LinkedPerson {
   name: string
 }
 
-/**
- * Stores (or replaces) the user's own link as `active`, audited in the same
- * batch. One Basecamp person is actively linked to at most one member:
- * another member's active link to the same person is `person_taken`.
- */
-export async function saveUserLink(ctx: LinkContext, userId: string, person: LinkedPerson, tokens: TokenSet, at: string): Promise<void> {
-  const db = ctx.db
-  const accountId = ctx.config.accountId
-  const taken = await db
-    .prepare(
-      `SELECT user_id FROM user_basecamp_links
-       WHERE bc_account_id = ?1 AND bc_person_id = ?2 AND status = 'active' AND user_id <> ?3`,
-    )
-    .bind(accountId, person.bcPersonId, userId)
-    .first<{ user_id: string }>()
-  if (taken) throw new LinkFailure('person_taken')
-
-  const previous = await getUserLinkRow(db, userId)
-  const match = await db
-    .prepare(`SELECT bc_person_id, source FROM bc_person_matches WHERE user_id = ?1`)
-    .bind(userId)
-    .first<{ bc_person_id: number | null; source: string }>()
-
-  const stored: StoredTokens = { access_token: tokens.accessToken, refresh_token: tokens.refreshToken }
-  const sealed = await encryptJson(ctx.config.encryptionKey, stored, userLinkAad(userId))
-  const expiresAt = tokens.expiresAt === null ? null : isoAt(tokens.expiresAt)
-
-  try {
-    await db.batch([
-      db
-        .prepare(
-          `INSERT INTO user_basecamp_links
-             (user_id, bc_person_id, bc_account_id, encrypted_tokens, expires_at, linked_at, status, bc_person_name, updated_at)
-           VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'active', ?7, ?6)
-           ON CONFLICT(user_id) DO UPDATE SET
-             bc_person_id = excluded.bc_person_id,
-             bc_account_id = excluded.bc_account_id,
-             encrypted_tokens = excluded.encrypted_tokens,
-             expires_at = excluded.expires_at,
-             linked_at = excluded.linked_at,
-             status = 'active',
-             bc_person_name = excluded.bc_person_name,
-             updated_at = excluded.updated_at`,
-        )
-        .bind(userId, person.bcPersonId, accountId, sealed, expiresAt, at, person.name),
-      auditStatement(
-        db,
-        {
-          actorId: userId,
-          action: previous ? 'basecamp.link.relink' : 'basecamp.link.create',
-          entityType: 'basecamp_link',
-          entityId: userId,
-          workbookId: null,
-          details: {
-            bcAccountId: accountId,
-            bcPersonId: person.bcPersonId,
-            previous: previous ? { status: previous.status, bcAccountId: previous.bc_account_id, bcPersonId: previous.bc_person_id } : null,
-            // OPEN: a link to another person than the admin/email match is
-            // allowed (the user proved control of that account) and recorded (B10).
-            matchConflict:
-              match && match.bc_person_id !== null && match.bc_person_id !== person.bcPersonId
-                ? { matchedBcPersonId: match.bc_person_id, source: match.source }
-                : null,
-          },
-        },
-        at,
-      ),
-    ])
-  } catch (error) {
-    // Lost a race for the same person (uq_user_basecamp_links_person).
-    if (error instanceof Error && /UNIQUE constraint failed/i.test(error.message)) throw new LinkFailure('person_taken')
-    throw error
-  }
-}
-
-/** Stores (or replaces) the service token, audited in the same batch. Admins only (checked by the caller). */
+/** Stores (or replaces) the sync account's token and name, audited in the same batch. Admins only (checked by the caller). */
 export async function saveServiceToken(ctx: LinkContext, adminId: string, person: LinkedPerson, tokens: TokenSet, at: string): Promise<void> {
   const db = ctx.db
   const accountId = ctx.config.accountId
@@ -456,6 +281,13 @@ export async function saveServiceToken(ctx: LinkContext, adminId: string, person
 
   await db.batch([
     write,
+    // Its name, for Settings («مربوط: …»).
+    db
+      .prepare(
+        `INSERT INTO bc_account_people_cache (bc_person_id, name, refreshed_at) VALUES (?1, ?2, ?3)
+         ON CONFLICT (bc_person_id) DO UPDATE SET name = excluded.name, refreshed_at = excluded.refreshed_at`,
+      )
+      .bind(person.bcPersonId, person.name, at),
     auditStatement(
       db,
       {
@@ -474,39 +306,4 @@ export async function saveServiceToken(ctx: LinkContext, adminId: string, person
       at,
     ),
   ])
-}
-
-/**
- * Revokes the user's own link: the row is kept with `status = 'revoked'` and
- * the stored tokens are discarded. Audited.
- * OPEN: Launchpad documents no revocation endpoint, so the token itself stays
- * valid at Basecamp until it expires; only the platform's copy is discarded (B7).
- */
-export async function revokeUserLink(db: D1Database, userId: string, at: string): Promise<'revoked' | 'already_revoked' | 'none'> {
-  const row = await getUserLinkRow(db, userId)
-  if (!row) return 'none'
-  if (row.status === 'revoked') return 'already_revoked'
-  await db.batch([
-    db
-      .prepare(
-        `UPDATE user_basecamp_links SET status = 'revoked', encrypted_tokens = ?1, updated_at = ?2
-         WHERE user_id = ?3 AND status <> 'revoked'`,
-      )
-      .bind(NO_TOKEN, at, userId),
-    auditIf(
-      db,
-      {
-        actorId: userId,
-        action: 'basecamp.link.revoke',
-        entityType: 'basecamp_link',
-        entityId: userId,
-        workbookId: null,
-        details: { bcAccountId: row.bc_account_id, bcPersonId: row.bc_person_id, previousStatus: row.status },
-      },
-      at,
-      `SELECT 1 FROM user_basecamp_links WHERE user_id = ?8 AND status = 'revoked' AND updated_at = ?9`,
-      [userId, at],
-    ),
-  ])
-  return 'revoked'
 }

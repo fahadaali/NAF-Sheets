@@ -1,5 +1,5 @@
 // An in-memory Google spreadsheet behind the station's SheetPort: values,
-// row identities that move with their rows, cell writes, inserted rows, notes.
+// row identities that move with their rows, cell writes, inserted rows, struck-through cells.
 
 import { GoogleError } from '../../src/station/google'
 import type { SheetPort } from '../../src/station/run'
@@ -15,10 +15,28 @@ interface FakeTab {
 
 const SERIAL_EPOCH = Date.UTC(1899, 11, 30)
 
+/**
+ * What Google stores for a value written with USER_ENTERED, as far as the
+ * station meets it: a leading apostrophe keeps text as text (and is dropped);
+ * otherwise a typed date becomes a serial number, a number or percentage a
+ * number, and a formula an error value.
+ */
+function userEntered(value: string | number | null): Cell {
+  if (typeof value !== 'string') return value
+  if (value === '') return null // an empty write clears the cell
+  if (value.startsWith("'")) return value.slice(1)
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return Math.round((Date.parse(value) - SERIAL_EPOCH) / 86_400_000)
+  if (/^[+-]?\d+(\.\d+)?%$/.test(value)) return Number(value.slice(0, -1)) / 100
+  if (/^[+-]?\d+(\.\d+)?$/.test(value)) return Number(value)
+  if (value.startsWith('=')) return '#ERROR!'
+  return value
+}
+
 export class FakeSheet implements SheetPort {
   readonly serviceAccountEmail = 'naf-sync@naf-sheets-station.iam.gserviceaccount.com'
   readonly tabs: FakeTab[] = []
-  readonly notes = new Map<string, string>()
+  /** `sheetId:row:column` of the cells whose text is struck through; they move with their rows. */
+  readonly struck = new Set<string>()
   title = 'الاتصال المؤسسي والتسويق'
   shared = true
   version = 0
@@ -44,6 +62,16 @@ export class FakeSheet implements SheetPort {
       t.ids.push(null)
     }
     t.rows[row]![column] = value
+    this.version += 1
+  }
+
+  /** A person moves a row (drag, sort): its identity goes with it. `to` is its index after the move. */
+  moveRow(title: string, from: number, to: number): void {
+    const t = this.tab(title)
+    const [row] = t.rows.splice(from, 1)
+    const [id] = t.ids.splice(from, 1)
+    t.rows.splice(to, 0, row!)
+    t.ids.splice(to, 0, id ?? null)
     this.version += 1
   }
 
@@ -86,10 +114,8 @@ export class FakeSheet implements SheetPort {
     this.check()
     for (const i of changes.identities ?? []) this.tabs.find((t) => t.sheetId === i.sheetId)!.ids[i.row] = i.uid
     for (const c of changes.cells ?? []) {
-      // USER_ENTERED: a typed date becomes a serial number.
-      const v = typeof c.value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(c.value) ? Math.round((Date.parse(c.value) - SERIAL_EPOCH) / 86_400_000) : c.value
       const t = this.tab(c.tabTitle)
-      t.rows[c.row]![c.column] = v
+      t.rows[c.row]![c.column] = userEntered(c.value)
     }
     if ((changes.identities?.length ?? 0) + (changes.cells?.length ?? 0) > 0) {
       this.writes += 1
@@ -104,16 +130,25 @@ export class FakeSheet implements SheetPort {
       const t = this.tabs.find((x) => x.sheetId === ins.sheetId)!
       t.rows.splice(ins.before, 0, [...ins.values])
       t.ids.splice(ins.before, 0, ins.uid)
+      // Formats move with their cells.
+      const moved = [...this.struck].map((key) => {
+        const [sheet, row, column] = key.split(':').map(Number) as [number, number, number]
+        return sheet === t.sheetId && row >= ins.before ? `${sheet}:${row + 1}:${column}` : key
+      })
+      this.struck.clear()
+      for (const key of moved) this.struck.add(key)
     }
     if (inserts.length > 0) this.version += 1
   }
 
-  async setNotes(_id: string, notes: { sheetId: number; row: number; column: number; note: string | null }[]): Promise<void> {
+  async strike(_id: string, cells: { sheetId: number; row: number; column: number; strike: boolean }[]): Promise<void> {
     this.check()
-    for (const n of notes) {
-      const key = `${n.sheetId}:${n.row}:${n.column}`
-      if (n.note) this.notes.set(key, n.note)
-      else this.notes.delete(key)
+    for (const c of cells) {
+      const key = `${c.sheetId}:${c.row}:${c.column}`
+      if (c.strike) this.struck.add(key)
+      else this.struck.delete(key)
     }
+    // A format is an edit of the file: Drive's modifiedTime moves, a notification goes out.
+    if (cells.length > 0) this.version += 1
   }
 }

@@ -1,4 +1,4 @@
-// Basecamp account linking (spec §3, §7.3, §9.5, §14; Appendix A-2, A-7).
+// The Basecamp sync account (CLAUDE.md §2; spec §14; Appendix A-2, A-7).
 //
 // Wiring (one line, in src/index.ts after `createApp()` — not inside
 // `createApp`, so tests that build their own app keep their fake fetch):
@@ -18,13 +18,12 @@ import type { GateNamespace } from '../basecamp-rate-gate'
 import type { Env } from '../env'
 import type { BasecampLinkDeps, BasecampLinkEnv, HttpFetch, LinkContext } from './env'
 import { linkConfig } from './env'
-import { basecampApiRoutes, basecampAuthRoutes, peopleMatchRoutes } from './routes'
+import { basecampAuthRoutes } from './routes'
 
 export type { BasecampLinkBindings, BasecampLinkConfig, BasecampLinkDeps, BasecampLinkEnv, HttpFetch, LinkContext } from './env'
 export { linkConfig }
 export { LINK_MESSAGES, LinkFailure, type LinkErrorKey } from './errors'
-export { matchByEmail, PEOPLE_CACHE_TTL_MS, refreshAccountPeople, usableEmail } from './people'
-export { activeUserLink, basecampClient, REFRESH_MARGIN_MS, withServiceToken, withUserToken } from './store'
+export { basecampClient, REFRESH_MARGIN_MS, withServiceToken } from './store'
 
 export interface BasecampLinkOptions {
   /** Default: the Worker's `fetch`. Tests pass a fake; nothing real is ever called from a test. */
@@ -69,8 +68,6 @@ export function registerBasecampLinkRoutes(app: Hono<AppEnv>, options: BasecampL
 
   const deps = linkDeps(options)
   app.route('/auth/basecamp', basecampAuthRoutes(deps))
-  app.route('/api/basecamp', basecampApiRoutes(deps))
-  app.route('/api/admin/people-matches', peopleMatchRoutes(deps))
 }
 
 function linkDeps(options: BasecampLinkOptions): BasecampLinkDeps {
@@ -83,10 +80,9 @@ function linkDeps(options: BasecampLinkOptions): BasecampLinkDeps {
 }
 
 /**
- * A context outside a request — for the queue consumer (`withUserToken`: the
- * acting user's own token, §3) and the cron (`withServiceToken`,
- * `refreshAccountPeople`). Throws `LinkFailure('not_configured')` when a
- * binding is missing.
+ * A context outside a request — for the queue consumer and the cron
+ * (`withServiceToken`). Throws `LinkFailure('not_configured')` when a binding
+ * is missing.
  */
 export function linkContextFor(env: BasecampLinkEnv, options: BasecampLinkOptions = {}): LinkContext {
   return { ...linkDeps(options), db: env.DB, kv: env.SETTINGS, config: linkConfig(env) }

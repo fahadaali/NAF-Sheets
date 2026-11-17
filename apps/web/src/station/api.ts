@@ -8,6 +8,7 @@ export type StationAlert =
   | { kind: 'name_unmapped'; linkId: string; linkTitle: string; tab: string; role: string; name: string; rows: number; rowNumbers?: number[]; suggestion?: { bcPersonId: number; personName: string; previousName: string } }
   | { kind: 'not_project_member'; linkId: string; linkTitle: string; personName: string; bcPersonId: number; projectName: string; rows: number }
   | { kind: 'rows_held'; linkId: string; linkTitle: string; tab: string; code: string; subject?: string; reason: string; rows: number; rowNumbers?: number[] }
+  | { kind: 'roles_conflict'; linkId: string; linkTitle: string; tab: string; role: string; names: string[] }
   | { kind: 'tab_stopped'; linkId: string; linkTitle: string; tab: string; reason: string }
   | { kind: 'link_stopped'; linkId: string; linkTitle: string; reason: string }
 
@@ -43,9 +44,13 @@ export interface Inspection {
 
 export interface LinkDetail {
   link: { id: string; title: string; spreadsheet_id: string; bc_project_id: number; roles_tab: string; state: 'active' | 'paused'; last_sync_at: string | null; last_error: string | null; created_at: string }
+  /** The project in Basecamp; null until BASECAMP_ACCOUNT_ID is set. */
+  projectUrl: string | null
   tabs: { google_sheet_id: number; title: string; bc_todolist_id: number | null }[]
   problems: { key: string; alert: StationAlert; firstSeen: string; emailedAt: string | null }[]
-  log: { at: string; direction: 'to_basecamp' | 'to_sheet' | 'none'; action: string; task_uid: string | null; detail_json: string | null }[]
+  /** Subtasks deleted from Basecamp for good, newest first (their snapshots are kept). */
+  deleted: { id: number; title: string; dueOn: string | null; completed: boolean; deletedAt: string; restoredAt: string | null }[]
+  log: { id: number; at: string; direction: 'to_basecamp' | 'to_sheet'; action: string; task_uid: string | null; detail_json: string | null }[]
 }
 
 export interface NamesResponse {
@@ -94,17 +99,43 @@ export interface StationStatus {
   email: boolean
 }
 
+/** Which side wins the first sync of a tab linked to a list that has tasks (decision 10). */
+export type FirstSyncReference = 'file' | 'basecamp' | 'merge'
+
+export interface LinkRequest {
+  source: string
+  bcProjectId: number
+  /** Each tab, with an existing list of the project or `null` for a new one named after the tab. */
+  tabs: { sheetId: number; listId: number | null }[]
+  rolesTab: string
+  reference: FirstSyncReference
+}
+
+/** POST /api/station/preview: what the first sync would do in each tab; nothing is written. */
+export interface Preview {
+  reference: FirstSyncReference
+  tabs: (
+    | { sheetId: number; title: string; ok: true; matched: number; changed: number; toBasecamp: number; toSheet: number; ignored: number; held: number }
+    | { sheetId: number; title: string; ok: false; reason: string }
+  )[]
+}
+
 export const stationApi = {
   status: (signal?: AbortSignal) => request<StationStatus>('GET', '/api/station/status', undefined, signal),
   links: (signal?: AbortSignal) => request<{ links: LinkSummary[] }>('GET', '/api/station/links', undefined, signal),
   inspect: (source: string, rolesTab: string, signal?: AbortSignal) =>
     request<Inspection>('GET', `/api/station/inspect?${new URLSearchParams({ source, rolesTab }).toString()}`, undefined, signal),
   projects: (signal?: AbortSignal) => request<{ projects: { id: number; name: string; todosetId: number | null }[] }>('GET', '/api/station/projects', undefined, signal),
-  createLink: (body: { source: string; bcProjectId: number; tabs: number[]; rolesTab: string }) => request<{ id: string }>('POST', '/api/station/links', body),
+  lists: (projectId: number, signal?: AbortSignal) =>
+    request<{ lists: { id: number; name: string; linked: boolean }[] }>('GET', `/api/station/projects/${projectId}/lists`, undefined, signal),
+  preview: (body: LinkRequest) => request<Preview>('POST', '/api/station/preview', body),
+  createLink: (body: LinkRequest) => request<{ id: string; relinked?: boolean }>('POST', '/api/station/links', body),
   link: (id: string, signal?: AbortSignal) => request<LinkDetail>('GET', linkPath(id), undefined, signal),
   updateLink: (id: string, body: { state?: 'active' | 'paused'; rolesTab?: string }) => request<object>('PATCH', linkPath(id), body),
   deleteLink: (id: string) => request<object>('DELETE', linkPath(id)),
   syncNow: (id: string) => request<object>('POST', `${linkPath(id)}/sync`),
+  restoreDeleted: (id: string, n: number) => request<object>('POST', `${linkPath(id)}/deleted/${n}/restore`),
+  restoreConflict: (id: string, n: number) => request<object>('POST', `${linkPath(id)}/conflicts/${n}/restore`),
   names: (signal?: AbortSignal) => request<NamesResponse>('GET', '/api/station/names', undefined, signal),
   putName: (name: string, bcPersonId: number) => request<object>('PUT', '/api/station/names', { name, bcPersonId }),
   deleteName: (name: string) => request<object>('DELETE', `/api/station/names?${new URLSearchParams({ name }).toString()}`),

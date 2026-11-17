@@ -110,6 +110,21 @@ describe('first sync', () => {
     expect(w.sheet.tab(TAB).ids.slice(1).every((id) => id !== null)).toBe(true)
   })
 
+  it('never creates a row twice when a run fails half-way', async () => {
+    const w = await world(SOCIAL)
+    // The third create fails for good (a 400 is not retried): the first two are in Basecamp.
+    let creates = 0
+    w.fake.fail((c) => c.method === 'POST' && /\/(todos|subtasks)\.json$/.test(c.path) && ++creates === 3, 400, { times: 1 })
+    await expect(w.run()).rejects.toThrow()
+    const before = w.todos().length + w.subtasks().length
+    expect(before).toBeGreaterThan(0)
+    await w.run()
+    // Every row exactly once, nothing trashed.
+    expect(w.todos().map((t) => t.content).sort()).toEqual(['المناسبات', 'فيديو الموشن'])
+    expect(w.subtasks().map((t) => t.title).sort()).toEqual(['اعتماد بنك الأفكار', 'اعتماد قائمة نوفمبر', 'بناء بنك أفكار للموشن'])
+    expect([...w.fake.todos.values()].filter((t) => t.status !== 'active')).toEqual([])
+  })
+
   it('does nothing on a second run with nothing changed', async () => {
     const w = await world(SOCIAL)
     await w.run()
@@ -152,8 +167,13 @@ describe('sheet → Basecamp', () => {
     w.sheet.set(TAB, 6, COL.main, 'المناسبات')
     w.sheet.set(TAB, 6, COL.sub, 'اعتماد قائمة ديسمبر')
     w.sheet.set(TAB, 6, COL.status, 'لم تبدأ')
+    // No «القسم» yet: held, with an alert, never sent with nobody on it.
+    const held = await w.run()
+    expect(w.subtasks().map((s) => s.title)).not.toContain('اعتماد قائمة ديسمبر')
+    expect(held.alerts).toContainEqual(expect.objectContaining({ kind: 'rows_held', code: 'role_empty', rowNumbers: [7] }))
+    w.sheet.set(TAB, 6, COL.role, 'المحامي الرئيسي')
     await w.run()
-    expect(w.subtasks().map((s) => s.title)).toContain('اعتماد قائمة ديسمبر')
+    expect(w.subtasks().find((s) => s.title === 'اعتماد قائمة ديسمبر')?.assigneeIds).toEqual([w.people.atifi.id])
   })
 
   it('deletes automatically: a subtask for good (snapshot kept), a to-do to the trash with its subtasks', async () => {
@@ -172,6 +192,21 @@ describe('sheet → Basecamp', () => {
     w.sheet.deleteRows(TAB, at, 2)
     await w.run()
     expect(w.fake.todos.get(events.id)!.status).toBe('trashed')
+  })
+
+  it('lets go of a row deleted from the sheet whose to-do is already gone from Basecamp', async () => {
+    const w = await world(SOCIAL)
+    await w.run()
+    const events = w.todos().find((t) => t.content === 'المناسبات')!
+    w.fake.todos.delete(events.id)
+    await w.run()
+    // The row (and its subtask row) is then deleted from the sheet: no error, nothing left to do.
+    w.sheet.deleteRows(TAB, 4, 2)
+    const report = await w.run()
+    expect(report.status).toBe('ok')
+    const again = await w.run()
+    expect(again.status).toBe('ok')
+    expect(again.deleted).toBe(0)
   })
 
   it('never deletes when a tab reads empty', async () => {
@@ -210,6 +245,41 @@ describe('Basecamp → sheet', () => {
     expect(tab.rows.slice(1, 4).map((r) => r[COL.main])).toEqual(['فيديو الموشن القصير', 'فيديو الموشن القصير', 'فيديو الموشن القصير'])
   })
 
+  it('writes a title from Basecamp as text, never as a number, a date or a formula', async () => {
+    const w = await world(SOCIAL)
+    await w.run()
+    const tab = w.sheet.tab(TAB)
+    const sub = w.subtasks().find((s) => s.title === 'اعتماد قائمة نوفمبر')!
+    const todo = w.todos().find((t) => t.content === 'المناسبات')!
+    for (const title of ['15%', '2026-11-17', '=SUM(1,2)', '- مراجعة']) {
+      sub.title = title
+      sub.updatedAt = w.fake.tick()
+      todo.updatedAt = w.fake.tick()
+      await w.run()
+      expect(tab.rows[5]![COL.sub]).toBe(title)
+      // Read back unchanged: nothing goes back to Basecamp.
+      await w.run()
+      expect(w.subtasks().find((s) => s.id === sub.id)!.title).toBe(title)
+    }
+  })
+
+  it('brings a subtask edited in Basecamp to the sheet on the full pass, even when its to-do did not change', async () => {
+    const w = await world(SOCIAL)
+    await w.run()
+    await w.run()
+    const sub = w.subtasks().find((x) => x.title === 'اعتماد قائمة نوفمبر')!
+    sub.title = 'اعتماد قائمة ديسمبر'
+    sub.dueOn = '2026-12-20'
+    sub.updatedAt = w.fake.tick()
+    await w.run()
+    const tab = w.sheet.tab(TAB)
+    expect(tab.rows[5]![COL.sub]).toBe('اعتماد قائمة نوفمبر') // its to-do looks unchanged: not read yet
+    await env.DB.prepare(`UPDATE station_links SET last_full_at = ?2 WHERE id = ?1`).bind(w.linkId, new Date(Date.now() - 16 * 60_000).toISOString()).run()
+    await w.run()
+    expect(tab.rows[5]![COL.sub]).toBe('اعتماد قائمة ديسمبر')
+    expect(tab.rows[5]![COL.due]).toBe(46376)
+  })
+
   it('puts back the sheet’s people when they are changed in Basecamp, and tells the admin', async () => {
     const w = await world(SOCIAL)
     await w.run()
@@ -220,6 +290,12 @@ describe('Basecamp → sheet', () => {
     const report = await w.run()
     expect(w.subtasks()[0]!.assigneeIds).toEqual([w.people.omar.id])
     expect(report.alerts.some((a) => a.kind === 'rows_held' && a.code === 'people_reverted')).toBe(true)
+    // Raised once, by that run: it stays open until it is emailed, then the next run closes it.
+    await w.run()
+    expect(await openAlerts(w.linkId)).toEqual([{ key: expect.stringContaining(':people_reverted:'), emailed: false }])
+    await env.DB.prepare(`UPDATE station_alerts SET emailed_at = ?1 WHERE link_id = ?2`).bind(new Date().toISOString(), w.linkId).run()
+    await w.run()
+    expect(await openAlerts(w.linkId)).toEqual([])
   })
 
   it('adds rows for a to-do created in Basecamp, its subtasks under it, with «القسم» from the people', async () => {
@@ -248,14 +324,184 @@ describe('Basecamp → sheet', () => {
     expect(writesTo(w.fake)).toBe(settled)
   })
 
+  it('keeps the people of a to-do created in Basecamp: «القسم» from them, or Basecamp’s people while none matches', async () => {
+    const w = await world(SOCIAL)
+    await w.run()
+    const listId = [...w.fake.lists.values()][0]!.id
+    const known = w.fake.addTodo(listId, { content: 'متابعة الإعلانات', assigneeIds: [w.people.omar.id] })
+    const unknown = w.fake.addTodo(listId, { content: 'مراجعة العقود', assigneeIds: [w.people.musnad.id] })
+    const report = await w.run()
+    const rows = w.sheet.tab(TAB).rows
+    expect(rows.find((r) => r[COL.main] === 'متابعة الإعلانات')![COL.role]).toBe('مسؤول السوشل ميديا')
+    expect(rows.find((r) => r[COL.main] === 'مراجعة العقود')![COL.role] ?? '').toBe('')
+    expect(report.alerts).toContainEqual(expect.objectContaining({ kind: 'rows_held', code: 'role_missing' }))
+    await w.run()
+    await w.run()
+    expect(w.fake.todos.get(known.id)!.assigneeIds).toEqual([w.people.omar.id])
+    expect(w.fake.todos.get(unknown.id)!.assigneeIds).toEqual([w.people.musnad.id])
+  })
+
   it('marks a row whose to-do was deleted in Basecamp, without deleting the row', async () => {
     const w = await world(SOCIAL)
     await w.run()
     const todo = w.todos().find((t) => t.content === 'المناسبات')!
     w.fake.todos.delete(todo.id)
     await w.run()
-    expect(w.sheet.tab(TAB).rows.some((r) => r[COL.main] === 'المناسبات')).toBe(true)
-    expect([...w.sheet.notes.values()].some((n) => n.startsWith('محذوفة في Basecamp'))).toBe(true)
+    const tab = w.sheet.tab(TAB)
+    // §4.2 (owner, 2026-11-17): «الحالة» says so and the row's text is struck through.
+    expect(tab.rows[4]![COL.main]).toBe('المناسبات')
+    expect(tab.rows[4]![COL.status]).toBe('محذوفة في Basecamp')
+    expect([COL.main, COL.sub, COL.role, COL.status, COL.due].every((c) => w.sheet.struck.has(`2:4:${c}`))).toBe(true)
+    // Marked once: later runs leave the file alone (each edit would start another run).
+    const version = w.sheet.version
+    await w.run()
+    await w.run()
+    expect(w.sheet.version).toBe(version)
+  })
+
+  it('writes the previous status back and unstrikes the row when the record comes back from the trash', async () => {
+    const w = await world(SOCIAL)
+    await w.run()
+    const tab = w.sheet.tab(TAB)
+    const todo = w.todos().find((t) => t.content === 'المناسبات')!
+    todo.status = 'trashed'
+    todo.updatedAt = w.fake.tick()
+    await w.run()
+    expect(tab.rows[4]![COL.status]).toBe('محذوفة في Basecamp')
+    todo.status = 'active'
+    todo.updatedAt = w.fake.tick()
+    await w.run()
+    expect(tab.rows[4]![COL.status] ?? null).toBe(null) // a to-do row had no status
+    expect([...w.sheet.struck].filter((k) => k.startsWith('2:4:'))).toEqual([])
+  })
+
+  it('puts the mark on the right row when rows are inserted above it in the same run', async () => {
+    const w = await world(SOCIAL)
+    await w.run()
+    const motion = w.todos().find((t) => t.content === 'فيديو الموشن')!
+    w.fake.addSubtask(motion.id, { title: 'مهمة من Basecamp' })
+    motion.updatedAt = w.fake.tick()
+    w.fake.todos.delete(w.todos().find((t) => t.content === 'المناسبات')!.id)
+    await w.run()
+    const tab = w.sheet.tab(TAB)
+    const marked = [...new Set([...w.sheet.struck].map((k) => Number(k.split(':')[1])))]
+    expect(marked.map((row) => tab.rows[row]![COL.main])).toEqual(['المناسبات'])
+    expect(marked.map((row) => tab.rows[row]![COL.sub] ?? null)).toEqual([null])
+  })
+})
+
+describe('held rows', () => {
+  it('keeps syncing the subtasks of a to-do that is held but already in Basecamp', async () => {
+    const w = await world(SOCIAL)
+    await w.run()
+    w.sheet.set(TAB, 1, COL.role, 'مسمى غير موجود') // the to-do is held from now on
+    w.sheet.set(TAB, 2, COL.sub, 'بنك أفكار الموشن')
+    await w.run()
+    expect(w.subtasks().map((x) => x.title)).toContain('بنك أفكار الموشن')
+  })
+
+  it('never takes a held subtask’s people off its to-do', async () => {
+    const w = await world(SOCIAL)
+    await w.run()
+    const motion = w.todos().find((t) => t.content === 'فيديو الموشن')!
+    const people = [...motion.assigneeIds].sort()
+    expect(people).toEqual([w.people.fahad.id, w.people.omar.id].sort())
+    w.sheet.set(TAB, 3, COL.due, 'غداً') // «اعتماد بنك الأفكار» (فهد، عمر) is held
+    w.sheet.set(TAB, 2, COL.status, 'جارية')
+    await w.run()
+    expect([...w.fake.todos.get(motion.id)!.assigneeIds].sort()).toEqual(people)
+  })
+})
+
+describe('copies and cleared titles (owner, 2026-11-17)', () => {
+  it('never creates a pasted copy of a task twice; it waits with an alert', async () => {
+    const w = await world(SOCIAL)
+    await w.run()
+    const before = w.subtasks().length
+    w.sheet.set(TAB, 6, COL.main, 'المناسبات')
+    w.sheet.set(TAB, 6, COL.sub, 'اعتماد قائمة نوفمبر')
+    w.sheet.set(TAB, 6, COL.role, 'المحامي الرئيسي')
+    const report = await w.run()
+    await w.run()
+    expect(w.subtasks()).toHaveLength(before)
+    expect(report.alerts).toContainEqual(expect.objectContaining({ kind: 'rows_held', code: 'copy_of_existing', rowNumbers: [7] }))
+  })
+
+  it('does not delete a subtask whose title cells were emptied; it comes back when the title does', async () => {
+    const w = await world(SOCIAL)
+    await w.run()
+    const sub = w.subtasks().find((x) => x.title === 'اعتماد قائمة نوفمبر')!
+    w.sheet.set(TAB, 5, COL.main, '')
+    w.sheet.set(TAB, 5, COL.sub, '')
+    const report = await w.run()
+    expect(w.fake.subtasks.has(sub.id)).toBe(true)
+    expect(report.deleted).toBe(0)
+    expect(report.alerts).toContainEqual(expect.objectContaining({ kind: 'rows_held', code: 'titles_cleared', rowNumbers: [6] }))
+    w.sheet.set(TAB, 5, COL.main, 'المناسبات')
+    w.sheet.set(TAB, 5, COL.sub, 'اعتماد قائمة نوفمبر المعدّلة')
+    await w.run()
+    expect(w.fake.subtasks.get(sub.id)!.title).toBe('اعتماد قائمة نوفمبر المعدّلة')
+  })
+})
+
+describe('a subtask row moved under another to-do', () => {
+  it('stops that row with an alert, and leaves Basecamp as it was', async () => {
+    const w = await world(SOCIAL)
+    await w.run()
+    const sub = w.subtasks().find((x) => x.title === 'بناء بنك أفكار للموشن')!
+    const parent = sub.todoId
+    w.sheet.moveRow(TAB, 2, 5) // from «فيديو الموشن» to the end of «المناسبات»
+    const report = await w.run()
+    expect(report.alerts).toContainEqual(expect.objectContaining({ kind: 'rows_held', code: 'subtask_moved', rows: 1, rowNumbers: [6] }))
+    expect(w.fake.subtasks.get(sub.id)!.todoId).toBe(parent)
+  })
+})
+
+describe('first sync with a list that already has tasks (decision 10)', () => {
+  /** The tab linked to an existing list holding «فيديو الموشن» (one subtask, another date) and a to-do only in Basecamp. */
+  async function existing(reference: 'file' | 'basecamp' | 'merge') {
+    const w = await world(SOCIAL)
+    const projectId = (await env.DB.prepare(`SELECT bc_project_id FROM station_links WHERE id = ?1`).bind(w.linkId).first<{ bc_project_id: number }>())!.bc_project_id
+    const list = w.fake.list(projectId, 'السوشل ميديا')
+    const motion = w.fake.addTodo(list.id, { content: 'فيديو الموشن' })
+    const sub = w.fake.addSubtask(motion.id, { title: 'بناء بنك أفكار للموشن', dueOn: '2026-12-31', assigneeIds: [w.people.omar.id] })
+    const only = w.fake.addTodo(list.id, { content: 'في Basecamp وحده' })
+    await env.DB.prepare(`UPDATE station_tabs SET bc_todolist_id = ?2, first_sync = ?3 WHERE link_id = ?1`).bind(w.linkId, list.id, reference).run()
+    return { w, motion, sub, only }
+  }
+  const rowsOf = (w: Awaited<ReturnType<typeof world>>) => w.sheet.tab(TAB).rows
+
+  it('merge: matches by title (nothing created twice), the sheet wins on matched tasks, and each side gets what it lacks', async () => {
+    const { w, motion, sub, only } = await existing('merge')
+    await w.run()
+    await w.run()
+    expect(w.todos().filter((t) => t.content === 'فيديو الموشن').map((t) => t.id)).toEqual([motion.id])
+    expect(w.subtasks().filter((x) => x.title === 'بناء بنك أفكار للموشن').map((x) => x.id)).toEqual([sub.id])
+    expect(w.fake.subtasks.get(sub.id)!.dueOn).toBe('2026-11-12') // the sheet's date
+    expect(w.todos().map((t) => t.content)).toContain('المناسبات') // only in the sheet: created
+    expect(rowsOf(w).some((r) => r[COL.main] === 'في Basecamp وحده')).toBe(true) // only in Basecamp: a row
+    expect(w.fake.todos.get(only.id)!.status).toBe('active')
+  })
+
+  it('basecamp: matched tasks take Basecamp’s values in the sheet', async () => {
+    const { w, sub } = await existing('basecamp')
+    await w.run()
+    await w.run()
+    expect(w.fake.subtasks.get(sub.id)!.dueOn).toBe('2026-12-31')
+    const row = rowsOf(w).find((r) => r[COL.sub] === 'بناء بنك أفكار للموشن')!
+    expect(row[COL.due]).toBe(isoSerial('2026-12-31'))
+    expect(rowsOf(w).some((r) => r[COL.main] === 'في Basecamp وحده')).toBe(true)
+  })
+
+  it('file: what is only in Basecamp stays there, untouched, and gets no row — on later runs too', async () => {
+    const { w, sub, only } = await existing('file')
+    await w.run()
+    await w.run()
+    await env.DB.prepare(`UPDATE station_links SET last_full_at = NULL WHERE id = ?1`).bind(w.linkId).run()
+    await w.run()
+    expect(rowsOf(w).some((r) => r[COL.main] === 'في Basecamp وحده')).toBe(false)
+    expect(w.fake.todos.get(only.id)!.status).toBe('active')
+    expect(w.fake.subtasks.get(sub.id)!.dueOn).toBe('2026-11-12')
   })
 })
 
@@ -341,6 +587,27 @@ describe('problems', () => {
     expect(resolved?.resolved_at).not.toBeNull()
   })
 
+  it('suggests the same person when a title’s name changes («هل هو …؟ تأكيد», §6.2), and never maps it by itself', async () => {
+    const w = await world(SOCIAL)
+    await w.run()
+    w.sheet.tab('المسميات').rows[2]![1] = 'أبو عمار' // «مسؤول السوشل ميديا» was «عمر العمار», mapped
+    const report = await w.run()
+    const alert = report.alerts.find((a) => a.kind === 'name_unmapped' && a.name === 'أبو عمار')
+    expect(alert).toMatchObject({ role: 'مسؤول السوشل ميديا', suggestion: { bcPersonId: w.people.omar.id, personName: 'عمر أبو عمار', previousName: 'عمر العمار' } })
+    // Still suggested on the next run (the memory keeps the last mapped name), and nothing was mapped.
+    const again = await w.run()
+    expect(again.alerts.find((a) => a.kind === 'name_unmapped')).toMatchObject({ suggestion: { previousName: 'عمر العمار' } })
+    expect(await env.DB.prepare(`SELECT name FROM station_names WHERE name = 'أبو عمار'`).first()).toBeNull()
+  })
+
+  it('reports a title written twice in «المسميات» with different names, and keeps the first', async () => {
+    const w = await world(SOCIAL)
+    w.sheet.tab('المسميات').rows.push(['مسؤول السوشل ميديا', 'فهد العتيبي', ''])
+    const report = await w.run()
+    expect(report.alerts).toContainEqual(expect.objectContaining({ kind: 'roles_conflict', role: 'مسؤول السوشل ميديا', names: ['عمر العمار', 'فهد العتيبي'] }))
+    expect(w.subtasks().find((x) => x.title === 'بناء بنك أفكار للموشن')!.assigneeIds).toEqual([w.people.omar.id])
+  })
+
   it('stops the link with an Arabic reason when the file is not shared', async () => {
     const w = await world(SOCIAL)
     w.sheet.shared = false
@@ -350,4 +617,42 @@ describe('problems', () => {
     expect((report.alerts[0] as { reason: string }).reason).toContain('naf-sync@naf-sheets-station.iam.gserviceaccount.com')
     expect(writesTo(w.fake)).toBe(0)
   })
+
+  it('keeps the other problems while a run is stopped, so they are not emailed twice', async () => {
+    const w = await world([...SOCIAL, ['جديدة', 'بلا اسم', 'مسمى غير موجود', '', null]])
+    await w.run()
+    const held = await openAlerts(w.linkId)
+    expect(held.length).toBe(1)
+    await env.DB.prepare(`UPDATE station_alerts SET emailed_at = ?1 WHERE link_id = ?2`).bind(new Date().toISOString(), w.linkId).run()
+    w.sheet.shared = false
+    await w.run()
+    w.sheet.shared = true
+    await w.run()
+    // The held rows' problem never closed, so it is still the emailed one; the stop closed with the good run.
+    expect(await openAlerts(w.linkId)).toEqual([{ key: held[0]!.key, emailed: true }])
+  })
+
+  it('emails a stop again when it comes back after a good run', async () => {
+    const w = await world(SOCIAL)
+    w.sheet.shared = false
+    await w.run()
+    await env.DB.prepare(`UPDATE station_alerts SET emailed_at = ?1 WHERE link_id = ?2`).bind(new Date().toISOString(), w.linkId).run()
+    w.sheet.shared = true
+    await w.run()
+    expect(await openAlerts(w.linkId)).toEqual([])
+    w.sheet.shared = false
+    await w.run()
+    expect(await openAlerts(w.linkId)).toEqual([{ key: `link_stopped:${w.linkId}`, emailed: false }])
+  })
 })
+
+async function openAlerts(linkId: string): Promise<{ key: string; emailed: boolean }[]> {
+  const { results } = await env.DB.prepare(`SELECT key, emailed_at FROM station_alerts WHERE link_id = ?1 AND resolved_at IS NULL ORDER BY key`)
+    .bind(linkId)
+    .all<{ key: string; emailed_at: string | null }>()
+  return results.map((r) => ({ key: r.key, emailed: r.emailed_at !== null }))
+}
+
+function isoSerial(iso: string): number {
+  return Math.round((Date.parse(iso) - Date.UTC(1899, 11, 30)) / 86_400_000)
+}

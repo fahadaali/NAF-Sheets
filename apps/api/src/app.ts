@@ -47,10 +47,9 @@ export function createApp(options: AppOptions = {}): Hono<AppEnv> {
   app.use('*', options.auth ?? nafAuthMiddleware)
 
   // Private data: never stored by the browser or an intermediary.
-  // (A 101 WebSocket answer comes from the room with immutable headers.)
   app.use('/api/*', async (c, next) => {
     await next()
-    if (c.res.status !== 101) c.res.headers.set('cache-control', 'no-store')
+    c.res.headers.set('cache-control', 'no-store')
   })
 
   app.route('/api/me', meRoutes())

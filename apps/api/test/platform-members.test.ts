@@ -64,17 +64,6 @@ describe('GET /api/admin/members', () => {
     const none = await seedMember('viewer', { active: false })
     await env.DB.prepare(`UPDATE members SET last_seen_at = 1793000000 WHERE user_id = ?1`).bind(auto.id).run()
 
-    const at = new Date().toISOString()
-    const p1 = 900_000_000 + Math.floor(Math.random() * 1_000_000)
-    const p2 = p1 + 1
-    await env.DB.batch([
-      env.DB.prepare(`INSERT INTO bc_account_people_cache (bc_person_id, name, email, personable_type, client, refreshed_at) VALUES (?1, 'سارة', 's@x.sa', 'User', 0, ?2)`).bind(p1, at),
-      env.DB.prepare(`INSERT INTO bc_account_people_cache (bc_person_id, name, email, personable_type, client, refreshed_at) VALUES (?1, 'علي', 'a@x.sa', 'User', 0, ?2)`).bind(p2, at),
-      env.DB.prepare(`INSERT INTO bc_person_matches (user_id, bc_person_id, source, matched_by, matched_at) VALUES (?1, ?2, 'email', NULL, ?3)`).bind(auto.id, p1, at),
-      env.DB.prepare(`INSERT INTO bc_person_matches (user_id, bc_person_id, source, matched_by, matched_at) VALUES (?1, ?2, 'manual', ?3, ?4)`).bind(manual.id, p2, admin.id, at),
-      env.DB.prepare(`INSERT INTO bc_person_matches (user_id, bc_person_id, source, matched_by, matched_at) VALUES (?1, NULL, 'manual', ?2, ?3)`).bind(declined.id, admin.id, at),
-    ])
-
     const res = await call(app, 'GET', '/api/admin/members', { user: admin })
     expect(res.status).toBe(200)
     expect(res.headers.get('cache-control')).toBe('no-store')
@@ -87,12 +76,9 @@ describe('GET /api/admin/members', () => {
       role: 'editor',
       active: true,
       lastSeenAt: new Date(1793000000 * 1000).toISOString(),
-      basecamp: { state: 'auto', bcPersonId: p1, personName: 'سارة' },
     })
     expect(byId.get(auto.id)?.createdAt).toMatch(/^\d{4}-\d{2}-\d{2}T/)
-    expect(byId.get(manual.id)?.basecamp).toEqual({ state: 'manual', bcPersonId: p2, personName: 'علي' })
-    expect(byId.get(declined.id)?.basecamp).toEqual({ state: 'declined', bcPersonId: null, personName: null })
-    expect(byId.get(none.id)).toMatchObject({ active: false, lastSeenAt: null, basecamp: { state: 'none', bcPersonId: null, personName: null } })
+    expect(byId.get(none.id)).toMatchObject({ active: false, lastSeenAt: null })
     // Active members come first.
     const firstInactive = members.findIndex((m) => !m.active)
     expect(members.slice(firstInactive).every((m) => !m.active)).toBe(true)

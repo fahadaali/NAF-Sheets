@@ -3,6 +3,7 @@ import { diffTask } from '@naf-sheets/sync-engine'
 import {
   deletedTasks,
   findColumns,
+  firstSyncPlan,
   inboundEdits,
   isoToSerial,
   readDate,
@@ -75,6 +76,15 @@ describe('dates', () => {
     expect(readDate('2026/02/30')).toEqual({ ok: false })
     expect(readDate('بعد العيد')).toEqual({ ok: false })
   })
+
+  it('takes a date outside 2000–2100 for a typing slip, not 1900 (owner, 2026-11-17)', () => {
+    expect(readDate(30)).toEqual({ ok: false }) // 1900-01-29
+    expect(readDate(1)).toEqual({ ok: false })
+    expect(readDate('1999/12/31')).toEqual({ ok: false })
+    expect(readDate('2101/01/01')).toEqual({ ok: false })
+    expect(readDate(isoToSerial('2000-01-01')!)).toEqual({ ok: true, value: '2000-01-01' })
+    expect(readDate('2100/12/31')).toEqual({ ok: true, value: '2100-12-31' })
+  })
 })
 
 describe('findColumns', () => {
@@ -84,6 +94,11 @@ describe('findColumns', () => {
     const marketing = ['المهمة الرئيسية', 'المهمة', 'القسم', 'الحالة', 'الموعد', 'التقدم', 'الاسم']
     expect(columns(marketing)).toEqual({ main: 0, sub: 1, role: 2, status: 3, due: 4 })
     expect(columns(['الموعد', ' المهمة ', 'الحالة', 'القسم', 'المهمة الرئيسية'])).toEqual({ main: 4, sub: 1, role: 3, status: 2, due: 0 })
+  })
+
+  it('ignores invisible direction marks around a header', () => {
+    expect(columns(['المهمة الرئيسية\u200F', '\u200Eالمهمة', 'القسم', 'الحالة\u061C', 'الموعد'])).toEqual({ main: 0, sub: 1, role: 2, status: 3, due: 4 })
+    expect(readDate('\u200F2026/11/30')).toEqual({ ok: true, value: '2026-11-30' })
   })
 
   it('refuses a tab without a fixed column, in Arabic', () => {
@@ -111,10 +126,21 @@ describe('readRoles', () => {
     expect(conflicts).toEqual([{ role: 'الاعتمادات', names: ['فهد العتيبي - عمر العمار', 'فهد'] }])
   })
 
+  it('lets a written name win over an empty one for the same title, without a conflict', () => {
+    const { roles, conflicts } = readRoles([ROLES_TAB[0]!, ['الشريك', ''], ['الشريك', 'فهد العتيبي']])
+    expect(roles.get('الشريك')).toBe('فهد العتيبي')
+    expect(conflicts).toEqual([])
+  })
+
   it('splits several people in one name cell, keeping hyphenated names whole', () => {
     expect(splitNames('فهد العتيبي - عمر العمار')).toEqual(['فهد العتيبي', 'عمر العمار'])
     expect(splitNames('فهد العتيبي، عمر العمار')).toEqual(['فهد العتيبي', 'عمر العمار'])
     expect(splitNames('آل-سعيد')).toEqual(['آل-سعيد'])
+    // The other ways people write it (owner, 2026-11-17).
+    for (const written of ['فهد العتيبي – عمر العمار', 'فهد العتيبي — عمر العمار', 'فهد العتيبي -عمر العمار', 'فهد العتيبي- عمر العمار', 'فهد العتيبي؛ عمر العمار', 'فهد العتيبي,عمر العمار']) {
+      expect(splitNames(written)).toEqual(['فهد العتيبي', 'عمر العمار'])
+    }
+    expect(splitNames('محمد آل-سعيد – عمر العمار')).toEqual(['محمد آل-سعيد', 'عمر العمار'])
     expect(splitNames('  ')).toEqual([])
   })
 })
@@ -195,6 +221,25 @@ describe('readTab', () => {
     expect(r.rows).toHaveLength(4)
   })
 
+  it('counts the subtasks waiting for a held new to-do, one issue each', () => {
+    const r = read([HEADER, ['التأسيس', '', 'المدير المالي'], ['التأسيس', 'أ', 'الشريك'], ['التأسيس', 'ب', 'مسؤول السوشل ميديا']])
+    expect(r.tasks).toEqual([])
+    expect(r.issues.map((i) => [i.code, i.row])).toEqual([
+      ['role_unknown', 1],
+      ['role_without_name', 2],
+      ['parent_held', 3],
+    ])
+    expect(r.issues[2]!.subject).toBe('التأسيس')
+  })
+
+  it('holds back a subtask whose «القسم» is empty; a to-do with an empty «القسم» still goes (owner, 2026-11-17)', () => {
+    const r = read([HEADER, ['التأسيس'], ['التأسيس', 'بلا قسم', '', 'لم تبدأ'], ['التأسيس', 'بقسم', 'مسؤول السوشل ميديا', 'لم تبدأ']])
+    expect(r.tasks.map((t) => t.title)).toEqual(['التأسيس', 'بقسم'])
+    expect(r.issues.map((i) => [i.code, i.row, i.blocking])).toEqual([['role_empty', 2, true]])
+    expect(r.issues[0]!.message).toContain('«القسم» فارغ')
+    expect(r.rows).toHaveLength(3)
+  })
+
   it('holds back an unreadable date', () => {
     const r = read([HEADER, ['أ'], ['أ', 'ب', '', 'لم تبدأ', 'الأسبوع القادم']])
     expect(r.tasks.map((t) => t.title)).toEqual(['أ'])
@@ -202,10 +247,10 @@ describe('readTab', () => {
   })
 
   it('finds the parent by position and rewrites a stale repeated title (decision 4)', () => {
-    const values = [HEADER, ['فيديو الموشن القصير'], ['فيديو الموشن', 'بناء بنك أفكار', '', 'لم تبدأ']]
+    const values = [HEADER, ['فيديو الموشن القصير'], ['فيديو الموشن', 'بناء بنك أفكار', 'مسؤول السوشل ميديا', 'لم تبدأ']]
     const r = read(values)
     expect(r.tasks[1]!.parentUid).toBe(r.tasks[0]!.uid)
-    expect(r.fixes).toEqual([{ row: 2, column: 0, value: 'فيديو الموشن القصير' }])
+    expect(r.fixes).toEqual([{ row: 2, column: 0, value: "'فيديو الموشن القصير" }])
   })
 
   it('reports a subtask with no to-do above it and keeps it out of the sync', () => {
@@ -224,13 +269,14 @@ describe('readTab', () => {
 
   it('treats a copied row (same identity twice) as a new task', () => {
     const identities = new Map<number, RowIdentity>([
-      [1, { uid: 'todo-a', bcId: 1, level: 0 }],
-      [2, { uid: 'todo-a', bcId: 1, level: 0 }],
+      [1, { uid: 'todo-a', bcId: 1, level: 0, carry: { notesHtml: '<div>وصف</div>', startsOn: '2026-11-01' }, deletedRemotely: true }],
+      [2, { uid: 'todo-a', bcId: 1, level: 0, carry: { notesHtml: '<div>وصف</div>', startsOn: '2026-11-01' }, deletedRemotely: true }],
     ])
     const r = read([HEADER, ['أ'], ['أ نسخة']], identities)
-    expect(r.tasks.map((t) => [t.uid, t.bcId])).toEqual([
-      ['todo-a', 1],
-      ['u1', null],
+    expect(r.tasks.map((t) => [t.uid, t.bcId, t.notesHtml, t.startsOn, t.deletedRemotely])).toEqual([
+      ['todo-a', 1, '<div>وصف</div>', '2026-11-01', true],
+      // The copy takes nothing hidden from the original.
+      ['u1', null, null, null, false],
     ])
     expect(r.issues[0]).toMatchObject({ code: 'duplicate_identity', blocking: false })
   })
@@ -240,6 +286,103 @@ describe('readTab', () => {
     const todo = r.tasks[0]!
     const result = diffTask(todo, null, null, { directory: { externalContacts: new Map(), personNames: new Map() }, listId: 77 })
     expect(result.outbound[0]).toMatchObject({ type: 'create_todo', uid: 'u1', listId: 77 })
+  })
+})
+
+describe('copies and cleared titles (owner, 2026-11-17)', () => {
+  const synced = () =>
+    new Map<number, RowIdentity>([
+      [1, { uid: 'todo', bcId: 10, level: 0 }],
+      [2, { uid: 'sub', bcId: 11, level: 1 }],
+    ])
+
+  it('holds a new row that copies a task already in Basecamp, instead of creating it twice', () => {
+    const values = [
+      HEADER,
+      ['التأسيس'],
+      ['التأسيس', 'اعتماد المحتوى', 'مسؤول السوشل ميديا', 'لم تبدأ'],
+      ['التأسيس', 'اعتماد المحتوى', 'مسؤول السوشل ميديا', 'لم تبدأ'], // pasted copy, no identity
+      ['التأسيس', 'مهمة جديدة فعلاً', 'مسؤول السوشل ميديا', 'لم تبدأ'],
+      ['التأسيس'], // pasted copy of the to-do
+    ]
+    const r = read(values, synced())
+    expect(r.issues.filter((i) => i.code === 'copy_of_existing').map((i) => [i.row, i.subject])).toEqual([
+      [3, 'اعتماد المحتوى'],
+      [5, 'التأسيس'],
+    ])
+    expect(r.tasks.map((t) => [t.uid, t.title])).toEqual([
+      ['todo', 'التأسيس'],
+      ['sub', 'اعتماد المحتوى'],
+      ['u2', 'مهمة جديدة فعلاً'],
+    ])
+    // Held rows are rows: nothing is taken for deleted.
+    expect(r.rows).toHaveLength(5)
+  })
+
+  it('keeps a row whose two title cells were emptied: held with an alert, never taken for deleted', () => {
+    const values = [HEADER, ['التأسيس'], ['', '', 'مسؤول السوشل ميديا', 'لم تبدأ']]
+    const r = read(values, synced())
+    expect(r.issues.map((i) => [i.code, i.row])).toEqual([['titles_cleared', 2]])
+    expect(r.tasks.map((t) => t.uid)).toEqual(['todo'])
+    const known = [
+      { uid: 'todo', level: 0 as const, parentUid: null, bcId: 10 },
+      { uid: 'sub', level: 1 as const, parentUid: 'todo', bcId: 11 },
+    ]
+    expect(deletedTasks(known, r.rows)).toEqual([])
+  })
+
+  it('a to-do row emptied keeps its subtasks under it, without rewriting their to-do title', () => {
+    const values = [HEADER, ['', ''], ['التأسيس', 'اعتماد المحتوى', 'مسؤول السوشل ميديا', 'لم تبدأ']]
+    const r = read(values, synced())
+    expect(r.tasks.map((t) => [t.uid, t.parentUid])).toEqual([['sub', 'todo']])
+    expect(r.fixes).toEqual([])
+  })
+
+  it('lets an empty row with no task in Basecamp go unnoticed', () => {
+    const r = read([HEADER, ['التأسيس'], ['', '']], new Map([[2, { uid: 'never-sent', bcId: null }]]))
+    expect(r.issues).toEqual([])
+    expect(r.rows.map((x) => x.uid)).toEqual(['u1'])
+  })
+})
+
+describe('firstSyncPlan (decision 10)', () => {
+  it('matches rows with Basecamp records by title: a to-do by its title, a subtask under its to-do; the rest on each side', () => {
+    const r = read([
+      HEADER,
+      ['التأسيس'],
+      ['التأسيس', 'اعتماد المحتوى', 'مسؤول السوشل ميديا', 'لم تبدأ'],
+      ['التأسيس', 'في الملف وحده', 'مسؤول السوشل ميديا', 'لم تبدأ'],
+      ['جديدة'],
+    ])
+    const plan = firstSyncPlan(
+      r.rows,
+      [
+        { id: 10, content: ' التأسيس ' },
+        { id: 20, content: 'في Basecamp وحده' },
+      ],
+      new Map([
+        [10, [{ id: 11, title: 'اعتماد المحتوى' }, { id: 12, title: 'فرعية في Basecamp وحده' }]],
+        [20, [{ id: 21, title: 'تحتها' }]],
+      ]),
+    )
+    expect(plan.pairs).toEqual([
+      { uid: 'u1', bcId: 10, level: 0 },
+      { uid: 'u2', bcId: 11, level: 1 },
+    ])
+    expect(plan.fileOnly).toEqual(['u3', 'u4'])
+    expect(plan.basecampOnly).toEqual([
+      { bcId: 20, level: 0, todoId: null },
+      { bcId: 12, level: 1, todoId: 10 },
+      { bcId: 21, level: 1, todoId: 20 },
+    ])
+  })
+
+  it('pairs two rows of the same title with two records in order, and leaves known records and synced rows alone', () => {
+    const identities = new Map<number, RowIdentity>([[3, { uid: 'synced', bcId: 30, level: 0 }]])
+    const r = read([HEADER, ['مراجعة'], ['مراجعة'], ['قديمة']], identities)
+    const plan = firstSyncPlan(r.rows, [{ id: 1, content: 'مراجعة' }, { id: 2, content: 'مراجعة' }, { id: 30, content: 'قديمة' }], new Map(), new Set([30]))
+    expect(plan.pairs.map((p) => p.bcId)).toEqual([1, 2])
+    expect(plan.basecampOnly).toEqual([])
   })
 })
 
@@ -263,9 +406,9 @@ describe('inboundEdits', () => {
   it('writes a renamed to-do into its row and its subtask rows', () => {
     const out = inboundEdits(r.rows, cols, [{ type: 'update_row', uid: 'u3', fields: { title: 'فيديو الموشن ٢' } }])
     expect(out.edits).toEqual([
-      { row: 3, column: 0, value: 'فيديو الموشن ٢' },
-      { row: 4, column: 0, value: 'فيديو الموشن ٢' },
-      { row: 5, column: 0, value: 'فيديو الموشن ٢' },
+      { row: 3, column: 0, value: "'فيديو الموشن ٢" },
+      { row: 4, column: 0, value: "'فيديو الموشن ٢" },
+      { row: 5, column: 0, value: "'فيديو الموشن ٢" },
     ])
   })
 
@@ -276,7 +419,7 @@ describe('inboundEdits', () => {
       { type: 'update_row', uid: 'u5', fields: { completed: false } },
     ])
     expect(out.edits).toEqual([
-      { row: 2, column: 1, value: 'جديد' },
+      { row: 2, column: 1, value: "'جديد" },
       { row: 2, column: 4, value: '2026-12-01' },
       { row: 2, column: 3, value: 'منجزة' },
       { row: 4, column: 3, value: 'جارية' }, // decision 3

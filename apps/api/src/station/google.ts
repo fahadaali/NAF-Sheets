@@ -306,14 +306,17 @@ export class GoogleClient {
     await this.call(`${SHEETS}/${encodeURIComponent(spreadsheetId)}:batchUpdate`, { method: 'POST', body: JSON.stringify({ requests }) })
   }
 
-  /** Cell notes (e.g. «محذوفة في Basecamp»); `null` removes the note. */
-  async setNotes(spreadsheetId: string, notes: { sheetId: number; row: number; column: number; note: string | null }[]): Promise<void> {
-    if (notes.length === 0) return
-    const requests = notes.map((n) => ({
-      updateCells: {
-        start: { sheetId: n.sheetId, rowIndex: n.row, columnIndex: n.column },
-        fields: 'note',
-        rows: [{ values: [{ note: n.note ?? '' }] }],
+  /**
+   * Strikes the text of cells through, or not (a record deleted in Basecamp,
+   * §4.2). Only the strikethrough is touched: every other format stays.
+   */
+  async strike(spreadsheetId: string, cells: { sheetId: number; row: number; column: number; strike: boolean }[]): Promise<void> {
+    if (cells.length === 0) return
+    const requests = cells.map((c) => ({
+      repeatCell: {
+        range: { sheetId: c.sheetId, startRowIndex: c.row, endRowIndex: c.row + 1, startColumnIndex: c.column, endColumnIndex: c.column + 1 },
+        cell: { userEnteredFormat: { textFormat: { strikethrough: c.strike } } },
+        fields: 'userEnteredFormat.textFormat.strikethrough',
       },
     }))
     await this.call(`${SHEETS}/${encodeURIComponent(spreadsheetId)}:batchUpdate`, { method: 'POST', body: JSON.stringify({ requests }) })

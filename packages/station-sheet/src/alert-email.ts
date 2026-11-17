@@ -37,6 +37,11 @@ export type StationAlert =
       /** 1-based sheet rows concerned. */
       rowNumbers?: number[]
     }
+  /**
+   * A title written twice in the roles tab with different names: the first is
+   * used. Nothing stops, but the admin should say which one is right.
+   */
+  | { kind: 'roles_conflict'; linkId: string; linkTitle: string; tab: string; role: string; names: string[] }
   /** A whole tab stopped: fixed column missing or renamed. */
   | { kind: 'tab_stopped'; linkId: string; linkTitle: string; tab: string; reason: string }
   /** The whole link stopped: file unshared or deleted, Basecamp refused the sync account. */
@@ -62,6 +67,8 @@ export function alertKey(alert: StationAlert): string {
       return `not_project_member:${alert.linkId}:${alert.bcPersonId}`
     case 'rows_held':
       return `rows_held:${alert.linkId}:${alert.tab}:${alert.code}:${alert.subject ?? ''}`
+    case 'roles_conflict':
+      return `roles_conflict:${alert.linkId}:${alert.role}`
     case 'tab_stopped':
       return `tab_stopped:${alert.linkId}:${alert.tab}`
     case 'link_stopped':
@@ -105,7 +112,7 @@ function itemOf(alert: StationAlert, origin: string): Item {
       const names = `${origin}/names?name=${encodeURIComponent(alert.name)}`
       const item: Item = {
         title: `اسم غير مربوط: «${alert.name}»`,
-        detail: `ظهر أمام المسمى «${alert.role}» في تبويب «${alert.tab}» من «${alert.linkTitle}»، ولا يقابله شخص في Basecamp. توقفت مزامنة ${rowsText(alert.rows)} حتى يُربط.`,
+        detail: `ظهر أمام المسمى «${alert.role}» في تبويب «${alert.tab}» من «${alert.linkTitle}»، ولا يقابله شخص في Basecamp. توقفت مزامنة ${rowsText(alert.rows)} حتى يُربط${rowList(alert.rowNumbers)}.`,
         action: { label: 'اربط الاسم', url: names },
       }
       if (alert.suggestion) {
@@ -125,6 +132,12 @@ function itemOf(alert: StationAlert, origin: string): Item {
       return {
         title: `توقفت مزامنة ${rowsText(alert.rows)} في تبويب «${alert.tab}»`,
         detail: `في «${alert.linkTitle}»: ${alert.reason}${rowList(alert.rowNumbers)}`,
+        action: { label: 'افتح الربط', url: link },
+      }
+    case 'roles_conflict':
+      return {
+        title: `المسمى «${alert.role}» مكتوب بأكثر من اسم`,
+        detail: `في تبويب «${alert.tab}» من «${alert.linkTitle}»: ${alert.names.map((n) => `«${n}»`).join(' و')}. يُعمل بالأول حتى يُحذف المكرر أو يوحَّد الاسم.`,
         action: { label: 'افتح الربط', url: link },
       }
     case 'tab_stopped':
