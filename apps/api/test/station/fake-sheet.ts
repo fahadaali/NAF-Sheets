@@ -1,5 +1,5 @@
 // An in-memory Google spreadsheet behind the station's SheetPort: values,
-// row identities that move with their rows, cell writes, inserted rows, notes.
+// row identities that move with their rows, cell writes, inserted rows, struck-through cells.
 
 import { GoogleError } from '../../src/station/google'
 import type { SheetPort } from '../../src/station/run'
@@ -23,6 +23,7 @@ const SERIAL_EPOCH = Date.UTC(1899, 11, 30)
  */
 function userEntered(value: string | number | null): Cell {
   if (typeof value !== 'string') return value
+  if (value === '') return null // an empty write clears the cell
   if (value.startsWith("'")) return value.slice(1)
   if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return Math.round((Date.parse(value) - SERIAL_EPOCH) / 86_400_000)
   if (/^[+-]?\d+(\.\d+)?%$/.test(value)) return Number(value.slice(0, -1)) / 100
@@ -34,7 +35,8 @@ function userEntered(value: string | number | null): Cell {
 export class FakeSheet implements SheetPort {
   readonly serviceAccountEmail = 'naf-sync@naf-sheets-station.iam.gserviceaccount.com'
   readonly tabs: FakeTab[] = []
-  readonly notes = new Map<string, string>()
+  /** `sheetId:row:column` of the cells whose text is struck through; they move with their rows. */
+  readonly struck = new Set<string>()
   title = 'الاتصال المؤسسي والتسويق'
   shared = true
   version = 0
@@ -128,25 +130,25 @@ export class FakeSheet implements SheetPort {
       const t = this.tabs.find((x) => x.sheetId === ins.sheetId)!
       t.rows.splice(ins.before, 0, [...ins.values])
       t.ids.splice(ins.before, 0, ins.uid)
-      // Notes move with their cells.
-      const moved = [...this.notes].map(([key, note]) => {
+      // Formats move with their cells.
+      const moved = [...this.struck].map((key) => {
         const [sheet, row, column] = key.split(':').map(Number) as [number, number, number]
-        return [sheet === t.sheetId && row >= ins.before ? `${sheet}:${row + 1}:${column}` : key, note] as const
+        return sheet === t.sheetId && row >= ins.before ? `${sheet}:${row + 1}:${column}` : key
       })
-      this.notes.clear()
-      for (const [key, note] of moved) this.notes.set(key, note)
+      this.struck.clear()
+      for (const key of moved) this.struck.add(key)
     }
     if (inserts.length > 0) this.version += 1
   }
 
-  async setNotes(_id: string, notes: { sheetId: number; row: number; column: number; note: string | null }[]): Promise<void> {
+  async strike(_id: string, cells: { sheetId: number; row: number; column: number; strike: boolean }[]): Promise<void> {
     this.check()
-    for (const n of notes) {
-      const key = `${n.sheetId}:${n.row}:${n.column}`
-      if (n.note) this.notes.set(key, n.note)
-      else this.notes.delete(key)
+    for (const c of cells) {
+      const key = `${c.sheetId}:${c.row}:${c.column}`
+      if (c.strike) this.struck.add(key)
+      else this.struck.delete(key)
     }
-    // A note is an edit of the file: Drive's modifiedTime moves, a notification goes out.
-    if (notes.length > 0) this.version += 1
+    // A format is an edit of the file: Drive's modifiedTime moves, a notification goes out.
+    if (cells.length > 0) this.version += 1
   }
 }

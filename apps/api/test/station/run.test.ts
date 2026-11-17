@@ -347,8 +347,11 @@ describe('Basecamp → sheet', () => {
     const todo = w.todos().find((t) => t.content === 'المناسبات')!
     w.fake.todos.delete(todo.id)
     await w.run()
-    expect(w.sheet.tab(TAB).rows.some((r) => r[COL.main] === 'المناسبات')).toBe(true)
-    expect([...w.sheet.notes.values()].some((n) => n.startsWith('محذوفة في Basecamp'))).toBe(true)
+    const tab = w.sheet.tab(TAB)
+    // §4.2 (owner, 2026-11-17): «الحالة» says so and the row's text is struck through.
+    expect(tab.rows[4]![COL.main]).toBe('المناسبات')
+    expect(tab.rows[4]![COL.status]).toBe('محذوفة في Basecamp')
+    expect([COL.main, COL.sub, COL.role, COL.status, COL.due].every((c) => w.sheet.struck.has(`2:4:${c}`))).toBe(true)
     // Marked once: later runs leave the file alone (each edit would start another run).
     const version = w.sheet.version
     await w.run()
@@ -356,7 +359,23 @@ describe('Basecamp → sheet', () => {
     expect(w.sheet.version).toBe(version)
   })
 
-  it('puts the note on the right row when rows are inserted above it in the same run', async () => {
+  it('writes the previous status back and unstrikes the row when the record comes back from the trash', async () => {
+    const w = await world(SOCIAL)
+    await w.run()
+    const tab = w.sheet.tab(TAB)
+    const todo = w.todos().find((t) => t.content === 'المناسبات')!
+    todo.status = 'trashed'
+    todo.updatedAt = w.fake.tick()
+    await w.run()
+    expect(tab.rows[4]![COL.status]).toBe('محذوفة في Basecamp')
+    todo.status = 'active'
+    todo.updatedAt = w.fake.tick()
+    await w.run()
+    expect(tab.rows[4]![COL.status] ?? null).toBe(null) // a to-do row had no status
+    expect([...w.sheet.struck].filter((k) => k.startsWith('2:4:'))).toEqual([])
+  })
+
+  it('puts the mark on the right row when rows are inserted above it in the same run', async () => {
     const w = await world(SOCIAL)
     await w.run()
     const motion = w.todos().find((t) => t.content === 'فيديو الموشن')!
@@ -365,9 +384,9 @@ describe('Basecamp → sheet', () => {
     w.fake.todos.delete(w.todos().find((t) => t.content === 'المناسبات')!.id)
     await w.run()
     const tab = w.sheet.tab(TAB)
-    const noted = [...w.sheet.notes.keys()].map((k) => Number(k.split(':')[1]))
-    expect(noted.map((row) => tab.rows[row]![COL.main])).toEqual(['المناسبات'])
-    expect(noted.map((row) => tab.rows[row]![COL.sub] ?? null)).toEqual([null])
+    const marked = [...new Set([...w.sheet.struck].map((k) => Number(k.split(':')[1])))]
+    expect(marked.map((row) => tab.rows[row]![COL.main])).toEqual(['المناسبات'])
+    expect(marked.map((row) => tab.rows[row]![COL.sub] ?? null)).toEqual([null])
   })
 })
 

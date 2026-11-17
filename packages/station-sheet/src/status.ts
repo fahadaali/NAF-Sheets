@@ -8,6 +8,8 @@ export const STATUS = {
   inProgress: 'جارية',
   done: 'منجزة',
   paused: 'متوقفة',
+  /** Written by the platform when the record was deleted, trashed or archived in Basecamp (§4.2). */
+  deletedInBasecamp: 'محذوفة في Basecamp',
 } as const
 
 export function isDone(status: CellValue): boolean {

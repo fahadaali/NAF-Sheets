@@ -42,6 +42,8 @@ export interface TaskRow {
   subtasks_count: number | null
   subtasks_done: number | null
   deleted_remotely: 0 | 1
+  /** «الحالة» before the record was deleted in Basecamp (migrations/0014). */
+  status_before_delete: string | null
   assign_from_sheet: 0 | 1
   /** Project members last put on the to-do's completion list and subscribers (sorted ids). */
   notify_key: string | null

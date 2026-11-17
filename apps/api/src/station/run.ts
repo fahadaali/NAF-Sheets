@@ -38,7 +38,7 @@ import {
 import { GoogleError, googleErrorMessage, type GoogleClient } from './google'
 import { baseOf, getLink, getNames, getTabs, getTasks, logStatement, recordAlerts, saveTaskStatement, type TaskRow } from './store'
 
-export type SheetPort = Pick<GoogleClient, 'serviceAccountEmail' | 'spreadsheet' | 'tabValues' | 'rowIdentities' | 'write' | 'insertRows' | 'setNotes' | 'modifiedTime'>
+export type SheetPort = Pick<GoogleClient, 'serviceAccountEmail' | 'spreadsheet' | 'tabValues' | 'rowIdentities' | 'write' | 'insertRows' | 'strike' | 'modifiedTime'>
 
 /** Full pass of every link: catches the Basecamp changes no webhook announces (a subtask's date or title). */
 export const FULL_PASS_MS = 15 * 60_000
@@ -63,7 +63,6 @@ export interface RunReport {
   alerts: StationAlert[]
 }
 
-const DELETED_NOTE = 'محذوفة في Basecamp. احذف الصف إن لم تعد تحتاجه، أو استرجع المهمة من سلة Basecamp.'
 
 export async function syncLink(linkId: string, deps: RunDeps): Promise<RunReport> {
   const { db, google, basecamp, token } = deps
@@ -160,7 +159,7 @@ export async function syncLink(linkId: string, deps: RunDeps): Promise<RunReport
   const known = new Map((await getTasks(db, link.id)).map((t) => [t.uid, t]))
   const cellWrites: { tabTitle: string; row: number; column: number; value: string | number | null }[] = []
   const inserts: Parameters<SheetPort['insertRows']>[1] = []
-  const notes: Parameters<SheetPort['setNotes']>[1] = []
+  const struck: Parameters<SheetPort['strike']>[1] = []
   const afterSheetWrite: D1PreparedStatement[] = []
 
   for (const tab of tabs) {
@@ -354,20 +353,29 @@ export async function syncLink(linkId: string, deps: RunDeps): Promise<RunReport
       if (counts) afterSheetWrite.push(db.prepare(`UPDATE station_tasks SET subtasks_count = ?2, subtasks_done = ?3 WHERE uid = ?1`).bind(local.uid, counts.c, counts.d))
     }
 
-    // Basecamp → sheet cells.
+    // Basecamp → sheet cells. A record deleted in Basecamp (§4.2): «الحالة»
+    // says so and the row's fixed cells are struck through; what «الحالة» held
+    // is kept and written back if the record comes back. First, so that an
+    // edit from Basecamp in the same run (its completion) wins.
     const edits = inboundEdits(read.rows, columns, inbound)
-    for (const e of edits.edits) cellWrites.push({ tabTitle: tab.title, ...e })
+    const fixedColumns = [columns.main, columns.sub, columns.role, columns.status, columns.due]
     for (const s of edits.structural) {
       const r = read.rows.find((x) => 'uid' in s && x.uid === s.uid)
       if (!r) continue
       if (s.type === 'mark_deleted_remotely') {
-        notes.push({ sheetId: tab.google_sheet_id, row: r.row, column: r.level === 0 ? columns.main : columns.sub, note: DELETED_NOTE })
-        afterSheetWrite.push(db.prepare(`UPDATE station_tasks SET deleted_remotely = 1 WHERE uid = ?1`).bind(s.uid))
+        cellWrites.push({ tabTitle: tab.title, row: r.row, column: columns.status, value: STATUS.deletedInBasecamp })
+        for (const column of fixedColumns) struck.push({ sheetId: tab.google_sheet_id, row: r.row, column, strike: true })
+        afterSheetWrite.push(db.prepare(`UPDATE station_tasks SET deleted_remotely = 1, status_before_delete = ?2 WHERE uid = ?1`).bind(s.uid, r.status))
+        report.toSheet += 1
       } else if (s.type === 'restore_row') {
-        notes.push({ sheetId: tab.google_sheet_id, row: r.row, column: r.level === 0 ? columns.main : columns.sub, note: null })
-        afterSheetWrite.push(db.prepare(`UPDATE station_tasks SET deleted_remotely = 0 WHERE uid = ?1`).bind(s.uid))
+        const before = known.get(s.uid)?.status_before_delete
+        cellWrites.push({ tabTitle: tab.title, row: r.row, column: columns.status, value: before ?? '' })
+        for (const column of fixedColumns) struck.push({ sheetId: tab.google_sheet_id, row: r.row, column, strike: false })
+        afterSheetWrite.push(db.prepare(`UPDATE station_tasks SET deleted_remotely = 0, status_before_delete = NULL WHERE uid = ?1`).bind(s.uid))
+        report.toSheet += 1
       }
     }
+    for (const e of edits.edits) cellWrites.push({ tabTitle: tab.title, ...e })
     report.toSheet += edits.edits.length
 
     // Records created in Basecamp → new rows.
@@ -497,10 +505,10 @@ export async function syncLink(linkId: string, deps: RunDeps): Promise<RunReport
   }
 
   // --- Write the sheet once, then the bases ----------------------------------------
-  // Cells and notes use the row numbers as read, so both go before the inserts move rows.
+  // Cells and formats use the row numbers as read, so both go before the inserts move rows.
   const written = await writeOrStop(async () => {
     await google.write(link.spreadsheet_id, { cells: cellWrites })
-    await google.setNotes(link.spreadsheet_id, notes)
+    await google.strike(link.spreadsheet_id, struck)
     await google.insertRows(link.spreadsheet_id, inserts)
   })
   if (!written) return { ...report, status: 'stopped' }
