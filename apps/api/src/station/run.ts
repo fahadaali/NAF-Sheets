@@ -93,6 +93,8 @@ export async function syncLink(linkId: string, deps: RunDeps): Promise<RunReport
   // --- Read the sheet ----------------------------------------------------------
   let modified: string | null = null
   let mappedNames = new Set<string>()
+  /** What `finish` stores in `roles_json`: set once the roles are read (null keeps what is stored). */
+  let rolesJson: string | null = null
   let values: Map<string, unknown[][]>
   let identities: Awaited<ReturnType<SheetPort['rowIdentities']>>
   let tabs = await getTabs(db, link.id)
@@ -129,6 +131,8 @@ export async function syncLink(linkId: string, deps: RunDeps): Promise<RunReport
   for (const c of conflicts) alert({ kind: 'roles_conflict', ...base, tab: link.roles_tab, role: c.role, names: c.names })
   const people = await getNames(db)
   mappedNames = new Set(people.keys())
+  /** Per title, the last names that were all mapped (§6.2: the suggestion when a name changes). */
+  const knownRoles = parseRoles(link.roles_json)
   const projectPeople = await basecamp.people.listProject(token, link.bc_project_id).all()
   // Notifications reach everyone (owner, 2026-11-15): every member of the
   // project (clients excepted) hears of every completion.
@@ -516,6 +520,7 @@ export async function syncLink(linkId: string, deps: RunDeps): Promise<RunReport
     afterSheetWrite.push(logStatement(db, { linkId: link.id, direction: 'to_sheet', action: 'write', detail: { cells: cellWrites.length, rows: inserts.length } }, at()))
   }
   for (let i = 0; i < afterSheetWrite.length; i += 50) await db.batch(afterSheetWrite.slice(i, i + 50))
+  rolesJson = rolesToRemember()
   await finish('ok', null)
   return report
 
@@ -546,11 +551,40 @@ export async function syncLink(linkId: string, deps: RunDeps): Promise<RunReport
     for (const g of groups.values()) {
       if (g.code === 'name_unmapped') {
         const role = [...roles].find(([, names]) => splitNames(names).includes(g.subject))?.[0] ?? ''
-        alert({ kind: 'name_unmapped', ...base, tab, role, name: g.subject, rows: g.rows.length, rowNumbers: g.rows })
+        const suggestion = suggestionFor(role, g.subject)
+        alert({ kind: 'name_unmapped', ...base, tab, role, name: g.subject, rows: g.rows.length, rowNumbers: g.rows, ...(suggestion ? { suggestion } : {}) })
       } else {
         alert({ kind: 'rows_held', ...base, tab, code: g.code, subject: g.subject, reason: g.message, rows: g.rows.length, rowNumbers: g.rows })
       }
     }
+  }
+
+  /**
+   * «هل هو …؟» (§6.2): the title's name changed to `name`, unmapped, and the
+   * name it replaced was mapped. With several names, the one in the same place.
+   * Never applied by itself: an admin confirms it on the names screen.
+   */
+  function suggestionFor(role: string, name: string): { bcPersonId: number; personName: string; previousName: string } | undefined {
+    const previous = knownRoles[role]
+    if (!previous) return undefined
+    const before = splitNames(previous)
+    const now = splitNames(roles.get(role) ?? '')
+    const at = now.indexOf(name)
+    const old = before.length === now.length ? before[at] : before.length === 1 ? before[0] : undefined
+    if (old === undefined || old === name) return undefined
+    const id = people.get(old)
+    if (id === undefined) return undefined
+    return { bcPersonId: id, personName: personName.get(id) ?? old, previousName: old }
+  }
+
+  /** The titles to remember after this run: those whose names are all mapped now; the others keep what they had. */
+  function rolesToRemember(): string {
+    const next = { ...knownRoles }
+    for (const [role, names] of roles) {
+      const list = splitNames(names)
+      if (list.length > 0 && list.every((n) => people.has(n))) next[role] = names
+    }
+    return JSON.stringify(next)
   }
 
   function roleFor(ids: readonly number[]): string {
@@ -663,11 +697,23 @@ export async function syncLink(linkId: string, deps: RunDeps): Promise<RunReport
     await db
       .prepare(
         `UPDATE station_links SET last_sync_at = ?2, last_error = ?3, last_modified = COALESCE(?4, last_modified),
-           last_full_at = CASE WHEN ?5 = 1 THEN ?2 ELSE last_full_at END, updated_at = ?2 WHERE id = ?1`,
+           last_full_at = CASE WHEN ?5 = 1 THEN ?2 ELSE last_full_at END, roles_json = COALESCE(?6, roles_json), updated_at = ?2 WHERE id = ?1`,
       )
-      .bind(link!.id, at(), error, status === 'ok' ? modified : null, status === 'ok' && fullPass ? 1 : 0)
+      .bind(link!.id, at(), error, status === 'ok' ? modified : null, status === 'ok' && fullPass ? 1 : 0, rolesJson)
       .run()
     await recordAlerts(db, link!.id, report.alerts, mappedNames, at(), { complete: status === 'ok', skippedTabs })
+  }
+}
+
+/** `roles_json` read back; anything unexpected is no memory. */
+function parseRoles(json: string | null): Record<string, string> {
+  if (!json) return {}
+  try {
+    const value = JSON.parse(json) as unknown
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) return {}
+    return Object.fromEntries(Object.entries(value).filter((e): e is [string, string] => typeof e[1] === 'string'))
+  } catch {
+    return {}
   }
 }
 

@@ -539,6 +539,19 @@ describe('problems', () => {
     expect(resolved?.resolved_at).not.toBeNull()
   })
 
+  it('suggests the same person when a title’s name changes («هل هو …؟ تأكيد», §6.2), and never maps it by itself', async () => {
+    const w = await world(SOCIAL)
+    await w.run()
+    w.sheet.tab('المسميات').rows[2]![1] = 'أبو عمار' // «مسؤول السوشل ميديا» was «عمر العمار», mapped
+    const report = await w.run()
+    const alert = report.alerts.find((a) => a.kind === 'name_unmapped' && a.name === 'أبو عمار')
+    expect(alert).toMatchObject({ role: 'مسؤول السوشل ميديا', suggestion: { bcPersonId: w.people.omar.id, personName: 'عمر أبو عمار', previousName: 'عمر العمار' } })
+    // Still suggested on the next run (the memory keeps the last mapped name), and nothing was mapped.
+    const again = await w.run()
+    expect(again.alerts.find((a) => a.kind === 'name_unmapped')).toMatchObject({ suggestion: { previousName: 'عمر العمار' } })
+    expect(await env.DB.prepare(`SELECT name FROM station_names WHERE name = 'أبو عمار'`).first()).toBeNull()
+  })
+
   it('reports a title written twice in «المسميات» with different names, and keeps the first', async () => {
     const w = await world(SOCIAL)
     w.sheet.tab('المسميات').rows.push(['مسؤول السوشل ميديا', 'فهد العتيبي', ''])

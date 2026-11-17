@@ -18,6 +18,8 @@ export interface LinkRow {
   last_full_at: string | null
   /** Set when an admin unlinked it (the record is kept, migrations/0013); null while linked. */
   unlinked_at: string | null
+  /** Per title of the roles tab, the last names all mapped to Basecamp people (JSON; migrations/0015). */
+  roles_json: string | null
   last_error: string | null
   created_by: string
   created_at: string
