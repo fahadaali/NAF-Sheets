@@ -257,16 +257,17 @@ export function stationRoutes(depsIn?: StationDeps): Hono<AppEnv> {
   routes.delete('/links/:id', async (c) => {
     if (!isAdmin(c)) return fail(c, 403, 'admin_only', ADMIN_ONLY)
     const id = c.req.param('id')
+    const link = await c.env.DB.prepare(`SELECT spreadsheet_id, bc_project_id FROM station_links WHERE id = ?1`).bind(id).first<{ spreadsheet_id: string; bc_project_id: number }>()
+    if (!link) return fail(c, 404, 'link_not_found', 'لم يُعثر على هذا الربط، فربما فُكّ. حدّث الصفحة.')
     const channel = await c.env.DB.prepare(`SELECT channel_id, resource_id FROM station_channels WHERE link_id = ?1`).bind(id).first<{ channel_id: string; resource_id: string }>()
     const at = new Date(deps().now()).toISOString()
-    const r = await c.env.DB.batch([
+    await c.env.DB.batch([
       c.env.DB.prepare(`DELETE FROM station_links WHERE id = ?1`).bind(id),
       c.env.DB.prepare(`UPDATE station_alerts SET resolved_at = ?2 WHERE link_id = ?1 AND resolved_at IS NULL`).bind(id, at),
       c.env.DB.prepare(
-        `INSERT INTO audit_log (at, actor_id, action, entity_type, entity_id, workbook_id, details_json) VALUES (?1, ?2, 'station.link.delete', 'station_link', ?3, NULL, NULL)`,
-      ).bind(at, callerOf(c).id, id),
+        `INSERT INTO audit_log (at, actor_id, action, entity_type, entity_id, workbook_id, details_json) VALUES (?1, ?2, 'station.link.delete', 'station_link', ?3, NULL, ?4)`,
+      ).bind(at, callerOf(c).id, id, JSON.stringify({ spreadsheetId: link.spreadsheet_id, bcProjectId: link.bc_project_id })),
     ])
-    if (r[0]!.meta.changes !== 1) return fail(c, 404, 'link_not_found', 'لم يُعثر على هذا الربط، فربما فُكّ. حدّث الصفحة.')
     if (channel) {
       const g = google(c) as { stopChannel?: (ch: { id: string; resourceId: string }) => Promise<void> }
       await g.stopChannel?.({ id: channel.channel_id, resourceId: channel.resource_id }).catch(() => undefined)

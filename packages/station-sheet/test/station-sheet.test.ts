@@ -229,13 +229,14 @@ describe('readTab', () => {
 
   it('treats a copied row (same identity twice) as a new task', () => {
     const identities = new Map<number, RowIdentity>([
-      [1, { uid: 'todo-a', bcId: 1, level: 0 }],
-      [2, { uid: 'todo-a', bcId: 1, level: 0 }],
+      [1, { uid: 'todo-a', bcId: 1, level: 0, carry: { notesHtml: '<div>وصف</div>', startsOn: '2026-11-01' }, deletedRemotely: true }],
+      [2, { uid: 'todo-a', bcId: 1, level: 0, carry: { notesHtml: '<div>وصف</div>', startsOn: '2026-11-01' }, deletedRemotely: true }],
     ])
     const r = read([HEADER, ['أ'], ['أ نسخة']], identities)
-    expect(r.tasks.map((t) => [t.uid, t.bcId])).toEqual([
-      ['todo-a', 1],
-      ['u1', null],
+    expect(r.tasks.map((t) => [t.uid, t.bcId, t.notesHtml, t.startsOn, t.deletedRemotely])).toEqual([
+      ['todo-a', 1, '<div>وصف</div>', '2026-11-01', true],
+      // The copy takes nothing hidden from the original.
+      ['u1', null, null, null, false],
     ])
     expect(r.issues[0]).toMatchObject({ code: 'duplicate_identity', blocking: false })
   })

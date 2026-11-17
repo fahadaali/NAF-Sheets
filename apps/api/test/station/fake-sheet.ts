@@ -129,5 +129,7 @@ export class FakeSheet implements SheetPort {
       if (n.note) this.notes.set(key, n.note)
       else this.notes.delete(key)
     }
+    // A note is an edit of the file: Drive's modifiedTime moves, a notification goes out.
+    if (notes.length > 0) this.version += 1
   }
 }

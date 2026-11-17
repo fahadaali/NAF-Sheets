@@ -179,6 +179,7 @@ export async function syncLink(linkId: string, deps: RunDeps): Promise<RunReport
         bcId: k?.bc_id ?? null,
         ...(k ? { level: k.level } : {}),
         ...(b ? { carry: { notesHtml: notesOf(b), startsOn: b.startsOn } } : {}),
+        ...(k?.deleted_remotely === 1 ? { deletedRemotely: true } : {}),
       })
     }
     const read = readTab({

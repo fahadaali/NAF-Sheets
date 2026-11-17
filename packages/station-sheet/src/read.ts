@@ -32,6 +32,8 @@ export interface RowIdentity {
    * synced base so a full to-do PUT (which clears omitted fields) keeps them.
    */
   carry?: Pick<LocalTask, 'notesHtml' | 'startsOn'>
+  /** The record was deleted, trashed or archived in Basecamp and the row already carries the note. */
+  deletedRemotely?: boolean
 }
 
 export interface ReadTabInput {
@@ -185,7 +187,8 @@ export function readTab(input: ReadTabInput): ReadTabResult {
 
     if (blocked) continue
     const ids = who.ok ? who.ids : []
-    const carry = input.identities.get(r)?.carry
+    // A copied row is a new task: it takes nothing hidden from the row it was copied from.
+    const carry = identity.known?.carry
     result.tasks.push({
       uid: row.uid,
       sheetId: input.sheetId,
@@ -204,7 +207,7 @@ export function readTab(input: ReadTabInput): ReadTabResult {
       assignMode: level === 0 && ids.length === 0 ? 'auto' : 'manual',
       localChangedAt: input.changedAt,
       bcId: row.bcId,
-      deletedRemotely: false,
+      deletedRemotely: identity.known?.deletedRemotely ?? false,
     })
   }
   // Option أ: an empty to-do date is the latest of its subtasks' dates.
@@ -213,16 +216,17 @@ export function readTab(input: ReadTabInput): ReadTabResult {
   }
   return result
 
-  function identityFor(r: number, level: TaskLevel): { uid: TaskUid; bcId: number | null; blocked: boolean } {
+  /** The row's identity; `known` is the stored one it keeps, `null` for a new (or copied) row. */
+  function identityFor(r: number, level: TaskLevel): { uid: TaskUid; bcId: number | null; blocked: boolean; known: RowIdentity | null } {
     const known = input.identities.get(r)
     if (known !== undefined && !usedUids.has(known.uid)) {
       usedUids.add(known.uid)
       if (known.level !== undefined && known.level !== level) {
         const was = known.level === 0 ? 'مهمة رئيسية' : 'مهمة فرعية'
         issue('level_changed', r, true, `الصف ${human(r)}: كان ${was} ولا يمكن تحويله في Basecamp. أعده كما كان، أو احذفه وأضف صفاً جديداً.`)
-        return { uid: known.uid, bcId: known.bcId, blocked: true }
+        return { uid: known.uid, bcId: known.bcId, blocked: true, known }
       }
-      return { uid: known.uid, bcId: known.bcId, blocked: false }
+      return { uid: known.uid, bcId: known.bcId, blocked: false, known }
     }
     if (known !== undefined) {
       issue('duplicate_identity', r, false, `الصف ${human(r)}: نسخة من صف آخر، فسيُعامل مهمة جديدة.`)
@@ -230,7 +234,7 @@ export function readTab(input: ReadTabInput): ReadTabResult {
     const uid = input.newUid()
     usedUids.add(uid)
     result.newIdentities.push({ row: r, uid })
-    return { uid, bcId: null, blocked: false }
+    return { uid, bcId: null, blocked: false, known: null }
   }
 }
 

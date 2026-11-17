@@ -106,6 +106,30 @@ describe('wizard and links', () => {
   })
 })
 
+describe('pause and unlink', () => {
+  it('pauses and resumes a link (admin only), and unlinks it with an audit entry', async () => {
+    const s = await setup()
+    const { id } = await json<{ id: string }>(await call(s.app, 'POST', '/api/station/links', { user: s.admin, body: { source: SID, bcProjectId: s.project.id, tabs: [2] }, env: s.h.env }))
+    s.h.inbound.take()
+    expect((await call(s.app, 'PATCH', `/api/station/links/${id}`, { user: s.viewer, body: { state: 'paused' }, env: s.h.env })).status).toBe(403)
+    expect((await call(s.app, 'PATCH', `/api/station/links/${id}`, { user: s.admin, body: { state: 'paused' }, env: s.h.env })).status).toBe(200)
+    expect(s.h.inbound.take()).toEqual([])
+    expect((await call(s.app, 'PATCH', `/api/station/links/${id}`, { user: s.admin, body: { state: 'active' }, env: s.h.env })).status).toBe(200)
+    expect(s.h.inbound.take().map((m) => m.body)).toEqual([{ kind: 'station_sync', linkId: id, reason: 'manual' }])
+
+    expect((await call(s.app, 'DELETE', `/api/station/links/${id}`, { user: s.viewer, env: s.h.env })).status).toBe(403)
+    const res = await call(s.app, 'DELETE', `/api/station/links/${id}`, { user: s.admin, env: s.h.env })
+    expect(res.status).toBe(200)
+    expect(await env.DB.prepare(`SELECT id FROM station_links WHERE id = ?1`).bind(id).first()).toBeNull()
+    const audit = await env.DB.prepare(`SELECT actor_id, details_json FROM audit_log WHERE action = 'station.link.delete' AND entity_id = ?1`).bind(id).first<{ actor_id: string; details_json: string }>()
+    expect(audit?.actor_id).toBe(s.admin.id)
+    expect(JSON.parse(audit!.details_json)).toEqual({ spreadsheetId: SID, bcProjectId: s.project.id })
+    const gone = await call(s.app, 'DELETE', `/api/station/links/${id}`, { user: s.admin, env: s.h.env })
+    expect(gone.status).toBe(404)
+    expect(isArabic((await json<{ message: string }>(gone)).message)).toBe(true)
+  })
+})
+
 describe('triggers', () => {
   it('turns a Drive notification into a run, ignores the handshake, 404s an unknown channel', async () => {
     const s = await setup()

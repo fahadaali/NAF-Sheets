@@ -274,6 +274,11 @@ describe('Basecamp → sheet', () => {
     await w.run()
     expect(w.sheet.tab(TAB).rows.some((r) => r[COL.main] === 'المناسبات')).toBe(true)
     expect([...w.sheet.notes.values()].some((n) => n.startsWith('محذوفة في Basecamp'))).toBe(true)
+    // Marked once: later runs leave the file alone (each edit would start another run).
+    const version = w.sheet.version
+    await w.run()
+    await w.run()
+    expect(w.sheet.version).toBe(version)
   })
 })
 
