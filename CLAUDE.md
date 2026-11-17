@@ -27,7 +27,7 @@ That means, in this repository:
 What still applies:
 
 - Arabic-first, full RTL interface. Logical CSS properties (`ms-*`, `pe-*`, `inset-inline-start` …), never physical ones.
-- Thmanyah font, self-hosted (`@dawod/thmanyah-font-web`).
+- Thmanyah font, self-hosted (`apps/web/public/fonts`, `src/styles/fonts.css`; the files of `@dawod/thmanyah-font-web`; licence confirmed by the owner, 2026-11-17).
 - Lucide icons only. No emoji in the interface.
 - Latin digits; Gregorian dates as `YYYY-MM-DD`.
 - Every error message in Arabic, stating what happened and what to do.
@@ -68,7 +68,7 @@ real Google and Basecamp — say which, never imply it.
 | Sheet ↔ task logic | `packages/station-sheet` (pure): fixed columns, rows → tasks, names, status, dates, Basecamp changes → cells, alert email |
 | Diff | `packages/sync-engine` (pure, field-level three-way diff), unchanged from the editor |
 | Basecamp client | `packages/basecamp` |
-| Data | D1 (`station_*` tables, `migrations/0010`–`0013`), KV (sessions, settings), R2 (backups; the old editor's objects) |
+| Data | D1 (`station_*` tables, `migrations/0010`–`0017`), KV (sessions, settings), R2 (backups; the old editor's objects) |
 | Triggers | Drive push notifications (`/webhooks/google/:secret`), Basecamp project webhooks (`/webhooks/basecamp/:secret`), cron every minute (changed files; each link's full pass every 15 min; channel and webhook upkeep; alert emails), «مزامنة الآن» — all become runs on the `bc-inbound` queue |
 | Auth | `naf-id` through the `naf-auth` package |
 | Hosting | **One Worker `naf-sheets`** on `sheets.naflaw.sa`: the API plus `apps/web/dist` as static assets. Deployed by `scripts/deploy-api.sh` from `main` (`docs/cloudflare-setup.md`) |
@@ -92,6 +92,8 @@ real Google and Basecamp — say which, never imply it.
 - **Unlinking keeps the sync record** (owner, 2026-11-17): the link is marked (`unlinked_at`), not deleted; linking the same file to the same project again takes it back, so nothing is created twice.
 - The editor's personal Basecamp links and member matching were removed (owner, 2026-11-17); only the sync account is connected, by an admin.
 - Records created in Basecamp get rows in the sheet; the sheet's order is the reference.
+- **First sync** (decision 10, settled 2026-11-17): a tab is linked to a new list or to an existing one. With an existing list, the first run matches rows and records by title (`station_tabs.first_sync`), after a preview in the wizard; the reference chosen there decides: *file* (matched take the sheet's values; records only in Basecamp are left alone, `station_tasks.ignored`), *basecamp* (matched take Basecamp's values; Basecamp-only records get rows), *merge* (the sheet's values; each side gets what it lacks). Nothing is deleted; people come from the sheet.
+- Dates outside 2000–2100 are unreadable (the row is held). A subtask deleted for good, and a conflict's losing value, are restored from the link screen.
 - **Row identity** is row developer metadata (`naf_task_uid`), never a visible column.
 - One run per link at a time (D1 lease, `resync` coalesces bursts).
 - Problems are stored (`station_alerts`, one key per problem) and emailed once through Resend from `ALERT_EMAIL_FROM` to `ALERT_EMAIL_TO` (or every admin).

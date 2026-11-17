@@ -187,3 +187,15 @@
 .station-setup__item .button {
   align-self: flex-start;
 }
+
+/* Wizard step 4: the first sync's reference (decision 10). */
+.station-reference {
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+
+.station-reference legend {
+  padding: 0;
+  margin-block-end: var(--space-1);
+}

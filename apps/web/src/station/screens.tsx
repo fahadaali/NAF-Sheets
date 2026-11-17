@@ -11,7 +11,7 @@ import { errorMessage } from '../lib/api'
 import { Link, navigate } from '../lib/router'
 import { useDocumentTitle } from '../lib/use-document-title'
 import { t } from '../strings'
-import { stationApi, type Inspection, type LinkDetail, type LinkSummary, type NamesResponse, type StationAlert } from './api'
+import { stationApi, type FirstSyncReference, type Inspection, type LinkDetail, type LinkRequest, type LinkSummary, type NamesResponse, type Preview, type StationAlert } from './api'
 import { s } from './strings'
 
 type Load<T> = { kind: 'loading' } | { kind: 'error'; message: string } | { kind: 'ready'; data: T }
@@ -235,7 +235,50 @@ function NewLinkWizard({ user }: { user: CurrentUser | null }) {
   const [tabs, setTabs] = useState<number[]>([])
   const [projectId, setProjectId] = useState('')
   const [projects] = useLoad((signal) => stationApi.projects(signal), [])
+  /** Tab → existing list id ('' = a new list). */
+  const [listOf, setListOf] = useState<Record<number, string>>({})
+  const [reference, setReference] = useState<FirstSyncReference>('merge')
+  const [lists, setLists] = useState<Load<{ id: number; name: string; linked: boolean }[]> | null>(null)
+  const [preview, setPreview] = useState<{ kind: 'loading' } | { kind: 'ready'; data: Preview; for: string } | { kind: 'error'; message: string } | null>(null)
   const [submit, setSubmit] = useState<{ kind: 'idle' } | { kind: 'saving' } | { kind: 'error'; message: string }>({ kind: 'idle' })
+
+  useEffect(() => {
+    setListOf({})
+    if (!projectId) return setLists(null)
+    const controller = new AbortController()
+    setLists({ kind: 'loading' })
+    stationApi.lists(Number(projectId), controller.signal).then(
+      (data) => setLists({ kind: 'ready', data: data.lists }),
+      (error: unknown) => {
+        if (!controller.signal.aborted) setLists({ kind: 'error', message: errorMessage(error) })
+      },
+    )
+    return () => controller.abort()
+  }, [projectId])
+
+  const request = (): LinkRequest => ({
+    source,
+    bcProjectId: Number(projectId),
+    tabs: tabs.map((sheetId) => ({ sheetId, listId: listOf[sheetId] ? Number(listOf[sheetId]) : null })),
+    rolesTab,
+    reference,
+  })
+  // The preview stands for exactly these choices; any change asks for a new one.
+  const requestKey = JSON.stringify(request())
+  const previewed = preview?.kind === 'ready' && preview.for === requestKey
+  const usesExisting = tabs.some((t) => Boolean(listOf[t]))
+
+  const showPreview = async () => {
+    if (tabs.length === 0) return setSubmit({ kind: 'error', message: s.wizard.needTabs })
+    if (!projectId) return setSubmit({ kind: 'error', message: s.wizard.needProject })
+    setSubmit({ kind: 'idle' })
+    setPreview({ kind: 'loading' })
+    try {
+      setPreview({ kind: 'ready', data: await stationApi.preview(request()), for: requestKey })
+    } catch (error) {
+      setPreview({ kind: 'error', message: errorMessage(error) })
+    }
+  }
 
   // A changed file or roles tab makes the inspection stale: inspect again before linking.
   const changeInput = (set: (value: string) => void, value: string) => {
@@ -260,9 +303,10 @@ function NewLinkWizard({ user }: { user: CurrentUser | null }) {
   const create = async () => {
     if (tabs.length === 0) return setSubmit({ kind: 'error', message: s.wizard.needTabs })
     if (!projectId) return setSubmit({ kind: 'error', message: s.wizard.needProject })
+    if (!previewed) return setSubmit({ kind: 'error', message: s.wizard.previewFirst })
     setSubmit({ kind: 'saving' })
     try {
-      const { id } = await stationApi.createLink({ source, bcProjectId: Number(projectId), tabs, rolesTab })
+      const { id } = await stationApi.createLink(request())
       navigate(`/links/${encodeURIComponent(id)}`)
     } catch (error) {
       setSubmit({ kind: 'error', message: errorMessage(error) })
@@ -367,16 +411,123 @@ function NewLinkWizard({ user }: { user: CurrentUser | null }) {
                 </select>
               </div>
             ) : null}
+          </section>
+
+          <section className="card stack">
+            <h2>4. {s.wizard.step4}</h2>
+            {lists?.kind === 'loading' ? <Loading text={s.wizard.loadingLists} /> : null}
+            {lists?.kind === 'error' ? (
+              <Notice tone="danger">
+                <p>{lists.message}</p>
+              </Notice>
+            ) : null}
+            {lists?.kind === 'ready'
+              ? ready.tabs
+                  .filter((tab) => tabs.includes(tab.sheetId))
+                  .map((tab) => (
+                    <div className="field" key={tab.sheetId}>
+                      <label htmlFor={`list-${tab.sheetId}`}>{s.wizard.listFor(tab.title)}</label>
+                      <select
+                        id={`list-${tab.sheetId}`}
+                        className="select"
+                        value={listOf[tab.sheetId] ?? ''}
+                        onChange={(e) => setListOf((cur) => ({ ...cur, [tab.sheetId]: e.target.value }))}
+                      >
+                        <option value="">{s.wizard.newList}</option>
+                        {lists.data.map((l) => (
+                          <option key={l.id} value={String(l.id)} disabled={l.linked}>
+                            {l.name} {l.linked ? s.wizard.listLinked : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  ))
+              : null}
+            {usesExisting ? (
+              <fieldset className="stack-tight station-reference">
+                <legend>
+                  <strong>{s.wizard.referenceTitle}</strong>
+                </legend>
+                <p className="muted small">{s.wizard.referenceHint}</p>
+                {(['merge', 'file', 'basecamp'] as const).map((r) => (
+                  <label key={r} className="station-tab">
+                    <input type="radio" name="reference" value={r} checked={reference === r} onChange={() => setReference(r)} />
+                    <span>
+                      <strong>{s.wizard.references[r].label}</strong> <span className="muted small">{s.wizard.references[r].hint}</span>
+                    </span>
+                  </label>
+                ))}
+              </fieldset>
+            ) : null}
             <Notice tone="info">
               <p>{s.wizard.firstSync}</p>
             </Notice>
+            <div className="card__actions">
+              <button type="button" className="button" onClick={() => void showPreview()} disabled={preview?.kind === 'loading' || !projectId || tabs.length === 0}>
+                {preview?.kind === 'loading' ? <LoaderCircle className="icon spin" aria-hidden="true" /> : <RefreshCw className="icon" aria-hidden="true" />}
+                {preview?.kind === 'loading' ? s.wizard.previewing : s.wizard.preview}
+              </button>
+            </div>
+            {preview?.kind === 'error' ? (
+              <Notice tone="danger">
+                <p>{preview.message}</p>
+              </Notice>
+            ) : null}
+            {preview?.kind === 'ready' ? (
+              <>
+                {!previewed ? (
+                  <Notice tone="warning">
+                    <p>{s.wizard.previewStale}</p>
+                  </Notice>
+                ) : null}
+                <div className="table-wrap">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        {(['tab', 'matched', 'changed', 'toBasecamp', 'toSheet', 'ignored', 'held'] as const).map((k) => (
+                          <th key={k} scope="col">
+                            {s.wizard.previewColumns[k]}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {preview.data.tabs.map((t) =>
+                        t.ok ? (
+                          <tr key={t.sheetId}>
+                            <td>
+                              <bdi>{t.title}</bdi>
+                            </td>
+                            <td>{t.matched}</td>
+                            <td>{t.changed}</td>
+                            <td>{t.toBasecamp}</td>
+                            <td>{t.toSheet}</td>
+                            <td>{t.ignored}</td>
+                            <td>{t.held}</td>
+                          </tr>
+                        ) : (
+                          <tr key={t.sheetId}>
+                            <td>
+                              <bdi>{t.title}</bdi>
+                            </td>
+                            <td colSpan={6} className="muted">
+                              {t.reason}
+                            </td>
+                          </tr>
+                        ),
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            ) : null}
             {submit.kind === 'error' ? (
               <p className="field-error" role="alert">
                 {submit.message}
               </p>
             ) : null}
             <div className="card__actions">
-              <button type="button" className="button button--primary" onClick={() => void create()} disabled={submit.kind === 'saving'}>
+              <button type="button" className="button button--primary" onClick={() => void create()} disabled={submit.kind === 'saving' || !previewed}>
                 {submit.kind === 'saving' ? <LoaderCircle className="icon spin" aria-hidden="true" /> : <ArrowLeftRight className="icon" aria-hidden="true" />}
                 {submit.kind === 'saving' ? s.wizard.creating : s.wizard.create}
               </button>

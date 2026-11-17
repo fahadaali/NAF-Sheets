@@ -99,13 +99,37 @@ export interface StationStatus {
   email: boolean
 }
 
+/** Which side wins the first sync of a tab linked to a list that has tasks (decision 10). */
+export type FirstSyncReference = 'file' | 'basecamp' | 'merge'
+
+export interface LinkRequest {
+  source: string
+  bcProjectId: number
+  /** Each tab, with an existing list of the project or `null` for a new one named after the tab. */
+  tabs: { sheetId: number; listId: number | null }[]
+  rolesTab: string
+  reference: FirstSyncReference
+}
+
+/** POST /api/station/preview: what the first sync would do in each tab; nothing is written. */
+export interface Preview {
+  reference: FirstSyncReference
+  tabs: (
+    | { sheetId: number; title: string; ok: true; matched: number; changed: number; toBasecamp: number; toSheet: number; ignored: number; held: number }
+    | { sheetId: number; title: string; ok: false; reason: string }
+  )[]
+}
+
 export const stationApi = {
   status: (signal?: AbortSignal) => request<StationStatus>('GET', '/api/station/status', undefined, signal),
   links: (signal?: AbortSignal) => request<{ links: LinkSummary[] }>('GET', '/api/station/links', undefined, signal),
   inspect: (source: string, rolesTab: string, signal?: AbortSignal) =>
     request<Inspection>('GET', `/api/station/inspect?${new URLSearchParams({ source, rolesTab }).toString()}`, undefined, signal),
   projects: (signal?: AbortSignal) => request<{ projects: { id: number; name: string; todosetId: number | null }[] }>('GET', '/api/station/projects', undefined, signal),
-  createLink: (body: { source: string; bcProjectId: number; tabs: number[]; rolesTab: string }) => request<{ id: string }>('POST', '/api/station/links', body),
+  lists: (projectId: number, signal?: AbortSignal) =>
+    request<{ lists: { id: number; name: string; linked: boolean }[] }>('GET', `/api/station/projects/${projectId}/lists`, undefined, signal),
+  preview: (body: LinkRequest) => request<Preview>('POST', '/api/station/preview', body),
+  createLink: (body: LinkRequest) => request<{ id: string; relinked?: boolean }>('POST', '/api/station/links', body),
   link: (id: string, signal?: AbortSignal) => request<LinkDetail>('GET', linkPath(id), undefined, signal),
   updateLink: (id: string, body: { state?: 'active' | 'paused'; rolesTab?: string }) => request<object>('PATCH', linkPath(id), body),
   deleteLink: (id: string) => request<object>('DELETE', linkPath(id)),
