@@ -73,6 +73,7 @@ export type TabIssueCode =
   | 'level_changed'
   | 'duplicate_identity'
   | 'parent_held'
+  | 'role_empty'
 
 export interface TabIssue {
   code: TabIssueCode
@@ -159,7 +160,11 @@ export function readTab(input: ReadTabInput): ReadTabResult {
     }
 
     const who = assigneesForRole(cells[columns.role], input.roles, input.people)
-    if (!who.ok) {
+    if (level === 1 && cellText(cells[columns.role]) === '') {
+      // Owner, 2026-11-17: a subtask is never sent with nobody on it; its «القسم» says who.
+      blocked = true
+      issue('role_empty', r, true, `الصف ${human(r)}: «القسم» فارغ، فلا أحد مسؤول عن هذه المهمة الفرعية. اختر لها مسمى في «القسم».`)
+    } else if (!who.ok) {
       blocked = true
       if (who.code === 'role_unknown') {
         issue('role_unknown', r, true, `الصف ${human(r)}: المسمى «${who.role}» غير موجود في تبويب «المسميات». أضفه هناك أو اختر مسمى من القائمة.`, who.role)

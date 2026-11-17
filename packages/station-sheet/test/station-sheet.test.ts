@@ -217,6 +217,14 @@ describe('readTab', () => {
     expect(r.issues[2]!.subject).toBe('التأسيس')
   })
 
+  it('holds back a subtask whose «القسم» is empty; a to-do with an empty «القسم» still goes (owner, 2026-11-17)', () => {
+    const r = read([HEADER, ['التأسيس'], ['التأسيس', 'بلا قسم', '', 'لم تبدأ'], ['التأسيس', 'بقسم', 'مسؤول السوشل ميديا', 'لم تبدأ']])
+    expect(r.tasks.map((t) => t.title)).toEqual(['التأسيس', 'بقسم'])
+    expect(r.issues.map((i) => [i.code, i.row, i.blocking])).toEqual([['role_empty', 2, true]])
+    expect(r.issues[0]!.message).toContain('«القسم» فارغ')
+    expect(r.rows).toHaveLength(3)
+  })
+
   it('holds back an unreadable date', () => {
     const r = read([HEADER, ['أ'], ['أ', 'ب', '', 'لم تبدأ', 'الأسبوع القادم']])
     expect(r.tasks.map((t) => t.title)).toEqual(['أ'])
@@ -224,7 +232,7 @@ describe('readTab', () => {
   })
 
   it('finds the parent by position and rewrites a stale repeated title (decision 4)', () => {
-    const values = [HEADER, ['فيديو الموشن القصير'], ['فيديو الموشن', 'بناء بنك أفكار', '', 'لم تبدأ']]
+    const values = [HEADER, ['فيديو الموشن القصير'], ['فيديو الموشن', 'بناء بنك أفكار', 'مسؤول السوشل ميديا', 'لم تبدأ']]
     const r = read(values)
     expect(r.tasks[1]!.parentUid).toBe(r.tasks[0]!.uid)
     expect(r.fixes).toEqual([{ row: 2, column: 0, value: "'فيديو الموشن القصير" }])

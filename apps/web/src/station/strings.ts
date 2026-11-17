@@ -126,6 +126,7 @@ export const s = {
       subtask_without_main: 'مهمة فرعية بلا مهمة رئيسية فوقها',
       level_changed: 'صف تغيّر نوعه',
       parent_held: 'مهام فرعية تنتظر مهمتها الرئيسية',
+      role_empty: 'مهام فرعية بلا «قسم»',
       subtask_moved: 'مهمة فرعية نُقلت تحت مهمة أخرى',
     } as Record<string, string>,
   },

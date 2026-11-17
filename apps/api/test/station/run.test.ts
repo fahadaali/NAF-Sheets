@@ -167,8 +167,13 @@ describe('sheet → Basecamp', () => {
     w.sheet.set(TAB, 6, COL.main, 'المناسبات')
     w.sheet.set(TAB, 6, COL.sub, 'اعتماد قائمة ديسمبر')
     w.sheet.set(TAB, 6, COL.status, 'لم تبدأ')
+    // No «القسم» yet: held, with an alert, never sent with nobody on it.
+    const held = await w.run()
+    expect(w.subtasks().map((s) => s.title)).not.toContain('اعتماد قائمة ديسمبر')
+    expect(held.alerts).toContainEqual(expect.objectContaining({ kind: 'rows_held', code: 'role_empty', rowNumbers: [7] }))
+    w.sheet.set(TAB, 6, COL.role, 'المحامي الرئيسي')
     await w.run()
-    expect(w.subtasks().map((s) => s.title)).toContain('اعتماد قائمة ديسمبر')
+    expect(w.subtasks().find((s) => s.title === 'اعتماد قائمة ديسمبر')?.assigneeIds).toEqual([w.people.atifi.id])
   })
 
   it('deletes automatically: a subtask for good (snapshot kept), a to-do to the trash with its subtasks', async () => {
