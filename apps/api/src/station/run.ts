@@ -238,7 +238,35 @@ export async function syncLink(linkId: string, deps: RunDeps): Promise<RunReport
     const subtaskById = new Map([...subtasksByTodo.values()].flat().map((s) => [s.id, s]))
 
     // Diff and write Basecamp, to-dos before their subtasks (sheet order).
-    const bcIdOf = new Map<string, number | null>(read.tasks.map((t) => [t.uid, t.bcId]))
+    // Every row, held ones included: a held to-do already in Basecamp is still its subtasks' parent.
+    const bcIdOf = new Map<string, number | null>(read.rows.map((r) => [r.uid, r.bcId]))
+    // A held subtask already in Basecamp keeps its people on its to-do while it waits
+    // (a held row never takes anyone off): it counts with its last synced values.
+    const heldSubtasks: LocalTask[] = read.rows.flatMap((r) => {
+      const b = r.level === 1 && r.parentUid !== null && !localByUid.has(r.uid) ? baseOf(known.get(r.uid)) : null
+      if (!b) return []
+      const assignees = b.bcAssigneeIds.map((id) => ({ kind: 'bc_person' as const, bcPersonId: id, source: 'manual' as const }))
+      const standIn: LocalTask = {
+        uid: r.uid,
+        sheetId: String(tab.google_sheet_id),
+        parentUid: r.parentUid,
+        level: 1,
+        position: b.position,
+        title: b.title,
+        assignees,
+        dueOn: b.dueOn,
+        startsOn: null,
+        completed: b.completed,
+        notesHtml: null,
+        freeColumnsForDescription: {},
+        attachments: [],
+        assignMode: 'manual',
+        localChangedAt: null,
+        bcId: r.bcId,
+        deletedRemotely: false,
+      }
+      return [standIn]
+    })
     const inbound: InboundAction[] = []
     for (const local of read.tasks) {
       const row = known.get(local.uid)
@@ -275,7 +303,7 @@ export async function syncLink(linkId: string, deps: RunDeps): Promise<RunReport
       }
       const parentId = local.level === 1 ? (bcIdOf.get(local.parentUid!) ?? null) : null
       if (local.level === 1 && parentId === null) continue // its to-do is not in Basecamp yet (held)
-      const subtasks = local.level === 0 ? read.tasks.filter((t) => t.parentUid === local.uid) : []
+      const subtasks = local.level === 0 ? [...read.tasks, ...heldSubtasks].filter((t) => t.parentUid === local.uid) : []
       const result = diffTask(local, b, remote, {
         directory: { externalContacts: new Map(), personNames: personName },
         listId,

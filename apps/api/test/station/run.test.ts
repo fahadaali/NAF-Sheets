@@ -332,6 +332,29 @@ describe('Basecamp → sheet', () => {
   })
 })
 
+describe('held rows', () => {
+  it('keeps syncing the subtasks of a to-do that is held but already in Basecamp', async () => {
+    const w = await world(SOCIAL)
+    await w.run()
+    w.sheet.set(TAB, 1, COL.role, 'مسمى غير موجود') // the to-do is held from now on
+    w.sheet.set(TAB, 2, COL.sub, 'بنك أفكار الموشن')
+    await w.run()
+    expect(w.subtasks().map((x) => x.title)).toContain('بنك أفكار الموشن')
+  })
+
+  it('never takes a held subtask’s people off its to-do', async () => {
+    const w = await world(SOCIAL)
+    await w.run()
+    const motion = w.todos().find((t) => t.content === 'فيديو الموشن')!
+    const people = [...motion.assigneeIds].sort()
+    expect(people).toEqual([w.people.fahad.id, w.people.omar.id].sort())
+    w.sheet.set(TAB, 3, COL.due, 'غداً') // «اعتماد بنك الأفكار» (فهد، عمر) is held
+    w.sheet.set(TAB, 2, COL.status, 'جارية')
+    await w.run()
+    expect([...w.fake.todos.get(motion.id)!.assigneeIds].sort()).toEqual(people)
+  })
+})
+
 describe('notifications reach everyone', () => {
   it('puts every project member on each to-do’s completion list and subscribers, once', async () => {
     const w = await world(SOCIAL)
