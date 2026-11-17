@@ -68,7 +68,7 @@ async function runOnce(env: Env, linkId: string, deps: StationDeps): Promise<Run
     if (!(error instanceof GoogleError)) throw error
     const link = await env.DB.prepare(`SELECT title FROM station_links WHERE id = ?1`).bind(linkId).first<{ title: string }>()
     const alert: StationAlert = { kind: 'link_stopped', linkId, linkTitle: link?.title ?? '', reason: googleErrorMessage(error.code) }
-    await recordAlerts(env.DB, linkId, [alert], new Set(), new Date(deps.now()).toISOString())
+    await recordAlerts(env.DB, linkId, [alert], new Set(), new Date(deps.now()).toISOString(), { complete: false })
     return { status: 'stopped', toBasecamp: 0, toSheet: 0, deleted: 0, alerts: [alert] }
   }
   const ctx = syncContext(env, deps)
@@ -81,16 +81,9 @@ async function runOnce(env: Env, linkId: string, deps: StationDeps): Promise<Run
     const name = error instanceof Error ? error.name : 'Error'
     const reason = basecampReason(error) ?? `توقفت المزامنة قبل أن تكتمل (${name}). ستُعاد المحاولة تلقائياً؛ وإن تكرر ذلك فأبلغ مسؤول المنصة.`
     const at = new Date(deps.now()).toISOString()
-    await env.DB.batch([
-      env.DB.prepare(`INSERT INTO station_alerts (key, link_id, alert_json, first_seen, last_seen) VALUES (?1, ?2, ?3, ?4, ?4)
-        ON CONFLICT (key) DO UPDATE SET alert_json = excluded.alert_json, last_seen = excluded.last_seen, resolved_at = NULL`).bind(
-        `link_stopped:${linkId}`,
-        linkId,
-        JSON.stringify({ kind: 'link_stopped', linkId, linkTitle: link?.title ?? '', reason } satisfies StationAlert),
-        at,
-      ),
-      env.DB.prepare(`UPDATE station_links SET last_error = ?2, updated_at = ?3 WHERE id = ?1`).bind(linkId, reason, at),
-    ])
+    // Like any problem: a crash that comes back after a good run is emailed again.
+    await recordAlerts(env.DB, linkId, [{ kind: 'link_stopped', linkId, linkTitle: link?.title ?? '', reason }], new Set(), at, { complete: false })
+    await env.DB.prepare(`UPDATE station_links SET last_error = ?2, updated_at = ?3 WHERE id = ?1`).bind(linkId, reason, at).run()
     throw error
   }
 }
@@ -212,7 +205,10 @@ export async function sendDueAlerts(env: Env, deps: { fetch: FetchLike; now: () 
     { origin },
   )
   const keys = due.map((r) => r.key).sort()
-  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(keys.join('\n'))))
+  // The same problems opened at the same time are one email, whatever retries;
+  // a problem that came back (a new first_seen) is a new email.
+  const occurrences = due.map((r) => `${r.key}@${r.firstSeen}`).sort()
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(occurrences.join('\n'))))
   const idempotencyKey = [...digest.slice(0, 16)].map((b) => b.toString(16).padStart(2, '0')).join('')
   const request = resendRequest(email, { apiKey: env.RESEND_API_KEY, to, idempotencyKey, from: env.ALERT_EMAIL_FROM?.trim() || ALERT_SENDER })
   const res = await deps.fetch(request.url, { method: 'POST', headers: request.headers, body: await request.text() })

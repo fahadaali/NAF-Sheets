@@ -253,6 +253,12 @@ describe('Basecamp → sheet', () => {
     const report = await w.run()
     expect(w.subtasks()[0]!.assigneeIds).toEqual([w.people.omar.id])
     expect(report.alerts.some((a) => a.kind === 'rows_held' && a.code === 'people_reverted')).toBe(true)
+    // Raised once, by that run: it stays open until it is emailed, then the next run closes it.
+    await w.run()
+    expect(await openAlerts(w.linkId)).toEqual([{ key: expect.stringContaining(':people_reverted:'), emailed: false }])
+    await env.DB.prepare(`UPDATE station_alerts SET emailed_at = ?1 WHERE link_id = ?2`).bind(new Date().toISOString(), w.linkId).run()
+    await w.run()
+    expect(await openAlerts(w.linkId)).toEqual([])
   })
 
   it('adds rows for a to-do created in Basecamp, its subtasks under it, with «القسم» from the people', async () => {
@@ -402,4 +408,38 @@ describe('problems', () => {
     expect((report.alerts[0] as { reason: string }).reason).toContain('naf-sync@naf-sheets-station.iam.gserviceaccount.com')
     expect(writesTo(w.fake)).toBe(0)
   })
+
+  it('keeps the other problems while a run is stopped, so they are not emailed twice', async () => {
+    const w = await world([...SOCIAL, ['جديدة', 'بلا اسم', 'مسمى غير موجود', '', null]])
+    await w.run()
+    const held = await openAlerts(w.linkId)
+    expect(held.length).toBe(1)
+    await env.DB.prepare(`UPDATE station_alerts SET emailed_at = ?1 WHERE link_id = ?2`).bind(new Date().toISOString(), w.linkId).run()
+    w.sheet.shared = false
+    await w.run()
+    w.sheet.shared = true
+    await w.run()
+    // The held rows' problem never closed, so it is still the emailed one; the stop closed with the good run.
+    expect(await openAlerts(w.linkId)).toEqual([{ key: held[0]!.key, emailed: true }])
+  })
+
+  it('emails a stop again when it comes back after a good run', async () => {
+    const w = await world(SOCIAL)
+    w.sheet.shared = false
+    await w.run()
+    await env.DB.prepare(`UPDATE station_alerts SET emailed_at = ?1 WHERE link_id = ?2`).bind(new Date().toISOString(), w.linkId).run()
+    w.sheet.shared = true
+    await w.run()
+    expect(await openAlerts(w.linkId)).toEqual([])
+    w.sheet.shared = false
+    await w.run()
+    expect(await openAlerts(w.linkId)).toEqual([{ key: `link_stopped:${w.linkId}`, emailed: false }])
+  })
 })
+
+async function openAlerts(linkId: string): Promise<{ key: string; emailed: boolean }[]> {
+  const { results } = await env.DB.prepare(`SELECT key, emailed_at FROM station_alerts WHERE link_id = ?1 AND resolved_at IS NULL ORDER BY key`)
+    .bind(linkId)
+    .all<{ key: string; emailed_at: string | null }>()
+  return results.map((r) => ({ key: r.key, emailed: r.emailed_at !== null }))
+}

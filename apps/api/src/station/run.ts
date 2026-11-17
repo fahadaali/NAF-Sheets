@@ -68,7 +68,9 @@ export async function syncLink(linkId: string, deps: RunDeps): Promise<RunReport
   const found0 = await getLink(db, linkId)
   if (!found0 || found0.state !== 'active') return { ...report, status: 'skipped' }
   const link = found0
+  const skippedTabs = new Set<string>()
   const alert = (a: StationAlert): void => {
+    if (a.kind === 'tab_stopped') skippedTabs.add(a.tab)
     // One name is one problem whatever tabs it appears in: merge its rows.
     if (a.kind === 'name_unmapped') {
       const same = report.alerts.find((x): x is typeof a => x.kind === 'name_unmapped' && x.name === a.name)
@@ -576,7 +578,7 @@ export async function syncLink(linkId: string, deps: RunDeps): Promise<RunReport
       .prepare(`UPDATE station_links SET last_sync_at = ?2, last_error = ?3, last_modified = COALESCE(?4, last_modified), updated_at = ?2 WHERE id = ?1`)
       .bind(link!.id, at(), error, status === 'ok' ? modified : null)
       .run()
-    await recordAlerts(db, link!.id, report.alerts, mappedNames, at())
+    await recordAlerts(db, link!.id, report.alerts, mappedNames, at(), { complete: status === 'ok', skippedTabs })
   }
 }
 

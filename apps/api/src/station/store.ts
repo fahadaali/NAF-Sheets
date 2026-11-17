@@ -102,13 +102,34 @@ export function logStatement(
     .bind(e.linkId, at, e.direction, e.action, e.taskUid ?? null, e.detail === undefined ? null : JSON.stringify(e.detail))
 }
 
+/** What a run saw, for `recordAlerts`. */
+export interface AlertScope {
+  /** The run read every tab it could; false when it stopped early (nothing it did not see is resolved). */
+  complete: boolean
+  /** Tabs the run skipped (missing header, read empty, deleted): their problems stay as they were. */
+  skippedTabs?: ReadonlySet<string>
+}
+
+/** Problems raised once, by the run where they happened: kept open until emailed. */
+function isEvent(alert: StationAlert): boolean {
+  return alert.kind === 'rows_held' && (alert.code === 'people_reverted' || alert.code === 'role_missing')
+}
+
 /**
- * Records the problems seen in this run for a link: new ones open, known ones
- * stay open (not emailed again), and the link's problems not seen now are
- * resolved. Name alerts are global (one name, every link): resolved when the
- * name is mapped, whatever link reported it.
+ * Records the problems seen in this run for a link: new ones open (a problem
+ * that comes back after it was resolved is new: emailed again), known ones
+ * stay open (not emailed again), and the link's problems the run looked for
+ * and did not see are resolved. Name alerts are global (one name, every link):
+ * resolved when the name is mapped, whatever link reported it.
  */
-export async function recordAlerts(db: D1Database, linkId: string, alerts: readonly StationAlert[], mappedNames: ReadonlySet<string>, at: string): Promise<void> {
+export async function recordAlerts(
+  db: D1Database,
+  linkId: string,
+  alerts: readonly StationAlert[],
+  mappedNames: ReadonlySet<string>,
+  at: string,
+  scope: AlertScope,
+): Promise<void> {
   const keys = new Set<string>()
   const statements: D1PreparedStatement[] = []
   for (const alert of alerts) {
@@ -128,13 +149,17 @@ export async function recordAlerts(db: D1Database, linkId: string, alerts: reado
     )
   }
   const open = await db
-    .prepare(`SELECT key, alert_json FROM station_alerts WHERE resolved_at IS NULL AND (link_id = ?1 OR key LIKE 'name_unmapped:%')`)
+    .prepare(`SELECT key, alert_json, emailed_at FROM station_alerts WHERE resolved_at IS NULL AND (link_id = ?1 OR key LIKE 'name_unmapped:%')`)
     .bind(linkId)
-    .all<{ key: string; alert_json: string }>()
+    .all<{ key: string; alert_json: string; emailed_at: string | null }>()
   for (const row of open.results) {
     if (keys.has(row.key)) continue
     const alert = JSON.parse(row.alert_json) as StationAlert
-    const gone = alert.kind === 'name_unmapped' ? mappedNames.has(alert.name) : alert.linkId === linkId
+    let gone: boolean
+    if (alert.kind === 'name_unmapped') gone = mappedNames.has(alert.name)
+    else if (alert.linkId !== linkId || !scope.complete) gone = false
+    else if ('tab' in alert && scope.skippedTabs?.has(alert.tab)) gone = false
+    else gone = !(isEvent(alert) && row.emailed_at === null)
     if (gone) statements.push(db.prepare(`UPDATE station_alerts SET resolved_at = ?2 WHERE key = ?1`).bind(row.key, at))
   }
   if (statements.length > 0) await db.batch(statements)
