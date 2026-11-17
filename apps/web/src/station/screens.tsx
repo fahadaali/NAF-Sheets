@@ -110,22 +110,24 @@ export function LinksScreen({ user }: { user: CurrentUser | null }) {
         ) : null
       }
     >
-      <SetupWarning />
-      {load.kind === 'loading' ? <Loading text={s.links.loading} /> : null}
-      {load.kind === 'error' ? <Failed message={load.message} retry={retry} /> : null}
-      {load.kind === 'ready' && links.length === 0 ? (
-        <section className="panel">
-          <ArrowLeftRight className="panel__icon" aria-hidden="true" />
-          <p>{s.links.empty}</p>
-        </section>
-      ) : null}
-      {load.kind === 'ready' ? (
-        <div className="station-cards">
-          {links.map((l) => (
-            <LinkCard key={l.id} link={l} />
-          ))}
-        </div>
-      ) : null}
+      <div className="stack">
+        <SetupWarning />
+        {load.kind === 'loading' ? <Loading text={s.links.loading} /> : null}
+        {load.kind === 'error' ? <Failed message={load.message} retry={retry} /> : null}
+        {load.kind === 'ready' && links.length === 0 ? (
+          <section className="panel">
+            <ArrowLeftRight className="panel__icon" aria-hidden="true" />
+            <p>{s.links.empty}</p>
+          </section>
+        ) : null}
+        {load.kind === 'ready' ? (
+          <div className="station-cards">
+            {links.map((l) => (
+              <LinkCard key={l.id} link={l} />
+            ))}
+          </div>
+        ) : null}
+      </div>
     </Page>
   )
 }
