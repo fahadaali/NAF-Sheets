@@ -16,6 +16,8 @@ export interface LinkRow {
   last_sync_at: string | null
   /** When the last full pass (every to-do's subtasks read) finished; migrations/0012. */
   last_full_at: string | null
+  /** Set when an admin unlinked it (the record is kept, migrations/0013); null while linked. */
+  unlinked_at: string | null
   last_error: string | null
   created_by: string
   created_at: string
@@ -50,7 +52,7 @@ export async function getLink(db: D1Database, id: string): Promise<LinkRow | nul
 }
 
 export async function getTabs(db: D1Database, linkId: string): Promise<TabRow[]> {
-  const r = await db.prepare(`SELECT * FROM station_tabs WHERE link_id = ?1 ORDER BY rowid`).bind(linkId).all<TabRow>()
+  const r = await db.prepare(`SELECT * FROM station_tabs WHERE link_id = ?1 AND unlinked_at IS NULL ORDER BY rowid`).bind(linkId).all<TabRow>()
   return r.results
 }
 
@@ -87,7 +89,7 @@ export function saveTaskStatement(
     .prepare(
       `INSERT INTO station_tasks (uid, link_id, google_sheet_id, level, parent_uid, bc_id, base_json, assign_from_sheet, updated_at)
        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
-       ON CONFLICT (uid) DO UPDATE SET google_sheet_id = excluded.google_sheet_id, parent_uid = excluded.parent_uid,
+       ON CONFLICT (uid) DO UPDATE SET link_id = excluded.link_id, google_sheet_id = excluded.google_sheet_id, parent_uid = excluded.parent_uid,
          bc_id = COALESCE(excluded.bc_id, station_tasks.bc_id), base_json = COALESCE(excluded.base_json, station_tasks.base_json),
          assign_from_sheet = excluded.assign_from_sheet, updated_at = excluded.updated_at`,
     )

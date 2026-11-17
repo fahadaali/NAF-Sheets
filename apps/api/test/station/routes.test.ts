@@ -123,13 +123,57 @@ describe('pause and unlink', () => {
     expect((await call(s.app, 'DELETE', `/api/station/links/${id}`, { user: s.viewer, env: s.h.env })).status).toBe(403)
     const res = await call(s.app, 'DELETE', `/api/station/links/${id}`, { user: s.admin, env: s.h.env })
     expect(res.status).toBe(200)
-    expect(await env.DB.prepare(`SELECT id FROM station_links WHERE id = ?1`).bind(id).first()).toBeNull()
-    const audit = await env.DB.prepare(`SELECT actor_id, details_json FROM audit_log WHERE action = 'station.link.delete' AND entity_id = ?1`).bind(id).first<{ actor_id: string; details_json: string }>()
+    // Marked, not deleted: the link no longer shows, its record is kept.
+    expect(await env.DB.prepare(`SELECT state, unlinked_at FROM station_links WHERE id = ?1`).bind(id).first()).toMatchObject({ state: 'paused', unlinked_at: expect.any(String) })
+    const list = await json<{ links: { id: string }[] }>(await call(s.app, 'GET', '/api/station/links', { user: s.viewer, env: s.h.env }))
+    expect(list.links.map((l) => l.id)).not.toContain(id)
+    expect((await call(s.app, 'GET', `/api/station/links/${id}`, { user: s.viewer, env: s.h.env })).status).toBe(404)
+    const audit = await env.DB.prepare(`SELECT actor_id, details_json FROM audit_log WHERE action = 'station.link.unlink' AND entity_id = ?1`).bind(id).first<{ actor_id: string; details_json: string }>()
     expect(audit?.actor_id).toBe(s.admin.id)
     expect(JSON.parse(audit!.details_json)).toEqual({ spreadsheetId: SID, bcProjectId: s.project.id })
     const gone = await call(s.app, 'DELETE', `/api/station/links/${id}`, { user: s.admin, env: s.h.env })
     expect(gone.status).toBe(404)
     expect(isArabic((await json<{ message: string }>(gone)).message)).toBe(true)
+  })
+})
+
+describe('linking the same file again', () => {
+  it('to the same project takes the unlinked link back: same tasks, nothing created twice', async () => {
+    const s = await setup()
+    const body = { source: SID, bcProjectId: s.project.id, tabs: [2] }
+    const { id } = await json<{ id: string }>(await call(s.app, 'POST', '/api/station/links', { user: s.admin, body, env: s.h.env }))
+    await runStation(s.h.env, id, { ...s.h.deps, google: s.sheet })
+    const created = () => s.h.fake.calls.filter((c) => c.method === 'POST' && /\/(todos|subtasks)\.json$/.test(c.path)).length
+    const before = created()
+    expect(before).toBe(2)
+
+    expect((await call(s.app, 'DELETE', `/api/station/links/${id}`, { user: s.admin, env: s.h.env })).status).toBe(200)
+    const again = await call(s.app, 'POST', '/api/station/links', { user: s.admin, body, env: s.h.env })
+    expect(again.status).toBe(201)
+    expect(await json(again)).toMatchObject({ id, relinked: true })
+    await runStation(s.h.env, id, { ...s.h.deps, google: s.sheet })
+    await runStation(s.h.env, id, { ...s.h.deps, google: s.sheet })
+    expect(created()).toBe(before)
+    expect((await call(s.app, 'GET', `/api/station/links/${id}`, { user: s.viewer, env: s.h.env })).status).toBe(200)
+  })
+
+  it('to another project is a new link that takes over the rows, and does not create them twice', async () => {
+    const s = await setup()
+    const { id } = await json<{ id: string }>(await call(s.app, 'POST', '/api/station/links', { user: s.admin, body: { source: SID, bcProjectId: s.project.id, tabs: [2] }, env: s.h.env }))
+    await runStation(s.h.env, id, { ...s.h.deps, google: s.sheet })
+    expect((await call(s.app, 'DELETE', `/api/station/links/${id}`, { user: s.admin, env: s.h.env })).status).toBe(200)
+
+    const fahad = [...s.h.fake.people.values()].find((p) => p.name === 'Fahad Alotaibi')!
+    const other = s.h.fake.project('مشروع آخر', [fahad.id, s.omarId])
+    const res = await call(s.app, 'POST', '/api/station/links', { user: s.admin, body: { source: SID, bcProjectId: other.id, tabs: [2] }, env: s.h.env })
+    expect(res.status).toBe(201)
+    const next = await json<{ id: string; relinked?: boolean }>(res)
+    expect(next.id).not.toBe(id)
+    const inOther = () => [...s.h.fake.todos.values()].filter((t) => s.h.fake.lists.get(t.listId)?.projectId === other.id).length
+    await runStation(s.h.env, next.id, { ...s.h.deps, google: s.sheet })
+    expect(inOther()).toBe(1)
+    await runStation(s.h.env, next.id, { ...s.h.deps, google: s.sheet })
+    expect(inOther()).toBe(1)
   })
 })
 
