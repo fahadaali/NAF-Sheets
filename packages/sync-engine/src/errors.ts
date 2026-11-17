@@ -9,12 +9,6 @@ import type { TaskUid } from '@naf-sheets/shared'
 export type EngineErrorCode =
   | 'external_requires_follower'
   | 'follower_not_project_member'
-  | 'third_level_not_allowed'
-  | 'parent_has_subtasks'
-  | 'no_parent_above'
-  | 'row_not_found'
-  | 'invalid_move_target'
-  | 'subtask_needs_parent'
   | 'snapshot_required'
 
 /** Something `diffTask` held back or could not decide; the row may need attention. */
@@ -31,17 +25,6 @@ export const ERROR_MESSAGES: Readonly<Record<EngineErrorCode, string>> = {
     'لم يُحفظ الإسناد: كل مسؤولي المهمة جهات خارجية، ولا بد أن يبقى لها في Basecamp مسؤول من أعضاء المشروع. حدّد متابعاً داخلياً ثم احفظ.',
   follower_not_project_member:
     'لم يُحفظ الإسناد: المتابع الداخلي المختار ليس عضواً في مشروع Basecamp. اختر متابعاً من أعضاء المشروع ثم احفظ.',
-  third_level_not_allowed:
-    'لم تُنفَّذ الإزاحة: الصف مهمة فرعية أصلاً، وBasecamp يسمح بمستوى واحد فقط من المهام الفرعية. أبقِه مهمة فرعية، أو أعِده مهمة رئيسية بـ Shift+Tab.',
-  parent_has_subtasks:
-    'لم تُنفَّذ الإزاحة: لهذه المهمة مهام فرعية، وتحويلها إلى فرعية ينشئ مستوى ثالثاً لا يسمح به Basecamp. أعِد مهامها الفرعية رئيسية أولاً ثم أعد المحاولة.',
-  no_parent_above:
-    'لم تُنفَّذ الإزاحة: لا توجد مهمة رئيسية فوق هذا الصف لتكون أمّاً له. أضف مهمة رئيسية فوقه ثم أعد المحاولة.',
-  row_not_found: 'لم يُعثر على الصف المطلوب، فربما حُذف أو نُقل. حدّث الورقة ثم أعد المحاولة.',
-  invalid_move_target:
-    'لم يُنقل الصف: لا يمكن وضع مهمة رئيسية بين المهام الفرعية لمهمة أخرى. اختر موضعاً قبل مهمة رئيسية أو في آخر الورقة.',
-  subtask_needs_parent:
-    'لم يُنقل الصف: المهمة الفرعية تحتاج مهمة رئيسية فوقها. انقلها إلى موضع تحت مهمة رئيسية.',
   snapshot_required:
     'لم تُحذف المهمة الفرعية: حذفها من Basecamp نهائي، ويلزم حفظ نسخة كاملة منها قبل الحذف، والنسخة غير متاحة. أعد تحميل المهمة من Basecamp ثم أعد الحذف.',
 }

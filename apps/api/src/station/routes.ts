@@ -16,6 +16,7 @@
 // Every error is `{ ok: false, error, message }` with an Arabic message.
 
 import { Hono, type Context } from 'hono'
+import type { ApiErrorCode } from '@naf-sheets/shared'
 import { findColumns, readTab, readRoles, type CellValue } from '@naf-sheets/station-sheet'
 import { BasecampError, NotFoundError } from '@naf-sheets/basecamp'
 import { withServiceToken } from '../basecamp-link'
@@ -31,7 +32,7 @@ import { getNames } from './store'
 
 const ADMIN_ONLY = 'هذا الإجراء مقصور على مسؤول المنصة. اطلبه من مسؤول المنصة.'
 
-function fail(c: Context<AppEnv>, status: 400 | 403 | 404 | 409 | 503, error: string, message: string): Response {
+function fail(c: Context<AppEnv>, status: 400 | 403 | 404 | 409 | 503, error: ApiErrorCode, message: string): Response {
   return c.json({ ok: false, error, message }, status)
 }
 

@@ -17,9 +17,6 @@ export type IsoDateTime = string
 export type TaskUid = string
 
 export type PlatformRole = 'admin' | 'editor' | 'viewer'
-export type WorkbookMemberRole = 'editor' | 'viewer'
-export type WorkbookSource = 'blank' | 'template' | 'gsheets'
-export type SheetSyncMode = 'synced' | 'local'
 
 /** What a sheet column maps to (§6.2 column_mappings.field). */
 export type MappedField = 'title' | 'assignees' | 'due_on' | 'starts_on' | 'completed' | 'notes' | 'attachments' | 'free'
