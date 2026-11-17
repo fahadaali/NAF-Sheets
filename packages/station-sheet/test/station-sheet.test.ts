@@ -75,6 +75,15 @@ describe('dates', () => {
     expect(readDate('2026/02/30')).toEqual({ ok: false })
     expect(readDate('بعد العيد')).toEqual({ ok: false })
   })
+
+  it('takes a date outside 2000–2100 for a typing slip, not 1900 (owner, 2026-11-17)', () => {
+    expect(readDate(30)).toEqual({ ok: false }) // 1900-01-29
+    expect(readDate(1)).toEqual({ ok: false })
+    expect(readDate('1999/12/31')).toEqual({ ok: false })
+    expect(readDate('2101/01/01')).toEqual({ ok: false })
+    expect(readDate(isoToSerial('2000-01-01')!)).toEqual({ ok: true, value: '2000-01-01' })
+    expect(readDate('2100/12/31')).toEqual({ ok: true, value: '2100-12-31' })
+  })
 })
 
 describe('findColumns', () => {

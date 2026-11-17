@@ -5,7 +5,7 @@
 // calls `readTab`, diffs `tasks` with @naf-sheets/sync-engine, and turns the
 // engine's inbound actions into cell writes with `inboundEdits`.
 
-export { cellText, textCell, latinDigits, readDate, serialToIso, isoToSerial, type CellValue, type DateRead } from './cells'
+export { cellText, textCell, latinDigits, readDate, FIRST_DATE, LAST_DATE, serialToIso, isoToSerial, type CellValue, type DateRead } from './cells'
 export { FIXED_HEADERS, findColumns, type ColumnsResult, type FixedColumn, type TabColumns } from './columns'
 export { readRoles, assigneesForRole, splitNames, type AssigneeLookup, type PeopleMap, type RoleNames, type RolesIssue } from './people'
 export { STATUS, isDone, statusAfterRemoteCompletion } from './status'

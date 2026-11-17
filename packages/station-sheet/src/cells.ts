@@ -63,18 +63,27 @@ export function isoToSerial(iso: IsoDate): number | null {
 export type DateRead = { ok: true; value: IsoDate | null } | { ok: false }
 
 /**
+ * The years a due date may fall in (owner, 2026-11-17). A small number typed
+ * in «الموعد» (30) is a serial Google reads as 1900-01-29: outside this range
+ * a date is unreadable, and its row is held with an alert.
+ */
+export const FIRST_DATE: IsoDate = '2000-01-01'
+export const LAST_DATE: IsoDate = '2100-12-31'
+
+/**
  * A due-date cell: empty → null; a serial number; or text `YYYY/MM/DD`,
- * `YYYY-MM-DD` (any digits). Anything else is unreadable.
+ * `YYYY-MM-DD` (any digits), between FIRST_DATE and LAST_DATE. Anything else
+ * is unreadable.
  */
 export function readDate(value: CellValue): DateRead {
+  let iso: IsoDate | null
   if (typeof value === 'number') {
-    const iso = serialToIso(value)
-    return iso === null ? { ok: false } : { ok: true, value: iso }
+    iso = serialToIso(value)
+  } else {
+    const text = latinDigits(cellText(value))
+    if (text === '') return { ok: true, value: null }
+    const m = /^(\d{4})[/-](\d{1,2})[/-](\d{1,2})$/.exec(text)
+    iso = m ? realDate(Number(m[1]), Number(m[2]), Number(m[3])) : null
   }
-  const text = latinDigits(cellText(value))
-  if (text === '') return { ok: true, value: null }
-  const m = /^(\d{4})[/-](\d{1,2})[/-](\d{1,2})$/.exec(text)
-  if (!m) return { ok: false }
-  const iso = realDate(Number(m[1]), Number(m[2]), Number(m[3]))
-  return iso === null ? { ok: false } : { ok: true, value: iso }
+  return iso === null || iso < FIRST_DATE || iso > LAST_DATE ? { ok: false } : { ok: true, value: iso }
 }

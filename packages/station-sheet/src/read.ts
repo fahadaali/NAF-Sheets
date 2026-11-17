@@ -155,7 +155,7 @@ export function readTab(input: ReadTabInput): ReadTabResult {
 
     const due = readDate(cells[columns.due])
     if (!due.ok) {
-      issue('date_unreadable', r, true, `الصف ${human(r)}: «${cellText(cells[columns.due])}» ليس تاريخاً مفهوماً. اكتبه بالشكل 2026/11/30.`, cellText(cells[columns.due]))
+      issue('date_unreadable', r, true, `الصف ${human(r)}: «${cellText(cells[columns.due])}» ليس تاريخاً مفهوماً. اكتبه بالشكل 2026/11/30، بين سنتي 2000 و2100.`, cellText(cells[columns.due]))
       blocked = true
     }
 
