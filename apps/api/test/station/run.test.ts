@@ -457,6 +457,54 @@ describe('a subtask row moved under another to-do', () => {
   })
 })
 
+describe('first sync with a list that already has tasks (decision 10)', () => {
+  /** The tab linked to an existing list holding «فيديو الموشن» (one subtask, another date) and a to-do only in Basecamp. */
+  async function existing(reference: 'file' | 'basecamp' | 'merge') {
+    const w = await world(SOCIAL)
+    const projectId = (await env.DB.prepare(`SELECT bc_project_id FROM station_links WHERE id = ?1`).bind(w.linkId).first<{ bc_project_id: number }>())!.bc_project_id
+    const list = w.fake.list(projectId, 'السوشل ميديا')
+    const motion = w.fake.addTodo(list.id, { content: 'فيديو الموشن' })
+    const sub = w.fake.addSubtask(motion.id, { title: 'بناء بنك أفكار للموشن', dueOn: '2026-12-31', assigneeIds: [w.people.omar.id] })
+    const only = w.fake.addTodo(list.id, { content: 'في Basecamp وحده' })
+    await env.DB.prepare(`UPDATE station_tabs SET bc_todolist_id = ?2, first_sync = ?3 WHERE link_id = ?1`).bind(w.linkId, list.id, reference).run()
+    return { w, motion, sub, only }
+  }
+  const rowsOf = (w: Awaited<ReturnType<typeof world>>) => w.sheet.tab(TAB).rows
+
+  it('merge: matches by title (nothing created twice), the sheet wins on matched tasks, and each side gets what it lacks', async () => {
+    const { w, motion, sub, only } = await existing('merge')
+    await w.run()
+    await w.run()
+    expect(w.todos().filter((t) => t.content === 'فيديو الموشن').map((t) => t.id)).toEqual([motion.id])
+    expect(w.subtasks().filter((x) => x.title === 'بناء بنك أفكار للموشن').map((x) => x.id)).toEqual([sub.id])
+    expect(w.fake.subtasks.get(sub.id)!.dueOn).toBe('2026-11-12') // the sheet's date
+    expect(w.todos().map((t) => t.content)).toContain('المناسبات') // only in the sheet: created
+    expect(rowsOf(w).some((r) => r[COL.main] === 'في Basecamp وحده')).toBe(true) // only in Basecamp: a row
+    expect(w.fake.todos.get(only.id)!.status).toBe('active')
+  })
+
+  it('basecamp: matched tasks take Basecamp’s values in the sheet', async () => {
+    const { w, sub } = await existing('basecamp')
+    await w.run()
+    await w.run()
+    expect(w.fake.subtasks.get(sub.id)!.dueOn).toBe('2026-12-31')
+    const row = rowsOf(w).find((r) => r[COL.sub] === 'بناء بنك أفكار للموشن')!
+    expect(row[COL.due]).toBe(isoSerial('2026-12-31'))
+    expect(rowsOf(w).some((r) => r[COL.main] === 'في Basecamp وحده')).toBe(true)
+  })
+
+  it('file: what is only in Basecamp stays there, untouched, and gets no row — on later runs too', async () => {
+    const { w, sub, only } = await existing('file')
+    await w.run()
+    await w.run()
+    await env.DB.prepare(`UPDATE station_links SET last_full_at = NULL WHERE id = ?1`).bind(w.linkId).run()
+    await w.run()
+    expect(rowsOf(w).some((r) => r[COL.main] === 'في Basecamp وحده')).toBe(false)
+    expect(w.fake.todos.get(only.id)!.status).toBe('active')
+    expect(w.fake.subtasks.get(sub.id)!.dueOn).toBe('2026-11-12')
+  })
+})
+
 describe('notifications reach everyone', () => {
   it('puts every project member on each to-do’s completion list and subscribers, once', async () => {
     const w = await world(SOCIAL)
@@ -603,4 +651,8 @@ async function openAlerts(linkId: string): Promise<{ key: string; emailed: boole
     .bind(linkId)
     .all<{ key: string; emailed_at: string | null }>()
   return results.map((r) => ({ key: r.key, emailed: r.emailed_at !== null }))
+}
+
+function isoSerial(iso: string): number {
+  return Math.round((Date.parse(iso) - Date.UTC(1899, 11, 30)) / 86_400_000)
 }

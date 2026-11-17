@@ -60,6 +60,8 @@ export interface TabRow {
   parentUid: TaskUid | null
   /** Text of «المهمة الرئيسية» as found in this row. */
   mainCell: string
+  /** The task's title as the row reads: «المهمة الرئيسية» for a to-do, «المهمة» for a subtask; '' when emptied. */
+  title: string
   /** Text of «الحالة» as found. */
   status: string
 }
@@ -169,6 +171,7 @@ export function readTab(input: ReadTabInput): ReadTabResult {
           level: keptLevel,
           parentUid: keptLevel === 1 ? (currentMain?.row.uid ?? null) : null,
           mainCell: '',
+          title: '',
           status: cellText(cells[columns.status]),
         }
         result.rows.push(row)
@@ -188,7 +191,7 @@ export function readTab(input: ReadTabInput): ReadTabResult {
     if (level === 1 && currentMain === null) {
       // Kept in `rows` (so it is not taken for a deleted row), never synced.
       issue('subtask_without_main', r, true, `الصف ${human(r)}: مهمة فرعية بلا مهمة رئيسية فوقها. أضف صف المهمة الرئيسية فوقها.`)
-      result.rows.push({ row: r, uid: identity.uid, bcId: identity.bcId, level, parentUid: null, mainCell: mainText, status: cellText(cells[columns.status]) })
+      result.rows.push({ row: r, uid: identity.uid, bcId: identity.bcId, level, parentUid: null, mainCell: mainText, title: subText, status: cellText(cells[columns.status]) })
       continue
     }
 
@@ -200,6 +203,7 @@ export function readTab(input: ReadTabInput): ReadTabResult {
       level,
       parentUid: level === 1 ? currentMain!.row.uid : null,
       mainCell: mainText,
+      title: level === 0 ? mainText : subText,
       status: cellText(cells[columns.status]),
     }
     result.rows.push(row)

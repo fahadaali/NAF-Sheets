@@ -3,6 +3,7 @@ import { diffTask } from '@naf-sheets/sync-engine'
 import {
   deletedTasks,
   findColumns,
+  firstSyncPlan,
   inboundEdits,
   isoToSerial,
   readDate,
@@ -341,6 +342,47 @@ describe('copies and cleared titles (owner, 2026-11-17)', () => {
     const r = read([HEADER, ['التأسيس'], ['', '']], new Map([[2, { uid: 'never-sent', bcId: null }]]))
     expect(r.issues).toEqual([])
     expect(r.rows.map((x) => x.uid)).toEqual(['u1'])
+  })
+})
+
+describe('firstSyncPlan (decision 10)', () => {
+  it('matches rows with Basecamp records by title: a to-do by its title, a subtask under its to-do; the rest on each side', () => {
+    const r = read([
+      HEADER,
+      ['التأسيس'],
+      ['التأسيس', 'اعتماد المحتوى', 'مسؤول السوشل ميديا', 'لم تبدأ'],
+      ['التأسيس', 'في الملف وحده', 'مسؤول السوشل ميديا', 'لم تبدأ'],
+      ['جديدة'],
+    ])
+    const plan = firstSyncPlan(
+      r.rows,
+      [
+        { id: 10, content: ' التأسيس ' },
+        { id: 20, content: 'في Basecamp وحده' },
+      ],
+      new Map([
+        [10, [{ id: 11, title: 'اعتماد المحتوى' }, { id: 12, title: 'فرعية في Basecamp وحده' }]],
+        [20, [{ id: 21, title: 'تحتها' }]],
+      ]),
+    )
+    expect(plan.pairs).toEqual([
+      { uid: 'u1', bcId: 10, level: 0 },
+      { uid: 'u2', bcId: 11, level: 1 },
+    ])
+    expect(plan.fileOnly).toEqual(['u3', 'u4'])
+    expect(plan.basecampOnly).toEqual([
+      { bcId: 20, level: 0, todoId: null },
+      { bcId: 12, level: 1, todoId: 10 },
+      { bcId: 21, level: 1, todoId: 20 },
+    ])
+  })
+
+  it('pairs two rows of the same title with two records in order, and leaves known records and synced rows alone', () => {
+    const identities = new Map<number, RowIdentity>([[3, { uid: 'synced', bcId: 30, level: 0 }]])
+    const r = read([HEADER, ['مراجعة'], ['مراجعة'], ['قديمة']], identities)
+    const plan = firstSyncPlan(r.rows, [{ id: 1, content: 'مراجعة' }, { id: 2, content: 'مراجعة' }, { id: 30, content: 'قديمة' }], new Map(), new Set([30]))
+    expect(plan.pairs.map((p) => p.bcId)).toEqual([1, 2])
+    expect(plan.basecampOnly).toEqual([])
   })
 })
 

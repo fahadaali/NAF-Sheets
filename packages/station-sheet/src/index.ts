@@ -34,3 +34,11 @@ export {
   type ComposeOptions,
   type StationAlert,
 } from './alert-email'
+export {
+  FIRST_SYNC_REFERENCES,
+  firstSyncPlan,
+  type FirstSyncPlan,
+  type FirstSyncReference,
+  type FirstSyncRemoteSubtask,
+  type FirstSyncRemoteTodo,
+} from './first-sync'

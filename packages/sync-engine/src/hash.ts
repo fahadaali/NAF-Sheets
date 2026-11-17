@@ -247,8 +247,10 @@ export function baseAfterSubtaskWrite(
 /**
  * Base after `set_completion` or `reposition` (Basecamp answers 204 with no
  * record). A `reposition` that moved the to-do to another list also sets `listId`.
+ * Also a base whose title, date or completion are another side's (the
+ * station's first sync with Basecamp as the reference), its hash recomputed.
  */
-export function baseWith(base: SyncedBase, changes: Partial<Pick<SyncedBase, 'completed' | 'position' | 'listId'>>): SyncedBase {
+export function baseWith(base: SyncedBase, changes: Partial<Pick<SyncedBase, 'completed' | 'position' | 'listId' | 'title' | 'dueOn'>>): SyncedBase {
   const { listId, ...fields } = changes
   return baseOf(
     base.uid,

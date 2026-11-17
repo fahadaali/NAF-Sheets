@@ -31,6 +31,8 @@ export interface TabRow {
   google_sheet_id: number
   title: string
   bc_todolist_id: number | null
+  /** The reference of this tab's first sync while its rows are not matched yet (migrations/0017). */
+  first_sync: 'file' | 'basecamp' | 'merge' | null
 }
 
 export interface TaskRow {
@@ -47,6 +49,8 @@ export interface TaskRow {
   /** «الحالة» before the record was deleted in Basecamp (migrations/0014). */
   status_before_delete: string | null
   assign_from_sheet: 0 | 1
+  /** A record only in Basecamp when the file was the first sync's reference: left alone (migrations/0017). */
+  ignored: 0 | 1
   /** Project members last put on the to-do's completion list and subscribers (sorted ids). */
   notify_key: string | null
 }

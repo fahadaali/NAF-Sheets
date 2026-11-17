@@ -5,6 +5,8 @@
 //   GET    /links                     every link with its state and open problems
 //   GET    /inspect?source=…          a spreadsheet as the service account sees it (wizard, admin)
 //   GET    /projects                  Basecamp projects (wizard, admin)
+//   GET    /projects/:id/lists        the project's to-do lists, and which are linked already (wizard, admin)
+//   POST   /preview                   what the first sync would do, per tab (wizard, admin; decision 10)
 //   POST   /links                     link a spreadsheet's tabs to a project (admin)
 //   GET    /links/:id                 a link, its tabs, problems and recent history
 //   PATCH  /links/:id                 pause / resume, roles tab (admin)
@@ -20,7 +22,18 @@
 
 import { Hono, type Context } from 'hono'
 import type { ApiErrorCode } from '@naf-sheets/shared'
-import { STATUS, findColumns, readTab, readRoles, textCell, type CellValue } from '@naf-sheets/station-sheet'
+import {
+  FIRST_SYNC_REFERENCES,
+  STATUS,
+  findColumns,
+  firstSyncPlan,
+  readTab,
+  readRoles,
+  splitNames,
+  textCell,
+  type CellValue,
+  type FirstSyncReference,
+} from '@naf-sheets/station-sheet'
 import type { FieldConflict, RemoteSubtask } from '@naf-sheets/shared'
 import { recreateSubtaskFromSnapshot } from '@naf-sheets/sync-engine'
 import { BasecampError, NotFoundError } from '@naf-sheets/basecamp'
@@ -51,6 +64,29 @@ export function spreadsheetIdOf(source: string): string | null {
   if (/^[A-Za-z0-9_-]{25,}$/.test(s)) return s
   const m = /\/spreadsheets\/(?:u\/\d+\/)?d\/([A-Za-z0-9_-]{25,})/.exec(s)
   return m ? m[1]! : null
+}
+
+/** The wizard's choice for one tab: a new list (`listId` null) or a list of the project. */
+interface TabChoice {
+  sheetId: number
+  listId: number | null
+}
+
+/** `tabs` as numbers (a new list each) or `{ sheetId, listId }`; null when malformed. */
+function tabChoicesOf(value: unknown): TabChoice[] | null {
+  if (!Array.isArray(value) || value.length === 0) return null
+  const out: TabChoice[] = []
+  for (const v of value) {
+    if (typeof v === 'number' && Number.isInteger(v)) out.push({ sheetId: v, listId: null })
+    else if (isPlainObject(v) && Number.isInteger(v.sheetId) && (v.listId === undefined || v.listId === null || Number.isInteger(v.listId))) {
+      out.push({ sheetId: v.sheetId as number, listId: (v.listId as number | null | undefined) ?? null })
+    } else return null
+  }
+  return out
+}
+
+function referenceOf(value: unknown): FirstSyncReference {
+  return FIRST_SYNC_REFERENCES.includes(value as FirstSyncReference) ? (value as FirstSyncReference) : 'merge'
 }
 
 export function stationWebhookRoutes(): Hono<AppEnv> {
@@ -171,17 +207,107 @@ export function stationRoutes(depsIn?: StationDeps): Hono<AppEnv> {
     })
   })
 
+  routes.get('/projects/:id/lists', async (c) => {
+    if (!isAdmin(c)) return fail(c, 403, 'admin_only', ADMIN_ONLY)
+    const ctx = syncContext(c.env, deps())
+    const project = await withServiceToken(ctx, (token) => readClient(ctx).projects.get(token, Number(c.req.param('id'))))
+    const todosetId = todosetOf(project)
+    if (todosetId === null) return fail(c, 409, 'todos_disabled', `أداة المهام غير مفعّلة في مشروع «${project.name}» في Basecamp. فعّلها من إعدادات المشروع ثم أعد المحاولة.`)
+    const lists = await withServiceToken(ctx, (token) => readClient(ctx).todolists.list(token, todosetId).all())
+    const linked = await c.env.DB.prepare(`SELECT bc_todolist_id FROM station_tabs WHERE bc_todolist_id IS NOT NULL`).all<{ bc_todolist_id: number }>()
+    const taken = new Set(linked.results.map((r) => r.bc_todolist_id))
+    return c.json({ ok: true, lists: lists.map((l) => ({ id: l.id, name: l.name || l.title, linked: taken.has(l.id) })) })
+  })
+
+  // Decision 10: before linking, what the first sync would do in each tab —
+  // matched by title, created in Basecamp, added to the sheet, left alone,
+  // held. Reads only; nothing is written anywhere.
+  routes.post('/preview', async (c) => {
+    if (!isAdmin(c)) return fail(c, 403, 'admin_only', ADMIN_ONLY)
+    const body = await readJson(c)
+    const id = isPlainObject(body) ? spreadsheetIdOf(String(body.source ?? '')) : null
+    const choices = isPlainObject(body) ? tabChoicesOf(body.tabs) : null
+    if (!isPlainObject(body) || !id || !choices) return fail(c, 400, 'invalid_link', 'الطلب غير صالح: أرسل رابط الملف والتبويبات المختارة.')
+    const reference = referenceOf(body.reference)
+    const rolesTab = typeof body.rolesTab === 'string' && body.rolesTab.trim() !== '' ? body.rolesTab.trim() : 'المسميات'
+    const g = google(c)
+    const meta = await g.spreadsheet(id)
+    const tabs = choices.map((t) => ({ ...t, title: meta.tabs.find((m) => m.sheetId === t.sheetId)?.title }))
+    if (tabs.some((t) => t.title === undefined)) return fail(c, 400, 'unknown_tab', 'بعض التبويبات المختارة لم تعد في الملف. حدّث الصفحة ثم اختر من جديد.')
+    const values = await g.tabValues(id, [...tabs.map((t) => t.title!), ...(meta.tabs.some((m) => m.title === rolesTab) ? [rolesTab] : [])])
+    const { roles } = readRoles((values.get(rolesTab) ?? []) as CellValue[][])
+    const people = await getNames(c.env.DB)
+    const projectId = Number(body.bcProjectId)
+    const ctx = Number.isInteger(projectId) ? syncContext(c.env, deps()) : null
+    // As a run would: a name written exactly as a project person's maps itself (§6.1). In memory only.
+    if (ctx) {
+      const projectPeople = await withServiceToken(ctx, (token) => readClient(ctx).people.listProject(token, projectId).all())
+      for (const name of new Set([...roles.values()].flatMap(splitNames))) {
+        const same = projectPeople.filter((p) => p.name.trim() === name)
+        if (!people.has(name) && same.length === 1) people.set(name, same[0]!.id)
+      }
+    }
+    const out = []
+    for (const t of tabs) {
+      const rows = (values.get(t.title!) ?? []) as CellValue[][]
+      const found = findColumns(rows[0] ?? [])
+      if (!found.ok) {
+        out.push({ sheetId: t.sheetId, title: t.title, ok: false, reason: found.message })
+        continue
+      }
+      let n = 0
+      const read = readTab({ values: rows, columns: found.columns, roles, people, identities: new Map(), newUid: () => `preview-${++n}`, sheetId: String(t.sheetId), changedAt: null })
+      const held = new Set(read.issues.filter((i) => i.blocking).map((i) => i.row)).size
+      const sendable = new Set(read.tasks.map((x) => x.uid))
+      if (t.listId === null || !ctx) {
+        out.push({ sheetId: t.sheetId, title: t.title, ok: true, matched: 0, changed: 0, toBasecamp: read.tasks.length, toSheet: 0, ignored: 0, held })
+        continue
+      }
+      const { todos, subs } = await withServiceToken(ctx, async (token) => {
+        const client = readClient(ctx)
+        const listed = [...(await client.todos.list(token, t.listId!).all()), ...(await client.todos.list(token, t.listId!, { completed: true }).all())]
+        const bySubs = new Map<number, RemoteSubtask[]>()
+        for (const todo of listed) if (todo.subtasksCount > 0) bySubs.set(todo.id, await client.subtasks.list(token, todo.id).all())
+        return { todos: listed, subs: bySubs }
+      })
+      const plan = firstSyncPlan(read.rows, todos, subs)
+      const remoteOf = new Map<number, { dueOn: string | null; completed: boolean }>([...todos, ...[...subs.values()].flat()].map((x) => [x.id, x]))
+      const localOf = new Map(read.tasks.map((x) => [x.uid, x]))
+      const changed = plan.pairs.filter((p) => {
+        const local = localOf.get(p.uid)
+        const remote = remoteOf.get(p.bcId)
+        return local && remote && (local.dueOn !== remote.dueOn || local.completed !== remote.completed)
+      }).length
+      out.push({
+        sheetId: t.sheetId,
+        title: t.title,
+        ok: true,
+        matched: plan.pairs.length,
+        changed,
+        toBasecamp: plan.fileOnly.filter((u) => sendable.has(u)).length,
+        toSheet: reference === 'file' ? 0 : plan.basecampOnly.length,
+        ignored: reference === 'file' ? plan.basecampOnly.length : 0,
+        held,
+      })
+    }
+    return c.json({ ok: true, reference, tabs: out })
+  })
+
   routes.post('/links', async (c) => {
     if (!isAdmin(c)) return fail(c, 403, 'admin_only', ADMIN_ONLY)
     const body = await readJson(c)
     if (!isPlainObject(body)) return fail(c, 400, 'invalid_link', 'الطلب غير صالح: أرسل رابط الملف ورقم المشروع والتبويبات المختارة.')
     const id = spreadsheetIdOf(String(body.source ?? ''))
     const projectId = Number(body.bcProjectId)
-    const tabIds = Array.isArray(body.tabs) ? body.tabs.map(Number).filter(Number.isInteger) : []
+    const choices = tabChoicesOf(body.tabs) ?? []
+    const tabIds = choices.map((t) => t.sheetId)
+    const reference = referenceOf(body.reference)
     const rolesTab = typeof body.rolesTab === 'string' && body.rolesTab.trim() !== '' ? body.rolesTab.trim() : 'المسميات'
     if (!id || !Number.isInteger(projectId) || tabIds.length === 0) {
       return fail(c, 400, 'invalid_link', 'الطلب غير صالح: أرسل رابط الملف ورقم المشروع وتبويباً واحداً على الأقل.')
     }
+    const listIds = choices.map((t) => t.listId).filter((x): x is number => x !== null)
+    if (new Set(listIds).size !== listIds.length) return fail(c, 400, 'invalid_link', 'اخترت القائمة نفسها لأكثر من تبويب. لكل تبويب قائمته.')
     const g = google(c)
     let meta: Awaited<ReturnType<typeof g.spreadsheet>>
     try {
@@ -205,6 +331,16 @@ export function stationRoutes(depsIn?: StationDeps): Hono<AppEnv> {
     const project = await withServiceToken(ctx, (token) => readClient(ctx).projects.get(token, projectId))
     const todosetId = todosetOf(project)
     if (todosetId === null) return fail(c, 409, 'todos_disabled', `أداة المهام غير مفعّلة في مشروع «${project.name}» في Basecamp. فعّلها من إعدادات المشروع ثم أعد المحاولة.`)
+    if (listIds.length > 0) {
+      const lists = await withServiceToken(ctx, (token) => readClient(ctx).todolists.list(token, todosetId).all())
+      const inProject = new Set(lists.map((l) => l.id))
+      if (listIds.some((l) => !inProject.has(l))) return fail(c, 400, 'unknown_list', 'بعض القوائم المختارة لم تعد في المشروع. حدّث الصفحة ثم اختر من جديد.')
+      const used = await c.env.DB.prepare(`SELECT bc_todolist_id FROM station_tabs WHERE bc_todolist_id IN (${listIds.map(() => '?').join(',')})`)
+        .bind(...listIds)
+        .all<{ bc_todolist_id: number }>()
+      if (used.results.length > 0) return fail(c, 409, 'list_already_linked', 'القائمة المختارة مربوطة بتبويب آخر. القائمة الواحدة يغذّيها تبويب واحد؛ اختر قائمة أخرى أو «قائمة جديدة».')
+    }
+    const choiceOf = new Map(choices.map((t) => [t.sheetId, t]))
 
     const at = new Date(deps().now()).toISOString()
     const me = callerOf(c).id
@@ -225,9 +361,9 @@ export function stationRoutes(depsIn?: StationDeps): Hono<AppEnv> {
         c.env.DB.prepare(`UPDATE station_tabs SET unlinked_at = ?2 WHERE link_id = ?1`).bind(linkId, at),
         ...chosen.map((t) =>
           c.env.DB.prepare(
-            `INSERT INTO station_tabs (link_id, google_sheet_id, title) VALUES (?1, ?2, ?3)
+            `INSERT INTO station_tabs (link_id, google_sheet_id, title, bc_todolist_id, first_sync) VALUES (?1, ?2, ?3, ?4, ?5)
              ON CONFLICT (link_id, google_sheet_id) DO UPDATE SET title = excluded.title, unlinked_at = NULL`,
-          ).bind(linkId, t.sheetId, t.title),
+          ).bind(linkId, t.sheetId, t.title, choiceOf.get(t.sheetId)?.listId ?? null, choiceOf.get(t.sheetId)?.listId ? reference : null),
         ),
         c.env.DB.prepare(
           `INSERT INTO audit_log (at, actor_id, action, entity_type, entity_id, workbook_id, details_json) VALUES (?1, ?2, 'station.link.relink', 'station_link', ?3, NULL, ?4)`,
@@ -245,10 +381,20 @@ export function stationRoutes(depsIn?: StationDeps): Hono<AppEnv> {
         `INSERT INTO station_links (id, spreadsheet_id, title, bc_project_id, bc_todoset_id, roles_tab, notify_secret, created_by, created_at, updated_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9)`,
       ).bind(linkId, id, meta.title, projectId, todosetId, rolesTab, webhookSecret(), me, at),
-      ...chosen.map((t) => c.env.DB.prepare(`INSERT INTO station_tabs (link_id, google_sheet_id, title) VALUES (?1, ?2, ?3)`).bind(linkId, t.sheetId, t.title)),
+      // A tab linked to an existing list is matched with it at its first run, by `first_sync` (decision 10).
+      ...chosen.map((t) => {
+        const listId = choiceOf.get(t.sheetId)?.listId ?? null
+        return c.env.DB.prepare(`INSERT INTO station_tabs (link_id, google_sheet_id, title, bc_todolist_id, first_sync) VALUES (?1, ?2, ?3, ?4, ?5)`).bind(
+          linkId,
+          t.sheetId,
+          t.title,
+          listId,
+          listId !== null ? reference : null,
+        )
+      }),
       c.env.DB.prepare(
         `INSERT INTO audit_log (at, actor_id, action, entity_type, entity_id, workbook_id, details_json) VALUES (?1, ?2, 'station.link.create', 'station_link', ?3, NULL, ?4)`,
-      ).bind(at, me, linkId, JSON.stringify({ spreadsheetId: id, bcProjectId: projectId, tabs: tabIds })),
+      ).bind(at, me, linkId, JSON.stringify({ spreadsheetId: id, bcProjectId: projectId, tabs: choices, reference })),
     ])
     await ensureProjectWebhook(c.env, { workbookId: `station:${linkId}`, bcProjectId: projectId }, deps())
     await ensureChannel(c.env, linkId, id, g as Parameters<typeof ensureChannel>[3], deps().now()).catch(() => undefined)

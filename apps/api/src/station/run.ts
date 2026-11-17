@@ -23,6 +23,7 @@ import type { RemoteState } from '@naf-sheets/sync-engine'
 import {
   STATUS,
   deletedTasks,
+  firstSyncPlan,
   findColumns,
   inboundEdits,
   isoToSerial,
@@ -160,7 +161,7 @@ export async function syncLink(linkId: string, deps: RunDeps): Promise<RunReport
   const allTasks: LocalTask[] = []
 
   // --- Each tab -----------------------------------------------------------------
-  const known = new Map((await getTasks(db, link.id)).map((t) => [t.uid, t]))
+  let known = new Map((await getTasks(db, link.id)).map((t) => [t.uid, t]))
   const cellWrites: { tabTitle: string; row: number; column: number; value: string | number | null }[] = []
   const inserts: Parameters<SheetPort['insertRows']>[1] = []
   const struck: Parameters<SheetPort['strike']>[1] = []
@@ -182,29 +183,88 @@ export async function syncLink(linkId: string, deps: RunDeps): Promise<RunReport
     }
     const listId = tab.bc_todolist_id
 
-    const rowIds = new Map<number, RowIdentity>()
-    for (const id of identities) {
-      if (id.sheetId !== tab.google_sheet_id) continue
-      const k = known.get(id.uid)
-      const b = baseOf(k)
-      rowIds.set(id.row, {
-        uid: id.uid,
-        bcId: k?.bc_id ?? null,
-        ...(k ? { level: k.level } : {}),
-        ...(b ? { carry: { notesHtml: notesOf(b), startsOn: b.startsOn } } : {}),
-        ...(k?.deleted_remotely === 1 ? { deletedRemotely: true } : {}),
-      })
+    /** Identities written by this run before the tab is read again (the first sync). */
+    const written: { row: number; uid: string }[] = []
+    const rowIdsNow = (): Map<number, RowIdentity> => {
+      const rowIds = new Map<number, RowIdentity>()
+      for (const id of [...identities.filter((x) => x.sheetId === tab.google_sheet_id), ...written]) {
+        const k = known.get(id.uid)
+        const b = baseOf(k)
+        rowIds.set(id.row, {
+          uid: id.uid,
+          bcId: k?.bc_id ?? null,
+          ...(k ? { level: k.level } : {}),
+          ...(b ? { carry: { notesHtml: notesOf(b), startsOn: b.startsOn } } : {}),
+          ...(k?.deleted_remotely === 1 ? { deletedRemotely: true } : {}),
+        })
+      }
+      return rowIds
     }
-    const read = readTab({
-      values: tabValues,
-      columns,
-      roles,
-      people,
-      identities: rowIds,
-      newUid,
-      sheetId: String(tab.google_sheet_id),
-      changedAt: modified,
-    })
+    const readNow = () =>
+      readTab({
+        values: tabValues,
+        columns,
+        roles,
+        people,
+        identities: rowIdsNow(),
+        newUid,
+        sheetId: String(tab.google_sheet_id),
+        changedAt: modified,
+      })
+    let read = readNow()
+
+    // Decision 10: the tab was linked to a list that already had tasks. Its rows
+    // and the list's records are matched by title once, then the reference
+    // decides which side's values win (packages/station-sheet first-sync.ts).
+    if (tab.first_sync !== null) {
+      const reference = tab.first_sync
+      // Identities first: a matched pair saved for a row the sheet does not know
+      // would be taken for a deleted row by the next run.
+      if (read.newIdentities.length > 0) {
+        const fresh = read.newIdentities.map((n) => ({ sheetId: tab.google_sheet_id, row: n.row, uid: n.uid }))
+        if (!(await writeOrStop(() => google.write(link.spreadsheet_id, { identities: fresh })))) return { ...report, status: 'stopped' }
+        written.push(...read.newIdentities)
+      }
+      const listed = [...(await basecamp.todos.list(token, listId).all()), ...(await basecamp.todos.list(token, listId, { completed: true }).all())]
+      const subsOf = new Map<number, RemoteSubtask[]>()
+      for (const todo of listed) if (todo.subtasksCount > 0) subsOf.set(todo.id, await basecamp.subtasks.list(token, todo.id).all())
+      const knownBcIds = new Set([...known.values()].map((k) => k.bc_id).filter((x): x is number => x !== null))
+      const plan = firstSyncPlan(read.rows, listed, subsOf, knownBcIds)
+      const recordOf = new Map<number, RemoteTask>([...listed, ...[...subsOf.values()].flat()].map((x) => [x.id, x]))
+      const rowByUid = new Map(read.rows.map((r) => [r.uid, r]))
+      const localOf = new Map(read.tasks.map((t) => [t.uid, t]))
+      const statements: D1PreparedStatement[] = []
+      for (const pair of plan.pairs) {
+        const remote = recordOf.get(pair.bcId)!
+        const local = localOf.get(pair.uid)
+        let pairBase = baseFromRemote(pair.uid, remote, remote.position ?? 1)
+        // Basecamp's values win: the base holds the sheet's, so only Basecamp looks changed.
+        if (reference === 'basecamp' && local) pairBase = baseWith(pairBase, { title: local.title, dueOn: local.dueOn, completed: local.completed })
+        const row = rowByUid.get(pair.uid)!
+        statements.push(
+          saveTaskStatement(db, { uid: pair.uid, linkId: link.id, googleSheetId: tab.google_sheet_id, level: pair.level, parentUid: row.parentUid, bcId: pair.bcId, base: pairBase }, at()),
+          logStatement(db, { linkId: link.id, direction: reference === 'basecamp' ? 'to_sheet' : 'to_basecamp', action: 'first_sync_match', taskUid: pair.uid, detail: { bcId: pair.bcId, reference } }, at()),
+        )
+      }
+      // The file is the reference: what is only in Basecamp stays there, untouched, and gets no row.
+      if (reference === 'file') {
+        for (const only of plan.basecampOnly) {
+          statements.push(
+            db
+              .prepare(
+                `INSERT INTO station_tasks (uid, link_id, google_sheet_id, level, parent_uid, bc_id, base_json, ignored, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, NULL, ?5, NULL, 1, ?6) ON CONFLICT (uid) DO NOTHING`,
+              )
+              .bind(`ignored:${only.bcId}`, link.id, tab.google_sheet_id, only.level, only.bcId, at()),
+          )
+        }
+      }
+      statements.push(db.prepare(`UPDATE station_tabs SET first_sync = NULL WHERE link_id = ?1 AND google_sheet_id = ?2`).bind(link.id, tab.google_sheet_id))
+      for (let i = 0; i < statements.length; i += 50) await db.batch(statements.slice(i, i + 50))
+      tab.first_sync = null
+      known = new Map((await getTasks(db, link.id)).map((t) => [t.uid, t]))
+      read = readNow()
+    }
     allTasks.push(...read.tasks)
     // Grouped per tab: one alert per kind of problem, with its rows.
     const reverted: number[] = []
@@ -221,7 +281,7 @@ export async function syncLink(linkId: string, deps: RunDeps): Promise<RunReport
     for (const f of read.fixes) cellWrites.push({ tabTitle: tab.title, ...f })
     heldAlerts(read.issues, tab.title)
 
-    const knownHere = [...known.values()].filter((t) => t.google_sheet_id === tab.google_sheet_id)
+    const knownHere = [...known.values()].filter((t) => t.google_sheet_id === tab.google_sheet_id && t.ignored !== 1)
     if (read.rows.length === 0 && knownHere.length > 0) {
       alert({ kind: 'tab_stopped', ...base, tab: tab.title, reason: 'قُرئ التبويب فارغاً وكانت فيه مهام، فلم يُحذف شيء من Basecamp. إن كان الحذف مقصوداً فاحذف الصفوف على دفعات.' })
       continue
@@ -234,6 +294,7 @@ export async function syncLink(linkId: string, deps: RunDeps): Promise<RunReport
     const localByUid = new Map(read.tasks.map((t) => [t.uid, t]))
     for (const todo of remoteTodos) {
       const row = [...known.values()].find((k) => k.bc_id === todo.id)
+      if (row?.ignored === 1) continue // left in Basecamp by the first sync (file reference)
       const b = baseOf(row)
       const localSubs = read.tasks.filter((t) => t.parentUid === row?.uid)
       const changed =

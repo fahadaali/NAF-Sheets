@@ -50,6 +50,8 @@ export type ApiErrorCode =
   | 'not_restorable'
   | 'todo_not_in_basecamp'
   | 'row_not_found'
+  | 'unknown_list'
+  | 'list_already_linked'
   // The Google service account (apps/api/src/station/google.ts `GoogleErrorCode`)
   | 'key_missing'
   | 'key_invalid'

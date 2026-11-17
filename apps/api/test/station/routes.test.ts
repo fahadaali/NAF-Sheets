@@ -137,6 +137,44 @@ describe('pause and unlink', () => {
   })
 })
 
+describe('first sync with an existing list (decision 10)', () => {
+  it('lists the project’s lists, previews the first sync without writing anything, then links and matches by title', async () => {
+    const s = await setup()
+    const list = s.h.fake.list(s.project.id, 'قائمة قائمة')
+    const motion = s.h.fake.addTodo(list.id, { content: 'فيديو الموشن' })
+    s.h.fake.addSubtask(motion.id, { title: 'بنك الأفكار', dueOn: '2026-12-31', assigneeIds: [s.omarId] })
+    const only = s.h.fake.addTodo(list.id, { content: 'في Basecamp وحده' })
+
+    expect((await call(s.app, 'GET', `/api/station/projects/${s.project.id}/lists`, { user: s.viewer, env: s.h.env })).status).toBe(403)
+    const lists = await json<{ lists: { id: number; name: string; linked: boolean }[] }>(await call(s.app, 'GET', `/api/station/projects/${s.project.id}/lists`, { user: s.admin, env: s.h.env }))
+    expect(lists.lists.find((l) => l.id === list.id)).toEqual({ id: list.id, name: 'قائمة قائمة', linked: false })
+
+    const body = { source: SID, bcProjectId: s.project.id, tabs: [{ sheetId: 2, listId: list.id }], reference: 'file' }
+    const writes = s.h.fake.calls.filter((c) => c.method !== 'GET').length
+    const preview = await json<{ tabs: Record<string, unknown>[] }>(await call(s.app, 'POST', '/api/station/preview', { user: s.admin, body, env: s.h.env }))
+    expect(preview.tabs).toEqual([{ sheetId: 2, title: 'السوشل ميديا', ok: true, matched: 2, changed: 2, toBasecamp: 0, toSheet: 0, ignored: 1, held: 0 }])
+    const merge = await json<{ tabs: Record<string, unknown>[] }>(await call(s.app, 'POST', '/api/station/preview', { user: s.admin, body: { ...body, reference: 'merge' }, env: s.h.env }))
+    expect(merge.tabs[0]).toMatchObject({ toSheet: 1, ignored: 0 })
+    expect(s.h.fake.calls.filter((c) => c.method !== 'GET').length).toBe(writes)
+
+    const res = await call(s.app, 'POST', '/api/station/links', { user: s.admin, body, env: s.h.env })
+    expect(res.status).toBe(201)
+    const { id } = await json<{ id: string }>(res)
+    await runStation(s.h.env, id, { ...s.h.deps, google: s.sheet })
+    await runStation(s.h.env, id, { ...s.h.deps, google: s.sheet })
+    expect([...s.h.fake.todos.values()].filter((t) => t.listId === list.id && t.status === 'active').map((t) => t.content).sort()).toEqual(['في Basecamp وحده', 'فيديو الموشن'])
+    expect([...s.h.fake.subtasks.values()]).toHaveLength(1)
+    expect(s.sheet.tab('السوشل ميديا').rows.some((r) => r[0] === 'في Basecamp وحده')).toBe(false)
+    expect(s.h.fake.todos.get(only.id)!.status).toBe('active')
+
+    // The list now feeds one tab only.
+    const after = await json<{ lists: { id: number; linked: boolean }[] }>(await call(s.app, 'GET', `/api/station/projects/${s.project.id}/lists`, { user: s.admin, env: s.h.env }))
+    expect(after.lists.find((l) => l.id === list.id)?.linked).toBe(true)
+    const other = await call(s.app, 'POST', '/api/station/links', { user: s.admin, body: { ...body, source: `1Nyy${crypto.randomUUID().replace(/-/g, '')}` }, env: s.h.env })
+    expect(other.status).toBe(409)
+  })
+})
+
 describe('restoring from the link screen (owner, 2026-11-17)', () => {
   it('creates a subtask deleted for good again from its snapshot (admin only, once); the next run gives it its row back', async () => {
     const s = await setup()
