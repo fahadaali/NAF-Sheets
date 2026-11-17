@@ -135,6 +135,11 @@ describe('readRoles', () => {
     expect(splitNames('فهد العتيبي - عمر العمار')).toEqual(['فهد العتيبي', 'عمر العمار'])
     expect(splitNames('فهد العتيبي، عمر العمار')).toEqual(['فهد العتيبي', 'عمر العمار'])
     expect(splitNames('آل-سعيد')).toEqual(['آل-سعيد'])
+    // The other ways people write it (owner, 2026-11-17).
+    for (const written of ['فهد العتيبي – عمر العمار', 'فهد العتيبي — عمر العمار', 'فهد العتيبي -عمر العمار', 'فهد العتيبي- عمر العمار', 'فهد العتيبي؛ عمر العمار', 'فهد العتيبي,عمر العمار']) {
+      expect(splitNames(written)).toEqual(['فهد العتيبي', 'عمر العمار'])
+    }
+    expect(splitNames('محمد آل-سعيد – عمر العمار')).toEqual(['محمد آل-سعيد', 'عمر العمار'])
     expect(splitNames('  ')).toEqual([])
   })
 })

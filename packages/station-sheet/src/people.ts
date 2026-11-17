@@ -14,10 +14,15 @@ export type RoleNames = Map<string, string>
 /** One person's name as written in «المسميات» → Basecamp person id (set in the platform). */
 export type PeopleMap = Map<string, number>
 
-/** The people a name cell lists: split on « - », «،» and «,»; blanks dropped. */
+/**
+ * The people a name cell lists: split on a dash with a space on either side
+ * («فهد - عمر», «فهد -عمر», «فهد– عمر»; hyphen, en dash or em dash) and on
+ * «،», «,» and «؛»; blanks dropped. A dash inside a name («آل-سعيد») keeps
+ * it whole.
+ */
 export function splitNames(text: string): string[] {
   return text
-    .split(/\s+-\s+|،|,/)
+    .split(/\s+[-–—]\s*|\s*[-–—]\s+|[،,؛]/)
     .map((n) => n.replace(/\s+/g, ' ').trim())
     .filter((n) => n !== '')
 }
