@@ -467,6 +467,14 @@ describe('problems', () => {
     expect(resolved?.resolved_at).not.toBeNull()
   })
 
+  it('reports a title written twice in «المسميات» with different names, and keeps the first', async () => {
+    const w = await world(SOCIAL)
+    w.sheet.tab('المسميات').rows.push(['مسؤول السوشل ميديا', 'فهد العتيبي', ''])
+    const report = await w.run()
+    expect(report.alerts).toContainEqual(expect.objectContaining({ kind: 'roles_conflict', role: 'مسؤول السوشل ميديا', names: ['عمر العمار', 'فهد العتيبي'] }))
+    expect(w.subtasks().find((x) => x.title === 'بناء بنك أفكار للموشن')!.assigneeIds).toEqual([w.people.omar.id])
+  })
+
   it('stops the link with an Arabic reason when the file is not shared', async () => {
     const w = await world(SOCIAL)
     w.sheet.shared = false

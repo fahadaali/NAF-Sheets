@@ -29,8 +29,9 @@ export interface RolesIssue {
 
 /**
  * Reads «المسميات»: first row is the header, column A the title, column B the
- * name. A title listed twice with the same name is fine; with different names
- * it is reported and the first one is used.
+ * name. A title listed twice with the same name is fine; an empty name gives
+ * way to a written one; two different names are reported (`conflicts`) and
+ * the first one is used.
  */
 export function readRoles(rows: readonly (readonly CellValue[])[]): { roles: RoleNames; conflicts: RolesIssue[] } {
   const roles: RoleNames = new Map()
@@ -39,8 +40,8 @@ export function readRoles(rows: readonly (readonly CellValue[])[]): { roles: Rol
     const role = cellText(row[0])
     if (role === '') continue
     const name = cellText(row[1])
-    if (!roles.has(role)) roles.set(role, name)
-    seen.set(role, (seen.get(role) ?? new Set()).add(name))
+    if (!roles.has(role) || (roles.get(role) === '' && name !== '')) roles.set(role, name)
+    if (name !== '') seen.set(role, (seen.get(role) ?? new Set()).add(name))
   }
   const conflicts = [...seen].filter(([, names]) => names.size > 1).map(([role, names]) => ({ role, names: [...names] }))
   return { roles, conflicts }

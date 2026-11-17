@@ -8,6 +8,7 @@ export type StationAlert =
   | { kind: 'name_unmapped'; linkId: string; linkTitle: string; tab: string; role: string; name: string; rows: number; rowNumbers?: number[]; suggestion?: { bcPersonId: number; personName: string; previousName: string } }
   | { kind: 'not_project_member'; linkId: string; linkTitle: string; personName: string; bcPersonId: number; projectName: string; rows: number }
   | { kind: 'rows_held'; linkId: string; linkTitle: string; tab: string; code: string; subject?: string; reason: string; rows: number; rowNumbers?: number[] }
+  | { kind: 'roles_conflict'; linkId: string; linkTitle: string; tab: string; role: string; names: string[] }
   | { kind: 'tab_stopped'; linkId: string; linkTitle: string; tab: string; reason: string }
   | { kind: 'link_stopped'; linkId: string; linkTitle: string; reason: string }
 

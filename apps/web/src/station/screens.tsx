@@ -372,21 +372,6 @@ function NewLinkWizard({ user }: { user: CurrentUser | null }) {
 
 // --- ربط واحد -------------------------------------------------------------------------
 
-export function alertText(a: StationAlert): string {
-  switch (a.kind) {
-    case 'name_unmapped':
-      return s.alert.name_unmapped(a)
-    case 'not_project_member':
-      return s.alert.not_project_member(a)
-    case 'rows_held':
-      return `«${a.tab}»: ${a.reason}${a.rows > 1 ? ` (${s.rows(a.rows)})` : ''}`
-    case 'tab_stopped':
-      return `«${a.tab}»: ${a.reason}`
-    case 'link_stopped':
-      return a.reason
-  }
-}
-
 export function LinkScreen({ user, id }: { user: CurrentUser | null; id: string }) {
   const [load, reload] = useLoad((signal) => stationApi.link(id, signal), [id])
   const [flash, setFlash] = useState<{ tone: 'info' | 'danger'; text: string } | null>(null)
@@ -565,7 +550,7 @@ type Problem = LinkDetail['problems'][number]
 
 /** Problems by sheet tab (the file-wide ones first), in a stable order. */
 export function problemGroups(problems: readonly Problem[]): { tab: string; items: Problem[] }[] {
-  const order: Record<StationAlert['kind'], number> = { link_stopped: 0, tab_stopped: 1, name_unmapped: 2, not_project_member: 3, rows_held: 4 }
+  const order: Record<StationAlert['kind'], number> = { link_stopped: 0, tab_stopped: 1, name_unmapped: 2, not_project_member: 3, roles_conflict: 4, rows_held: 5 }
   const tabOf = (a: StationAlert): string => ('tab' in a ? a.tab : s.link.wholeFile)
   const groups = new Map<string, Problem[]>()
   for (const p of [...problems].sort((x, y) => order[x.alert.kind] - order[y.alert.kind] || x.firstSeen.localeCompare(y.firstSeen))) {
@@ -611,6 +596,8 @@ function problemTitle(a: StationAlert): string {
       return s.problem.nameUnmapped(a.name)
     case 'not_project_member':
       return s.problem.notMember(a.personName)
+    case 'roles_conflict':
+      return s.problem.rolesConflict(a.role)
     case 'rows_held':
       return s.problem.held[a.code] ?? s.problem.heldDefault
     case 'tab_stopped':
@@ -626,6 +613,8 @@ function problemDetail(a: StationAlert): string {
       return s.problem.nameUnmappedDetail(a.role, a.rows)
     case 'not_project_member':
       return s.problem.notMemberDetail(a.projectName, a.rows)
+    case 'roles_conflict':
+      return s.problem.rolesConflictDetail(a.names)
     default:
       return a.reason
   }

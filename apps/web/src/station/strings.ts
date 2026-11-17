@@ -114,8 +114,6 @@ export const s = {
     } as Record<string, string>,
   },
   alert: {
-    name_unmapped: (a: { name: string; role: string; tab: string; rows: number }) => `الاسم «${a.name}» (${a.role}) في «${a.tab}» غير مربوط بشخص في Basecamp — ${rows(a.rows)} متوقفة.`,
-    not_project_member: (a: { personName: string; projectName: string; rows: number }) => `«${a.personName}» ليس عضواً في مشروع «${a.projectName}» — مسند إليه ${rows(a.rows)}.`,
     linkName: 'اربط الاسم',
   },
   problem: {
@@ -123,6 +121,8 @@ export const s = {
     nameUnmappedDetail: (role: string, n: number) => `مكتوب أمام «${role}» في المسميات، و${rows(n)} لا تُزامَن حتى يُربط. اربطه من «مطابقة الأسماء».`,
     notMember: (name: string) => `«${name}» ليس عضواً في المشروع`,
     notMemberDetail: (project: string, n: number) => `مسند إليه ${rows(n)}، وليس عضواً في مشروع «${project}» في Basecamp. أضفه إلى المشروع.`,
+    rolesConflict: (role: string) => `المسمى «${role}» مكتوب بأكثر من اسم`,
+    rolesConflictDetail: (names: string[]) => `${names.map((n) => `«${n}»`).join(' و')}. يُعمل بالأول حتى يُحذف المكرر أو يوحَّد الاسم.`,
     tabStopped: 'توقفت مزامنة التبويب',
     linkStopped: 'توقفت مزامنة الملف كله',
     heldDefault: 'صفوف لا تُزامَن',
@@ -134,6 +134,8 @@ export const s = {
       date_unreadable: 'تاريخ غير مفهوم',
       subtask_without_main: 'مهمة فرعية بلا مهمة رئيسية فوقها',
       level_changed: 'صف تغيّر نوعه',
+      parent_held: 'مهام فرعية تنتظر مهمتها الرئيسية',
+      subtask_moved: 'مهمة فرعية نُقلت تحت مهمة أخرى',
     } as Record<string, string>,
   },
   names: {

@@ -126,7 +126,8 @@ export async function syncLink(linkId: string, deps: RunDeps): Promise<RunReport
   }
 
   // --- Names ------------------------------------------------------------------
-  const { roles } = readRoles((values.get(link.roles_tab) ?? []) as CellValue[][])
+  const { roles, conflicts } = readRoles((values.get(link.roles_tab) ?? []) as CellValue[][])
+  for (const c of conflicts) alert({ kind: 'roles_conflict', ...base, tab: link.roles_tab, role: c.role, names: c.names })
   const people = await getNames(db)
   mappedNames = new Set(people.keys())
   const projectPeople = await basecamp.people.listProject(token, link.bc_project_id).all()

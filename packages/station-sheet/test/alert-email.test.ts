@@ -63,6 +63,15 @@ describe('composeAlertEmail', () => {
     expect(email.html).not.toContain('<b>x</b>')
     expect(email.html).toContain('&lt;b&gt;x&lt;/b&gt;')
   })
+
+  it('lists the held rows of an unmapped name, and explains a title written with two names', () => {
+    const conflict: StationAlert = { kind: 'roles_conflict', linkId: 'l1', linkTitle: 'الاتصال المؤسسي والتسويق', tab: 'المسميات', role: 'الاعتمادات', names: ['فهد العتيبي', 'عمر العمار'] }
+    const email = composeAlertEmail([{ ...renamed, suggestion: undefined, rowNumbers: [4, 9] }, conflict], { origin: ORIGIN })
+    expect(email.text).toContain('(الصفوف 4، 9)')
+    expect(email.text).toContain('المسمى «الاعتمادات» مكتوب بأكثر من اسم')
+    expect(email.text).toContain('«فهد العتيبي» و«عمر العمار»')
+    expect(alertKey(conflict)).toBe('roles_conflict:l1:الاعتمادات')
+  })
 })
 
 describe('resendRequest', () => {

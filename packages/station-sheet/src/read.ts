@@ -72,6 +72,7 @@ export type TabIssueCode =
   | 'date_unreadable'
   | 'level_changed'
   | 'duplicate_identity'
+  | 'parent_held'
 
 export interface TabIssue {
   code: TabIssueCode
@@ -182,7 +183,10 @@ export function readTab(input: ReadTabInput): ReadTabResult {
       }
       if (mainText !== currentMain!.title) result.fixes.push({ row: r, column: columns.main, value: textCell(currentMain!.title) })
       // A subtask under a held to-do waits with it: it has no Basecamp parent to go to.
-      if (currentMain!.held && currentMain!.row.bcId === null) blocked = true
+      if (currentMain!.held && currentMain!.row.bcId === null && !blocked) {
+        issue('parent_held', r, true, `الصف ${human(r)}: ينتظر مهمته الرئيسية «${currentMain!.title}» المتوقفة؛ يُرسل حين تُحلّ مشكلتها.`, currentMain!.title)
+        blocked = true
+      }
     }
 
     if (blocked) continue

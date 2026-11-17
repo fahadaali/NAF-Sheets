@@ -116,6 +116,12 @@ describe('readRoles', () => {
     expect(conflicts).toEqual([{ role: 'الاعتمادات', names: ['فهد العتيبي - عمر العمار', 'فهد'] }])
   })
 
+  it('lets a written name win over an empty one for the same title, without a conflict', () => {
+    const { roles, conflicts } = readRoles([ROLES_TAB[0]!, ['الشريك', ''], ['الشريك', 'فهد العتيبي']])
+    expect(roles.get('الشريك')).toBe('فهد العتيبي')
+    expect(conflicts).toEqual([])
+  })
+
   it('splits several people in one name cell, keeping hyphenated names whole', () => {
     expect(splitNames('فهد العتيبي - عمر العمار')).toEqual(['فهد العتيبي', 'عمر العمار'])
     expect(splitNames('فهد العتيبي، عمر العمار')).toEqual(['فهد العتيبي', 'عمر العمار'])
@@ -198,6 +204,17 @@ describe('readTab', () => {
     expect(r.issues[1]!.message).toContain('«عبدالرحمن العاطفي»')
     // Held rows are still rows: they must not be taken for deleted ones.
     expect(r.rows).toHaveLength(4)
+  })
+
+  it('counts the subtasks waiting for a held new to-do, one issue each', () => {
+    const r = read([HEADER, ['التأسيس', '', 'المدير المالي'], ['التأسيس', 'أ', 'الشريك'], ['التأسيس', 'ب', 'مسؤول السوشل ميديا']])
+    expect(r.tasks).toEqual([])
+    expect(r.issues.map((i) => [i.code, i.row])).toEqual([
+      ['role_unknown', 1],
+      ['role_without_name', 2],
+      ['parent_held', 3],
+    ])
+    expect(r.issues[2]!.subject).toBe('التأسيس')
   })
 
   it('holds back an unreadable date', () => {
