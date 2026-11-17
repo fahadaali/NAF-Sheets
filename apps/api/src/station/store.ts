@@ -96,7 +96,7 @@ export function saveTaskStatement(
 
 export function logStatement(
   db: D1Database,
-  e: { linkId: string; direction: 'to_basecamp' | 'to_sheet' | 'none'; action: string; taskUid?: string | null; detail?: unknown },
+  e: { linkId: string; direction: 'to_basecamp' | 'to_sheet'; action: string; taskUid?: string | null; detail?: unknown },
   at: string,
 ): D1PreparedStatement {
   return db

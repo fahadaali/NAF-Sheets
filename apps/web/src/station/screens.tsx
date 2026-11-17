@@ -110,6 +110,7 @@ export function LinksScreen({ user }: { user: CurrentUser | null }) {
         ) : null
       }
     >
+      <SetupWarning />
       {load.kind === 'loading' ? <Loading text={s.links.loading} /> : null}
       {load.kind === 'error' ? <Failed message={load.message} retry={retry} /> : null}
       {load.kind === 'ready' && links.length === 0 ? (
@@ -126,6 +127,22 @@ export function LinksScreen({ user }: { user: CurrentUser | null }) {
         </div>
       ) : null}
     </Page>
+  )
+}
+
+/** On the links page: a link cannot sync without the sync account and the Google key; says where to fix it. */
+function SetupWarning() {
+  const [load] = useLoad((signal) => stationApi.status(signal), [])
+  if (load.kind !== 'ready') return null
+  const { basecamp, google } = load.data
+  if (basecamp?.status === 'active' && google !== null) return null
+  return (
+    <Notice tone="warning">
+      <p>
+        <strong>{s.setup.incomplete}</strong>{' '}
+        <Link href="/settings">{s.setup.open}</Link>
+      </p>
+    </Notice>
   )
 }
 
@@ -408,7 +425,7 @@ export function LinkScreen({ user, id }: { user: CurrentUser | null; id: string 
           </>
         ) : undefined
       }
-      actions={detail ? <LinkActions link={detail.link} isAdmin={isAdmin} busy={busy} act={act} /> : undefined}
+      actions={detail ? <LinkActions link={detail.link} projectUrl={detail.projectUrl} isAdmin={isAdmin} busy={busy} act={act} /> : undefined}
     >
       {load.kind === 'loading' ? <Loading text={s.link.loading} /> : null}
       {load.kind === 'error' ? <Failed message={load.message} retry={reload} /> : null}
@@ -422,13 +439,31 @@ export function LinkScreen({ user, id }: { user: CurrentUser | null; id: string 
   )
 }
 
-function LinkActions({ link, isAdmin, busy, act }: { link: LinkDetail['link']; isAdmin: boolean; busy: boolean; act: (fn: () => Promise<unknown>, done?: string) => Promise<void> }) {
+function LinkActions({
+  link,
+  projectUrl,
+  isAdmin,
+  busy,
+  act,
+}: {
+  link: LinkDetail['link']
+  projectUrl: string | null
+  isAdmin: boolean
+  busy: boolean
+  act: (fn: () => Promise<unknown>, done?: string) => Promise<void>
+}) {
   return (
     <>
       <a className="button button--ghost" href={`https://docs.google.com/spreadsheets/d/${encodeURIComponent(link.spreadsheet_id)}/edit`} target="_blank" rel="noreferrer">
         <ExternalLink className="icon" aria-hidden="true" />
         {s.link.file}
       </a>
+      {projectUrl ? (
+        <a className="button button--ghost" href={projectUrl} target="_blank" rel="noreferrer">
+          <ExternalLink className="icon" aria-hidden="true" />
+          {s.link.project}
+        </a>
+      ) : null}
       {isAdmin ? (
         <>
           <button type="button" className="button button--primary" disabled={busy} onClick={() => void act(() => stationApi.syncNow(link.id), s.link.syncQueued)}>
@@ -533,7 +568,7 @@ function LinkBody({ detail, isAdmin, busy, act }: { detail: LinkDetail; isAdmin:
                     <td>
                       <bdi dir="ltr">{s.date(l.at)}</bdi>
                     </td>
-                    <td>{l.direction === 'to_sheet' ? s.link.toSheet : l.direction === 'to_basecamp' ? s.link.toBasecamp : ''}</td>
+                    <td>{l.direction === 'to_sheet' ? s.link.toSheet : s.link.toBasecamp}</td>
                     <td>{s.link.actions[l.action] ?? l.action}</td>
                   </tr>
                 ))}

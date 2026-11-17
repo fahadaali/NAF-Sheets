@@ -230,9 +230,12 @@ export function stationRoutes(depsIn?: StationDeps): Hono<AppEnv> {
       c.env.DB.prepare(`SELECT key, alert_json, first_seen, emailed_at FROM station_alerts WHERE link_id = ?1 AND resolved_at IS NULL ORDER BY first_seen`).bind(id).all<{ key: string; alert_json: string; first_seen: string; emailed_at: string | null }>(),
       c.env.DB.prepare(`SELECT at, direction, action, task_uid, detail_json FROM station_log WHERE link_id = ?1 ORDER BY id DESC LIMIT 50`).bind(id).all(),
     ])
+    const account = (c.env as { BASECAMP_ACCOUNT_ID?: string }).BASECAMP_ACCOUNT_ID?.trim() ?? ''
+    const projectUrl = /^[1-9]\d{0,15}$/.test(account) ? `https://3.basecamp.com/${account}/projects/${(link as { bc_project_id: number }).bc_project_id}` : null
     return c.json({
       ok: true,
       link,
+      projectUrl,
       tabs: tabs.results,
       problems: problems.results.map((p) => ({ key: p.key, alert: JSON.parse(p.alert_json), firstSeen: p.first_seen, emailedAt: p.emailed_at })),
       log: log.results,

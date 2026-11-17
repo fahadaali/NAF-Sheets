@@ -100,7 +100,10 @@ describe('wizard and links', () => {
     const { id } = await json<{ id: string }>(res)
     await runStation(s.h.env, id, { ...s.h.deps, google: s.sheet })
     expect([...s.h.fake.subtasks.values()].map((x) => [x.title, x.assigneeIds])).toEqual([['بنك الأفكار', [s.omarId]]])
-    const detail = await json<{ tabs: { bc_todolist_id: number | null }[]; log: { action: string }[] }>(await call(s.app, 'GET', `/api/station/links/${id}`, { user: s.viewer, env: s.h.env }))
+    const detail = await json<{ projectUrl: string | null; tabs: { bc_todolist_id: number | null }[]; log: { action: string }[] }>(
+      await call(s.app, 'GET', `/api/station/links/${id}`, { user: s.viewer, env: s.h.env }),
+    )
+    expect(detail.projectUrl).toBe(`https://3.basecamp.com/${s.h.fake.accountId}/projects/${s.project.id}`)
     expect(detail.tabs[0]!.bc_todolist_id).not.toBeNull()
     expect(detail.log.map((l) => l.action)).toContain('create_subtask')
   })

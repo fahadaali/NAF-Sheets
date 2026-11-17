@@ -44,9 +44,11 @@ export interface Inspection {
 
 export interface LinkDetail {
   link: { id: string; title: string; spreadsheet_id: string; bc_project_id: number; roles_tab: string; state: 'active' | 'paused'; last_sync_at: string | null; last_error: string | null; created_at: string }
+  /** The project in Basecamp; null until BASECAMP_ACCOUNT_ID is set. */
+  projectUrl: string | null
   tabs: { google_sheet_id: number; title: string; bc_todolist_id: number | null }[]
   problems: { key: string; alert: StationAlert; firstSeen: string; emailedAt: string | null }[]
-  log: { at: string; direction: 'to_basecamp' | 'to_sheet' | 'none'; action: string; task_uid: string | null; detail_json: string | null }[]
+  log: { at: string; direction: 'to_basecamp' | 'to_sheet'; action: string; task_uid: string | null; detail_json: string | null }[]
 }
 
 export interface NamesResponse {

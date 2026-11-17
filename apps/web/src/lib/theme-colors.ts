@@ -4,15 +4,11 @@
 // - Admins' overrides («المظهر», GET /api/appearance) are applied at load as
 //   inline custom properties on <html>, which win over theme.css's :root.
 //   No colour value is written here: they come from the API or from the CSS.
-// - Recharts draws SVG with literal colours, so the charts read the tokens
-//   with getComputedStyle (`readTokens`, `useThemeTokens`) and re-read them
-//   when the palette changes.
+// - The appearance screen reads the palette in use with getComputedStyle
+//   (`currentPalette`).
 
-import { useEffect, useState } from 'react'
 import { APPEARANCE_TOKENS, APPEARANCE_TOKEN_NAMES, HEX_COLOUR } from '@naf-sheets/shared'
 import type { AppearancePalette, AppearanceToken } from '@naf-sheets/shared'
-
-const CHANGE_EVENT = 'naf:palette'
 
 function root(): HTMLElement | null {
   return typeof document === 'undefined' ? null : document.documentElement
@@ -28,7 +24,6 @@ export function applyPalette(palette: AppearancePalette): void {
     if (value && HEX_COLOUR.test(value)) el.style.setProperty(property, value)
     else el.style.removeProperty(property)
   }
-  window.dispatchEvent(new Event(CHANGE_EVENT))
 }
 
 let probe: CanvasRenderingContext2D | null | undefined
@@ -67,34 +62,4 @@ export function currentPalette(): AppearancePalette {
     if (hex) out[name as AppearanceToken] = hex
   }
   return out
-}
-
-/** Values of custom properties (colours normalised to hex, numbers as text), read from <html>. */
-export function readTokens<K extends string>(names: readonly K[]): Record<K, string> {
-  const el = root()
-  const out = {} as Record<K, string>
-  if (!el) {
-    for (const n of names) out[n] = ''
-    return out
-  }
-  const style = getComputedStyle(el)
-  for (const n of names) {
-    const raw = style.getPropertyValue(n).trim()
-    out[n] = toHex(raw) ?? raw
-  }
-  return out
-}
-
-/** `readTokens`, read again whenever the palette changes. */
-export function useThemeTokens<K extends string>(names: readonly K[]): Record<K, string> {
-  const key = names.join(' ')
-  const [values, setValues] = useState(() => readTokens(names))
-  useEffect(() => {
-    const update = () => setValues(readTokens(names))
-    update()
-    window.addEventListener(CHANGE_EVENT, update)
-    return () => window.removeEventListener(CHANGE_EVENT, update)
-    // `key` stands for `names`.
-  }, [key])
-  return values
 }

@@ -310,48 +310,6 @@ bdi.num,
   padding: var(--space-6) var(--space-4) var(--space-7);
 }
 
-.page-head {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-3);
-  margin-block-end: var(--space-4);
-}
-
-.page-head h1 {
-  font-size: var(--font-size-xl);
-  font-weight: var(--font-weight-bold);
-  line-height: var(--line-height-tight);
-}
-
-.search {
-  position: relative;
-  display: flex;
-  align-items: center;
-  flex: 1 1 16rem;
-  max-inline-size: 28rem;
-}
-
-.search .icon {
-  position: absolute;
-  inset-inline-start: var(--space-3);
-  color: var(--color-text-muted);
-  pointer-events: none;
-}
-
-.search input {
-  inline-size: 100%;
-  block-size: var(--control-height);
-  padding-inline: calc(var(--space-3) * 2 + var(--icon-size)) var(--space-3);
-  background: var(--color-surface);
-  border: var(--border-width) solid var(--color-border);
-  border-radius: var(--radius-pill);
-}
-
-.search input:focus-visible {
-  border-color: var(--color-focus);
-  border-radius: var(--radius-pill);
-}
-
 /* Buttons ----------------------------------------------------------------- */
 
 .button {
@@ -631,13 +589,6 @@ bdi.num,
   background: var(--color-surface);
   border: var(--border-width) solid var(--color-border);
   border-radius: var(--radius-lg);
-}
-
-.card__head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-3);
 }
 
 .card__row {
