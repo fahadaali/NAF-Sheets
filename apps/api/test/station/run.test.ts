@@ -258,6 +258,23 @@ describe('Basecamp → sheet', () => {
     }
   })
 
+  it('brings a subtask edited in Basecamp to the sheet on the full pass, even when its to-do did not change', async () => {
+    const w = await world(SOCIAL)
+    await w.run()
+    await w.run()
+    const sub = w.subtasks().find((x) => x.title === 'اعتماد قائمة نوفمبر')!
+    sub.title = 'اعتماد قائمة ديسمبر'
+    sub.dueOn = '2026-12-20'
+    sub.updatedAt = w.fake.tick()
+    await w.run()
+    const tab = w.sheet.tab(TAB)
+    expect(tab.rows[5]![COL.sub]).toBe('اعتماد قائمة نوفمبر') // its to-do looks unchanged: not read yet
+    await env.DB.prepare(`UPDATE station_links SET last_full_at = ?2 WHERE id = ?1`).bind(w.linkId, new Date(Date.now() - 16 * 60_000).toISOString()).run()
+    await w.run()
+    expect(tab.rows[5]![COL.sub]).toBe('اعتماد قائمة ديسمبر')
+    expect(tab.rows[5]![COL.due]).toBe(46376)
+  })
+
   it('puts back the sheet’s people when they are changed in Basecamp, and tells the admin', async () => {
     const w = await world(SOCIAL)
     await w.run()
@@ -352,6 +369,19 @@ describe('held rows', () => {
     w.sheet.set(TAB, 2, COL.status, 'جارية')
     await w.run()
     expect([...w.fake.todos.get(motion.id)!.assigneeIds].sort()).toEqual(people)
+  })
+})
+
+describe('a subtask row moved under another to-do', () => {
+  it('stops that row with an alert, and leaves Basecamp as it was', async () => {
+    const w = await world(SOCIAL)
+    await w.run()
+    const sub = w.subtasks().find((x) => x.title === 'بناء بنك أفكار للموشن')!
+    const parent = sub.todoId
+    w.sheet.moveRow(TAB, 2, 5) // from «فيديو الموشن» to the end of «المناسبات»
+    const report = await w.run()
+    expect(report.alerts).toContainEqual(expect.objectContaining({ kind: 'rows_held', code: 'subtask_moved', rows: 1, rowNumbers: [6] }))
+    expect(w.fake.subtasks.get(sub.id)!.todoId).toBe(parent)
   })
 })
 

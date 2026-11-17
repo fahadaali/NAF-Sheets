@@ -14,6 +14,8 @@ export interface LinkRow {
   notify_secret: string
   last_modified: string | null
   last_sync_at: string | null
+  /** When the last full pass (every to-do's subtasks read) finished; migrations/0012. */
+  last_full_at: string | null
   last_error: string | null
   created_by: string
   created_at: string

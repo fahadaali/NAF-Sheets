@@ -63,6 +63,16 @@ export class FakeSheet implements SheetPort {
     this.version += 1
   }
 
+  /** A person moves a row (drag, sort): its identity goes with it. `to` is its index after the move. */
+  moveRow(title: string, from: number, to: number): void {
+    const t = this.tab(title)
+    const [row] = t.rows.splice(from, 1)
+    const [id] = t.ids.splice(from, 1)
+    t.rows.splice(to, 0, row!)
+    t.ids.splice(to, 0, id ?? null)
+    this.version += 1
+  }
+
   /** A person deletes rows (the identities go with them). */
   deleteRows(title: string, row: number, count = 1): void {
     const t = this.tab(title)

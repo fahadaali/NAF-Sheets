@@ -159,8 +159,8 @@ describe('triggers', () => {
     const before = checks()
     await minute(start + 60_000)
     expect(checks()).toBe(before)
-    // The link synced a minute ago (no full pass due), but the webhook check is 16 minutes old.
-    await env.DB.prepare(`UPDATE station_links SET last_sync_at = ?2, last_modified = ?3 WHERE id = ?1`)
+    // A full pass a minute ago (none due), but the webhook check is 16 minutes old.
+    await env.DB.prepare(`UPDATE station_links SET last_sync_at = ?2, last_full_at = ?2, last_modified = ?3 WHERE id = ?1`)
       .bind(id, new Date(start + 15 * 60_000).toISOString(), await s.sheet.modifiedTime())
       .run()
     s.h.inbound.take()

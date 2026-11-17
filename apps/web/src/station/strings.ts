@@ -110,6 +110,7 @@ export const s = {
       delete_subtask: 'حذف مهمة فرعية',
       untrash_todo: 'استرجاع مهمة',
       write: 'كتابة في الملف',
+      conflict: 'تعارض حُسم بآخر تعديل',
     } as Record<string, string>,
   },
   alert: {

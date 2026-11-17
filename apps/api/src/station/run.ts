@@ -40,6 +40,9 @@ import { baseOf, getLink, getNames, getTabs, getTasks, logStatement, recordAlert
 
 export type SheetPort = Pick<GoogleClient, 'serviceAccountEmail' | 'spreadsheet' | 'tabValues' | 'rowIdentities' | 'write' | 'insertRows' | 'setNotes' | 'modifiedTime'>
 
+/** Full pass of every link: catches the Basecamp changes no webhook announces (a subtask's date or title). */
+export const FULL_PASS_MS = 15 * 60_000
+
 export interface RunDeps {
   db: D1Database
   google: SheetPort
@@ -70,6 +73,8 @@ export async function syncLink(linkId: string, deps: RunDeps): Promise<RunReport
   const found0 = await getLink(db, linkId)
   if (!found0 || found0.state !== 'active') return { ...report, status: 'skipped' }
   const link = found0
+  // This run reads the subtasks of every to-do, not only of those that changed.
+  const fullPass = link.last_full_at === null || deps.now() - Date.parse(link.last_full_at) >= FULL_PASS_MS
   const skippedTabs = new Set<string>()
   const alert = (a: StationAlert): void => {
     if (a.kind === 'tab_stopped') skippedTabs.add(a.tab)
@@ -199,6 +204,7 @@ export async function syncLink(linkId: string, deps: RunDeps): Promise<RunReport
     allTasks.push(...read.tasks)
     // Grouped per tab: one alert per kind of problem, with its rows.
     const reverted: number[] = []
+    const moved: number[] = []
     const noRole: string[] = []
     const rowOf = (uid: string): number => (read.rows.find((r) => r.uid === uid)?.row ?? -1) + 1
     // New rows get their identity in the sheet before anything is created in
@@ -227,6 +233,7 @@ export async function syncLink(linkId: string, deps: RunDeps): Promise<RunReport
       const b = baseOf(row)
       const localSubs = read.tasks.filter((t) => t.parentUid === row?.uid)
       const changed =
+        fullPass ||
         !row ||
         b === null ||
         b.remoteUpdatedAt !== todo.updatedAt ||
@@ -310,6 +317,15 @@ export async function syncLink(linkId: string, deps: RunDeps): Promise<RunReport
         parentTodoId: parentId,
         ...(local.level === 0 ? { autoAssign: { subtasks, settings: { enabled: true, excludeCompletedSubtasks: false } } } : {}),
       })
+      // A subtask row moved under another to-do (a sort, a cut and paste): Basecamp
+      // cannot move a subtask between to-dos, so the row stops until it is put back.
+      if (result.warnings.some((w) => w.code === 'hierarchy_change_unsupported')) moved.push(rowOf(local.uid))
+      // Last edit wins per field; the losing value is kept in the link's history (§4.3).
+      for (const conflict of result.conflicts) {
+        afterSheetWrite.push(
+          logStatement(db, { linkId: link.id, direction: conflict.winner === 'local' ? 'to_basecamp' : 'to_sheet', action: 'conflict', taskUid: local.uid, detail: conflict }, at()),
+        )
+      }
       // Engine contract item 2: the fetched record becomes the base, then outbound writes move it on.
       let next: SyncedBase | null = remote && remote.type !== 'deleted' ? baseFromRemote(local.uid, remote as RemoteTask, b?.position ?? local.position) : b
       for (const action of result.outbound) {
@@ -391,6 +407,17 @@ export async function syncLink(linkId: string, deps: RunDeps): Promise<RunReport
         reason: 'غُيّر المسؤول في Basecamp، والملف هو المرجع للإسناد فأُعيد كما في الملف. لتغيير المسؤول غيّر «القسم» في الملف أو الاسم في «المسميات».',
         rows: reverted.length,
         rowNumbers: reverted.filter((n) => n > 0).sort((a, b) => a - b),
+      })
+    }
+    if (moved.length > 0) {
+      alert({
+        kind: 'rows_held',
+        ...base,
+        tab: tab.title,
+        code: 'subtask_moved',
+        reason: 'نُقلت مهام فرعية تحت مهمة رئيسية غير مهمتها، وBasecamp لا ينقل المهمة الفرعية بين المهام، فتوقفت مزامنتها. أعد كل صف تحت مهمته الأولى، أو احذفه وأضف صفاً جديداً تحت المهمة الجديدة.',
+        rows: moved.length,
+        rowNumbers: moved.filter((n) => n > 0).sort((x, y) => x - y),
       })
     }
     if (noRole.length > 0) {
@@ -612,8 +639,11 @@ export async function syncLink(linkId: string, deps: RunDeps): Promise<RunReport
 
   async function finish(status: 'ok' | 'stopped', error: string | null): Promise<void> {
     await db
-      .prepare(`UPDATE station_links SET last_sync_at = ?2, last_error = ?3, last_modified = COALESCE(?4, last_modified), updated_at = ?2 WHERE id = ?1`)
-      .bind(link!.id, at(), error, status === 'ok' ? modified : null)
+      .prepare(
+        `UPDATE station_links SET last_sync_at = ?2, last_error = ?3, last_modified = COALESCE(?4, last_modified),
+           last_full_at = CASE WHEN ?5 = 1 THEN ?2 ELSE last_full_at END, updated_at = ?2 WHERE id = ?1`,
+      )
+      .bind(link!.id, at(), error, status === 'ok' ? modified : null, status === 'ok' && fullPass ? 1 : 0)
       .run()
     await recordAlerts(db, link!.id, report.alerts, mappedNames, at(), { complete: status === 'ok', skippedTabs })
   }

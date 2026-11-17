@@ -8,7 +8,7 @@ import type { Env } from '../env'
 import { defaultSyncDeps, readClient, syncContext, type SyncDeps } from './deps'
 import { ensureProjectWebhook, publicOrigin } from './basecamp-webhook'
 import { GoogleClient, GoogleError, googleErrorMessage, parseServiceAccountKey, type FetchLike } from './google'
-import { syncLink, type RunReport, type SheetPort } from './run'
+import { FULL_PASS_MS, syncLink, type RunReport, type SheetPort } from './run'
 import { recordAlerts } from './store'
 
 /** A run holds its link this long at most; a crashed run frees it after that. */
@@ -16,8 +16,6 @@ export const LEASE_MS = 5 * 60_000
 /** Drive caps a file channel at one day; renew when less than this is left. */
 const CHANNEL_RENEW_BEFORE_MS = 3 * 3600_000
 const CHANNEL_TTL_MS = 24 * 3600_000
-/** Full pass of every link (catches Basecamp changes no webhook announces). */
-export const FULL_PASS_MS = 15 * 60_000
 
 export interface StationDeps extends SyncDeps {
   /** Tests inject a fake sheet; production builds a GoogleClient from the secret. */
@@ -121,12 +119,12 @@ export async function requestRun(env: Env, linkId: string, reason: 'drive' | 'ba
  */
 export async function stationMinute(env: Env, deps: StationDeps = defaultSyncDeps()): Promise<void> {
   const now = deps.now()
-  const links = await env.DB.prepare(`SELECT id, spreadsheet_id, bc_project_id, last_modified, last_sync_at FROM station_links WHERE state = 'active'`).all<{
+  const links = await env.DB.prepare(`SELECT id, spreadsheet_id, bc_project_id, last_modified, last_full_at FROM station_links WHERE state = 'active'`).all<{
     id: string
     spreadsheet_id: string
     bc_project_id: number
     last_modified: string | null
-    last_sync_at: string | null
+    last_full_at: string | null
   }>()
   let google: (SheetPort & Partial<Pick<GoogleClient, 'watch' | 'stopChannel'>>) | null = null
   try {
@@ -136,7 +134,7 @@ export async function stationMinute(env: Env, deps: StationDeps = defaultSyncDep
   }
   for (const link of links.results) {
     try {
-      const full = link.last_sync_at === null || now - Date.parse(link.last_sync_at) >= FULL_PASS_MS
+      const full = link.last_full_at === null || now - Date.parse(link.last_full_at) >= FULL_PASS_MS
       let changed = false
       if (!full && google) changed = (await google.modifiedTime(link.spreadsheet_id)) !== link.last_modified
       if (full || changed || google === null) await requestRun(env, link.id, 'schedule')
@@ -241,4 +239,4 @@ export async function sendDueAlerts(env: Env, deps: { fetch: FetchLike; now: () 
   return due.length
 }
 
-export { BATCH_WINDOW_MS }
+export { BATCH_WINDOW_MS, FULL_PASS_MS }
