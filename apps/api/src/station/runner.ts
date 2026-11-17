@@ -73,7 +73,7 @@ async function runOnce(env: Env, linkId: string, deps: StationDeps): Promise<Run
   }
   const ctx = syncContext(env, deps)
   try {
-    return await withServiceToken(ctx, (token) => syncLink(linkId, { db: env.DB, google, basecamp: readClient(ctx), token, now: deps.now }))
+    return await withServiceToken(ctx, (token) => syncLink(linkId, { db: env.DB, google, basecamp: readClient(ctx), token, now: deps.now, keepLease: leaseKeeper(env.DB, linkId, deps.now) }))
   } catch (error) {
     // A run that stops half-way must not leave the admin with stale problems
     // and no word: say so on the link (the queue retries the run).
@@ -85,6 +85,20 @@ async function runOnce(env: Env, linkId: string, deps: StationDeps): Promise<Run
     await recordAlerts(env.DB, linkId, [{ kind: 'link_stopped', linkId, linkTitle: link?.title ?? '', reason }], new Set(), at, { complete: false })
     await env.DB.prepare(`UPDATE station_links SET last_error = ?2, updated_at = ?3 WHERE id = ?1`).bind(linkId, reason, at).run()
     throw error
+  }
+}
+
+/**
+ * Pushes the lease forward while a long run works (a first sync of hundreds of
+ * rows under Basecamp's rate limit can pass LEASE_MS): without it a second run
+ * could take the link alongside. At most one write a minute.
+ */
+function leaseKeeper(db: D1Database, linkId: string, now: () => number): () => Promise<void> {
+  let renewed = now()
+  return async () => {
+    if (now() - renewed < 60_000) return
+    renewed = now()
+    await db.prepare(`UPDATE station_links SET lock_until = ?2 WHERE id = ?1 AND lock_until IS NOT NULL`).bind(linkId, new Date(renewed + LEASE_MS).toISOString()).run()
   }
 }
 
@@ -126,8 +140,14 @@ export async function stationMinute(env: Env, deps: StationDeps = defaultSyncDep
       let changed = false
       if (!full && google) changed = (await google.modifiedTime(link.spreadsheet_id)) !== link.last_modified
       if (full || changed || google === null) await requestRun(env, link.id, 'schedule')
-      if (full) {
-        await ensureChannel(env, link.id, link.spreadsheet_id, google, now)
+      // Upkeep on its own clock, not the full pass's: a link that syncs often
+      // never reaches a full pass. The channel check is one D1 read until a
+      // renewal is due; the webhook is checked in Basecamp every FULL_PASS_MS.
+      await ensureChannel(env, link.id, link.spreadsheet_id, google, now)
+      const hook = await env.DB.prepare(`SELECT MAX(checked_at) AS checked FROM bc_webhooks WHERE bc_project_id = ?1 AND replaced_at IS NULL`)
+        .bind(link.bc_project_id)
+        .first<{ checked: string | null }>()
+      if (!hook?.checked || now - Date.parse(hook.checked) >= FULL_PASS_MS) {
         await ensureProjectWebhook(env, { workbookId: `station:${link.id}`, bcProjectId: link.bc_project_id }, deps)
       }
     } catch (error) {

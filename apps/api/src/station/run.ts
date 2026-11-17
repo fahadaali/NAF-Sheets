@@ -48,6 +48,8 @@ export interface RunDeps {
   token: string
   now: () => number
   newUid?: () => string
+  /** Keeps the link's lease while the run works (src/station/runner.ts); called often, renews at most once a minute. */
+  keepLease?: () => Promise<void>
 }
 
 export interface RunReport {
@@ -156,6 +158,7 @@ export async function syncLink(linkId: string, deps: RunDeps): Promise<RunReport
   const afterSheetWrite: D1PreparedStatement[] = []
 
   for (const tab of tabs) {
+    await deps.keepLease?.()
     const tabValues = (values.get(tab.title) ?? []) as CellValue[][]
     const found = findColumns(tabValues[0] ?? [])
     if (!found.ok) {
@@ -494,6 +497,7 @@ export async function syncLink(linkId: string, deps: RunDeps): Promise<RunReport
   }
 
   async function execute(action: OutboundAction, current: SyncedBase | null, local: LocalTask, assignFromSheet: boolean): Promise<SyncedBase> {
+    await deps.keepLease?.()
     const need = (): SyncedBase => {
       if (current === null) throw new Error(`station: ${action.type} without a base`)
       return current

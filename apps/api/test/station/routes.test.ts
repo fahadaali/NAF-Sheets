@@ -4,7 +4,7 @@
 import { env } from 'cloudflare:workers'
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { BcInboundQueueMessage, Env } from '../../src/env'
-import { handleStationMessages, runStation, sendDueAlerts, stationRoutes, stationWebhookRoutes } from '../../src/station'
+import { handleStationMessages, runStation, sendDueAlerts, stationMinute, stationRoutes, stationWebhookRoutes } from '../../src/station'
 import { call, isArabic, json, seedMember, testApp } from '../helpers'
 import { harness, linkService, type Harness } from './harness'
 import { FakeSheet } from './fake-sheet'
@@ -144,6 +144,29 @@ describe('triggers', () => {
     expect((await post(`/webhooks/google/${secret}`, 'update')).status).toBe(200)
     expect(s.h.inbound.take().map((m) => m.body)).toEqual([{ kind: 'station_sync', linkId: id, reason: 'drive' }])
     expect((await post('/webhooks/google/unknown-secret', 'update')).status).toBe(404)
+  })
+
+  it('checks the Basecamp webhook every 15 minutes, even when the link syncs more often than the full pass', async () => {
+    const s = await setup()
+    const { id } = await json<{ id: string }>(await call(s.app, 'POST', '/api/station/links', { user: s.admin, body: { source: SID, bcProjectId: s.project.id, tabs: [2] }, env: s.h.env }))
+    s.h.inbound.take()
+    // Only this link: the other tests' links share the database.
+    await env.DB.prepare(`UPDATE station_links SET state = 'paused' WHERE id != ?1`).bind(id).run()
+    const start = Date.now()
+    const minute = (at: number) => stationMinute(s.h.env, { ...s.h.deps, google: s.sheet, now: () => at })
+    const checks = () => s.h.fake.callsTo('GET', /\/webhooks\/\d+\.json$/).length
+    // Just checked when the link was made: not again yet.
+    const before = checks()
+    await minute(start + 60_000)
+    expect(checks()).toBe(before)
+    // The link synced a minute ago (no full pass due), but the webhook check is 16 minutes old.
+    await env.DB.prepare(`UPDATE station_links SET last_sync_at = ?2, last_modified = ?3 WHERE id = ?1`)
+      .bind(id, new Date(start + 15 * 60_000).toISOString(), await s.sheet.modifiedTime())
+      .run()
+    s.h.inbound.take()
+    await minute(start + 16 * 60_000)
+    expect(s.h.inbound.take().filter((m) => (m.body as { linkId?: string }).linkId === id)).toEqual([])
+    expect(checks()).toBe(before + 1)
   })
 
   it('routes a Basecamp webhook of a linked project to the station, and leaves others to the old consumer', async () => {
