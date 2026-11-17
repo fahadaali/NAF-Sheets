@@ -14,6 +14,7 @@
 //   marked: returned in `structural` for the caller.
 
 import type { InboundAction, TaskUid } from '@naf-sheets/shared'
+import { textCell } from './cells'
 import type { TabColumns } from './columns'
 import type { CellEdit, TabRow } from './read'
 import { statusAfterRemoteCompletion } from './status'
@@ -41,12 +42,12 @@ export function inboundEdits(rows: readonly TabRow[], columns: TabColumns, actio
     const f = action.fields
     if (f.title !== undefined) {
       if (row.level === 0) {
-        out.edits.push({ row: row.row, column: columns.main, value: f.title })
+        out.edits.push({ row: row.row, column: columns.main, value: textCell(f.title) })
         for (const sub of rows) {
-          if (sub.parentUid === row.uid) out.edits.push({ row: sub.row, column: columns.main, value: f.title })
+          if (sub.parentUid === row.uid) out.edits.push({ row: sub.row, column: columns.main, value: textCell(f.title) })
         }
       } else {
-        out.edits.push({ row: row.row, column: columns.sub, value: f.title })
+        out.edits.push({ row: row.row, column: columns.sub, value: textCell(f.title) })
       }
     }
     if (f.dueOn !== undefined) out.edits.push({ row: row.row, column: columns.due, value: f.dueOn })

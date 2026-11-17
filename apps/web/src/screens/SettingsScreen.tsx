@@ -1,6 +1,6 @@
 // Settings: the station's readiness (sync account, Google, email, schedule), and for platform admins the platform's members «أعضاء المنصة» (§3),
 // the names directory of the station «مطابقة الأسماء», and the palette «المظهر».
-// The Basecamp sync account is on the links page (docs/station-plan.md §5).
+// The Basecamp sync account is connected here, in the readiness card (docs/station-plan.md §5).
 
 import type { ReactNode } from 'react'
 import { Palette, UserCog, Users } from 'lucide-react'

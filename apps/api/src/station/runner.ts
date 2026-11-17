@@ -97,8 +97,8 @@ async function runOnce(env: Env, linkId: string, deps: StationDeps): Promise<Run
 
 /** Arabic reason for the Basecamp failures an admin can act on. */
 function basecampReason(error: unknown): string | null {
-  if (error instanceof LinkFailure && error.key === 'service_not_linked') return 'حساب المزامنة في Basecamp غير مربوط. اضغط «اربط حساب المزامنة» في صفحة الروابط.'
-  if (error instanceof LinkFailure) return 'تعذّر استخدام حساب المزامنة في Basecamp. أعد ربطه من صفحة الروابط.'
+  if (error instanceof LinkFailure && error.key === 'service_not_linked') return 'حساب المزامنة في Basecamp غير مربوط. اضغط «اربط حساب المزامنة» في صفحة الإعدادات.'
+  if (error instanceof LinkFailure) return 'تعذّر استخدام حساب المزامنة في Basecamp. أعد ربطه من صفحة الإعدادات.'
   return null
 }
 

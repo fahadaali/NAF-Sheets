@@ -6,10 +6,25 @@ import type { IsoDate } from '@naf-sheets/shared'
 
 export type CellValue = string | number | boolean | null | undefined
 
-/** Trimmed text of a cell; '' for an empty cell. Collapses inner runs of whitespace. */
+/** Invisible direction marks (LRM, RLM, ALM, embeddings, isolates, BOM): never part of a value. */
+const DIRECTION_MARKS = /[\u200E\u200F\u061C\u202A-\u202E\u2066-\u2069\uFEFF]/g
+
+/**
+ * Trimmed text of a cell; '' for an empty cell. Collapses inner runs of
+ * whitespace and drops invisible direction marks, so «الحالة‏» is «الحالة».
+ */
 export function cellText(value: CellValue): string {
   if (value === null || value === undefined) return ''
-  return String(value).replace(/\s+/g, ' ').trim()
+  return String(value).replace(DIRECTION_MARKS, '').replace(/\s+/g, ' ').trim()
+}
+
+/**
+ * A text value to write with `valueInputOption=USER_ENTERED`, kept as text:
+ * the leading apostrophe stops Sheets from reading «15%», «2026-11-17» or
+ * «=…» as a number, a date or a formula. Sheets stores the text without it.
+ */
+export function textCell(text: string): string {
+  return `'${text}`
 }
 
 /** Arabic-Indic and Eastern Arabic-Indic digits to Latin. */

@@ -153,6 +153,8 @@ export const s = {
     saving: 'جارٍ الحفظ…',
     saved: 'رُبط، وتُستأنف صفوفه الآن.',
     remove: 'إلغاء الربط',
+    removing: 'جارٍ الإلغاء…',
+    removeConfirm: (name: string) => `إلغاء ربط «${name}»؟ ستتوقّف صفوف هذا الاسم عن المزامنة حتى يُربط من جديد.`,
     suggestion: (person: string, previous: string) => `اقتراح: كان هذا المسمى لـ«${previous}» المربوط بـ«${person}».`,
     where: (a: { role: string; tab: string; linkTitle: string; rows: number }) => `أمام «${a.role}» في «${a.tab}» من «${a.linkTitle}» — ${rows(a.rows)}`,
   },

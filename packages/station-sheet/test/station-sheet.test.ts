@@ -86,6 +86,11 @@ describe('findColumns', () => {
     expect(columns(['الموعد', ' المهمة ', 'الحالة', 'القسم', 'المهمة الرئيسية'])).toEqual({ main: 4, sub: 1, role: 3, status: 2, due: 0 })
   })
 
+  it('ignores invisible direction marks around a header', () => {
+    expect(columns(['المهمة الرئيسية\u200F', '\u200Eالمهمة', 'القسم', 'الحالة\u061C', 'الموعد'])).toEqual({ main: 0, sub: 1, role: 2, status: 3, due: 4 })
+    expect(readDate('\u200F2026/11/30')).toEqual({ ok: true, value: '2026-11-30' })
+  })
+
   it('refuses a tab without a fixed column, in Arabic', () => {
     const r = findColumns(['المهمة', 'المسؤول', 'الحالة', 'الموعد'])
     expect(r.ok).toBe(false)
@@ -205,7 +210,7 @@ describe('readTab', () => {
     const values = [HEADER, ['فيديو الموشن القصير'], ['فيديو الموشن', 'بناء بنك أفكار', '', 'لم تبدأ']]
     const r = read(values)
     expect(r.tasks[1]!.parentUid).toBe(r.tasks[0]!.uid)
-    expect(r.fixes).toEqual([{ row: 2, column: 0, value: 'فيديو الموشن القصير' }])
+    expect(r.fixes).toEqual([{ row: 2, column: 0, value: "'فيديو الموشن القصير" }])
   })
 
   it('reports a subtask with no to-do above it and keeps it out of the sync', () => {
@@ -263,9 +268,9 @@ describe('inboundEdits', () => {
   it('writes a renamed to-do into its row and its subtask rows', () => {
     const out = inboundEdits(r.rows, cols, [{ type: 'update_row', uid: 'u3', fields: { title: 'فيديو الموشن ٢' } }])
     expect(out.edits).toEqual([
-      { row: 3, column: 0, value: 'فيديو الموشن ٢' },
-      { row: 4, column: 0, value: 'فيديو الموشن ٢' },
-      { row: 5, column: 0, value: 'فيديو الموشن ٢' },
+      { row: 3, column: 0, value: "'فيديو الموشن ٢" },
+      { row: 4, column: 0, value: "'فيديو الموشن ٢" },
+      { row: 5, column: 0, value: "'فيديو الموشن ٢" },
     ])
   })
 
@@ -276,7 +281,7 @@ describe('inboundEdits', () => {
       { type: 'update_row', uid: 'u5', fields: { completed: false } },
     ])
     expect(out.edits).toEqual([
-      { row: 2, column: 1, value: 'جديد' },
+      { row: 2, column: 1, value: "'جديد" },
       { row: 2, column: 4, value: '2026-12-01' },
       { row: 2, column: 3, value: 'منجزة' },
       { row: 4, column: 3, value: 'جارية' }, // decision 3

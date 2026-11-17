@@ -197,14 +197,6 @@ function LinkCard({ link }: { link: LinkSummary }) {
 // --- ربط جديد -----------------------------------------------------------------------
 
 export function NewLinkScreen({ user }: { user: CurrentUser | null }) {
-  const [source, setSource] = useState('')
-  const [rolesTab, setRolesTab] = useState('المسميات')
-  const [inspection, setInspection] = useState<Load<Inspection> | null>(null)
-  const [tabs, setTabs] = useState<number[]>([])
-  const [projectId, setProjectId] = useState('')
-  const [projects] = useLoad((signal) => stationApi.projects(signal), [])
-  const [submit, setSubmit] = useState<{ kind: 'idle' } | { kind: 'saving' } | { kind: 'error'; message: string }>({ kind: 'idle' })
-
   if (user && user.role !== 'admin') {
     return (
       <Page user={user} title={s.wizard.title} screen="station-new" back={{ href: '/', label: s.links.title }} subtitle={s.wizard.lead}>
@@ -213,6 +205,25 @@ export function NewLinkScreen({ user }: { user: CurrentUser | null }) {
         </Notice>
       </Page>
     )
+  }
+  return <NewLinkWizard user={user} />
+}
+
+function NewLinkWizard({ user }: { user: CurrentUser | null }) {
+  const [source, setSource] = useState('')
+  const [rolesTab, setRolesTab] = useState('المسميات')
+  const [inspection, setInspection] = useState<Load<Inspection> | null>(null)
+  const [tabs, setTabs] = useState<number[]>([])
+  const [projectId, setProjectId] = useState('')
+  const [projects] = useLoad((signal) => stationApi.projects(signal), [])
+  const [submit, setSubmit] = useState<{ kind: 'idle' } | { kind: 'saving' } | { kind: 'error'; message: string }>({ kind: 'idle' })
+
+  // A changed file or roles tab makes the inspection stale: inspect again before linking.
+  const changeInput = (set: (value: string) => void, value: string) => {
+    set(value)
+    setInspection(null)
+    setTabs([])
+    setSubmit({ kind: 'idle' })
   }
 
   const inspect = async () => {
@@ -247,12 +258,12 @@ export function NewLinkScreen({ user }: { user: CurrentUser | null }) {
         <h2>1. {s.wizard.step1}</h2>
         <div className="field">
           <label htmlFor="source">{s.wizard.step1}</label>
-          <input id="source" dir="ltr" value={source} onChange={(e) => setSource(e.target.value)} placeholder="https://docs.google.com/spreadsheets/d/…" />
+          <input id="source" dir="ltr" value={source} onChange={(e) => changeInput(setSource, e.target.value)} placeholder="https://docs.google.com/spreadsheets/d/…" />
           <p className="field-hint">{s.wizard.sourceHint}</p>
         </div>
         <div className="field">
           <label htmlFor="roles-tab">{s.wizard.rolesTab}</label>
-          <input id="roles-tab" value={rolesTab} onChange={(e) => setRolesTab(e.target.value)} />
+          <input id="roles-tab" value={rolesTab} onChange={(e) => changeInput(setRolesTab, e.target.value)} />
           <p className="field-hint">{s.wizard.rolesTabHint}</p>
         </div>
         <div className="card__actions">
@@ -537,7 +548,7 @@ function LinkBody({ detail, isAdmin, busy, act }: { detail: LinkDetail; isAdmin:
                     <td>
                       <bdi dir="ltr">{s.date(l.at)}</bdi>
                     </td>
-                    <td>{l.direction === 'to_sheet' ? s.link.toSheet : s.link.toBasecamp}</td>
+                    <td>{l.direction === 'to_sheet' ? s.link.toSheet : l.direction === 'to_basecamp' ? s.link.toBasecamp : ''}</td>
                     <td>{s.link.actions[l.action] ?? l.action}</td>
                   </tr>
                 ))}
@@ -705,7 +716,7 @@ function NamesBody({ data, isAdmin, reload, focusName, suggest }: { data: NamesR
                   </td>
                   {isAdmin ? (
                     <td>
-                      <NameRow name={n.name} initial={String(n.bc_person_id)} people={people} isAdmin={isAdmin} focus={n.name === focusName} onSaved={reload} compact />
+                      <UnmapButton name={n.name} onDone={reload} />
                     </td>
                   ) : null}
                 </tr>
@@ -714,6 +725,33 @@ function NamesBody({ data, isAdmin, reload, focusName, suggest }: { data: NamesR
           </table>
         </div>
       </section>
+    </div>
+  )
+}
+
+function UnmapButton({ name, onDone }: { name: string; onDone: () => void }) {
+  const [status, setStatus] = useState<{ kind: 'idle' | 'removing' } | { kind: 'error'; message: string }>({ kind: 'idle' })
+  const remove = async () => {
+    if (!window.confirm(s.names.removeConfirm(name))) return
+    setStatus({ kind: 'removing' })
+    try {
+      await stationApi.deleteName(name)
+      onDone()
+    } catch (error) {
+      setStatus({ kind: 'error', message: errorMessage(error) })
+    }
+  }
+  return (
+    <div className="row-actions">
+      <button type="button" className="button button--small button--ghost" data-name={name} disabled={status.kind === 'removing'} onClick={() => void remove()}>
+        <Trash2 className="icon" aria-hidden="true" />
+        {status.kind === 'removing' ? s.names.removing : s.names.remove}
+      </button>
+      {status.kind === 'error' ? (
+        <span className="field-error" role="alert">
+          {status.message}
+        </span>
+      ) : null}
     </div>
   )
 }
@@ -727,7 +765,6 @@ function NameRow({
   isAdmin,
   focus,
   onSaved,
-  compact,
 }: {
   name: string
   hint?: string
@@ -737,7 +774,6 @@ function NameRow({
   isAdmin: boolean
   focus?: boolean
   onSaved: () => void
-  compact?: boolean
 }) {
   const [value, setValue] = useState(initial)
   const [status, setStatus] = useState<{ kind: 'idle' | 'saving' | 'saved' } | { kind: 'error'; message: string }>({ kind: 'idle' })
@@ -755,19 +791,6 @@ function NameRow({
       setStatus({ kind: 'error', message: errorMessage(error) })
     }
   }
-  if (compact) {
-    return isAdmin ? (
-      <button
-        type="button"
-        className="button button--small button--ghost"
-        data-name={name}
-        onClick={() => void stationApi.deleteName(name).then(onSaved, (e: unknown) => setStatus({ kind: 'error', message: errorMessage(e) }))}
-      >
-        <Trash2 className="icon" aria-hidden="true" />
-        {status.kind === 'error' ? status.message : s.names.remove}
-      </button>
-    ) : null
-  }
   return (
     <div className={focus ? 'station-name station-name--focus' : 'station-name'} data-name={name}>
       <div className="stack-tight">
@@ -777,7 +800,7 @@ function NameRow({
         {hint ? <span className="muted small">{hint}</span> : null}
         {suggestion ? <span className="small">{suggestion}</span> : null}
       </div>
-      {isAdmin && !compact ? (
+      {isAdmin ? (
         <div className="row-actions">
           <label htmlFor={id} className="sr-only">
             {s.names.choose}
@@ -804,16 +827,6 @@ function NameRow({
             </span>
           ) : null}
         </div>
-      ) : null}
-      {isAdmin && compact ? (
-        <button
-          type="button"
-          className="button button--small button--ghost"
-          onClick={() => void stationApi.deleteName(name).then(onSaved, (e: unknown) => setStatus({ kind: 'error', message: errorMessage(e) }))}
-        >
-          <Trash2 className="icon" aria-hidden="true" />
-          {s.names.remove}
-        </button>
       ) : null}
     </div>
   )

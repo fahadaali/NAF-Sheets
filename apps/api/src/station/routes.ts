@@ -3,8 +3,8 @@
 // Public: POST /webhooks/google/:secret — Drive push notifications.
 // Signed in, under /api/station:
 //   GET    /links                     every link with its state and open problems
-//   GET    /inspect?source=…          a spreadsheet as the service account sees it (wizard)
-//   GET    /projects                  Basecamp projects (wizard)
+//   GET    /inspect?source=…          a spreadsheet as the service account sees it (wizard, admin)
+//   GET    /projects                  Basecamp projects (wizard, admin)
 //   POST   /links                     link a spreadsheet's tabs to a project (admin)
 //   GET    /links/:id                 a link, its tabs, problems and recent history
 //   PATCH  /links/:id                 pause / resume, roles tab (admin)
@@ -17,7 +17,9 @@
 
 import { Hono, type Context } from 'hono'
 import { findColumns, readTab, readRoles, type CellValue } from '@naf-sheets/station-sheet'
+import { BasecampError, NotFoundError } from '@naf-sheets/basecamp'
 import { withServiceToken } from '../basecamp-link'
+import { onLinkError } from '../basecamp-link/errors'
 import type { AppEnv } from '../auth'
 import { callerOf, readJson, isPlainObject } from '../request'
 import { defaultSyncDeps, readClient, syncContext, type SyncDeps } from './deps'
@@ -64,6 +66,22 @@ export function stationRoutes(depsIn?: StationDeps): Hono<AppEnv> {
   const deps = (): StationDeps => depsIn ?? defaultSyncDeps()
   const google = (c: Context<AppEnv>) => deps().google ?? googleFor(c.env, deps())
 
+  // Failures the admin can act on keep their Arabic message: Google (no key, a
+  // file not shared), Basecamp (a project gone, Basecamp down) and the sync
+  // account (`LinkFailure`, e.g. not connected yet). Anything else is 500.
+  routes.onError((error, c) => {
+    if (error instanceof GoogleError) {
+      return fail(c, error.code === 'file_not_accessible' ? 404 : 503, error.code, googleErrorMessage(error.code, safeEmail(c)))
+    }
+    if (error instanceof NotFoundError) {
+      return fail(c, 404, 'basecamp_project_not_found', 'لم يُعثر على المشروع في Basecamp، أو ليس لحساب المزامنة وصول إليه. تأكّد من المشروع، أو أضف حساب المزامنة إليه في Basecamp.')
+    }
+    if (error instanceof BasecampError) {
+      return fail(c, 503, 'basecamp_unavailable', 'تعذّر الوصول إلى Basecamp الآن، فلم يكتمل الطلب. أعد المحاولة بعد لحظات.')
+    }
+    return onLinkError(error, c)
+  })
+
   // What the station needs before a link can work (§5): the Basecamp sync
   // account (an admin connects it at /auth/basecamp/start?service=1), the
   // Google service account key, and the email key. Never a secret's value.
@@ -102,7 +120,7 @@ export function stationRoutes(depsIn?: StationDeps): Hono<AppEnv> {
   })
 
   routes.get('/inspect', async (c) => {
-    callerOf(c)
+    if (!isAdmin(c)) return fail(c, 403, 'admin_only', ADMIN_ONLY)
     const id = spreadsheetIdOf(c.req.query('source') ?? '')
     if (!id) return fail(c, 400, 'invalid_source', 'الرابط ليس رابط ملف Google Sheets. انسخ رابط الملف من شريط العنوان ثم أعد المحاولة.')
     try {
@@ -138,7 +156,7 @@ export function stationRoutes(depsIn?: StationDeps): Hono<AppEnv> {
   })
 
   routes.get('/projects', async (c) => {
-    callerOf(c)
+    if (!isAdmin(c)) return fail(c, 403, 'admin_only', ADMIN_ONLY)
     const ctx = syncContext(c.env, deps())
     const projects = await withServiceToken(ctx, (token) => readClient(ctx).projects.list(token).all())
     return c.json({

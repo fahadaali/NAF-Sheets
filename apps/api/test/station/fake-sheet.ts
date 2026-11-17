@@ -15,6 +15,22 @@ interface FakeTab {
 
 const SERIAL_EPOCH = Date.UTC(1899, 11, 30)
 
+/**
+ * What Google stores for a value written with USER_ENTERED, as far as the
+ * station meets it: a leading apostrophe keeps text as text (and is dropped);
+ * otherwise a typed date becomes a serial number, a number or percentage a
+ * number, and a formula an error value.
+ */
+function userEntered(value: string | number | null): Cell {
+  if (typeof value !== 'string') return value
+  if (value.startsWith("'")) return value.slice(1)
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return Math.round((Date.parse(value) - SERIAL_EPOCH) / 86_400_000)
+  if (/^[+-]?\d+(\.\d+)?%$/.test(value)) return Number(value.slice(0, -1)) / 100
+  if (/^[+-]?\d+(\.\d+)?$/.test(value)) return Number(value)
+  if (value.startsWith('=')) return '#ERROR!'
+  return value
+}
+
 export class FakeSheet implements SheetPort {
   readonly serviceAccountEmail = 'naf-sync@naf-sheets-station.iam.gserviceaccount.com'
   readonly tabs: FakeTab[] = []
@@ -86,10 +102,8 @@ export class FakeSheet implements SheetPort {
     this.check()
     for (const i of changes.identities ?? []) this.tabs.find((t) => t.sheetId === i.sheetId)!.ids[i.row] = i.uid
     for (const c of changes.cells ?? []) {
-      // USER_ENTERED: a typed date becomes a serial number.
-      const v = typeof c.value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(c.value) ? Math.round((Date.parse(c.value) - SERIAL_EPOCH) / 86_400_000) : c.value
       const t = this.tab(c.tabTitle)
-      t.rows[c.row]![c.column] = v
+      t.rows[c.row]![c.column] = userEntered(c.value)
     }
     if ((changes.identities?.length ?? 0) + (changes.cells?.length ?? 0) > 0) {
       this.writes += 1

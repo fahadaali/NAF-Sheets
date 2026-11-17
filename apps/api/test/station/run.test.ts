@@ -210,6 +210,24 @@ describe('Basecamp → sheet', () => {
     expect(tab.rows.slice(1, 4).map((r) => r[COL.main])).toEqual(['فيديو الموشن القصير', 'فيديو الموشن القصير', 'فيديو الموشن القصير'])
   })
 
+  it('writes a title from Basecamp as text, never as a number, a date or a formula', async () => {
+    const w = await world(SOCIAL)
+    await w.run()
+    const tab = w.sheet.tab(TAB)
+    const sub = w.subtasks().find((s) => s.title === 'اعتماد قائمة نوفمبر')!
+    const todo = w.todos().find((t) => t.content === 'المناسبات')!
+    for (const title of ['15%', '2026-11-17', '=SUM(1,2)', '- مراجعة']) {
+      sub.title = title
+      sub.updatedAt = w.fake.tick()
+      todo.updatedAt = w.fake.tick()
+      await w.run()
+      expect(tab.rows[5]![COL.sub]).toBe(title)
+      // Read back unchanged: nothing goes back to Basecamp.
+      await w.run()
+      expect(w.subtasks().find((s) => s.id === sub.id)!.title).toBe(title)
+    }
+  })
+
   it('puts back the sheet’s people when they are changed in Basecamp, and tells the admin', async () => {
     const w = await world(SOCIAL)
     await w.run()

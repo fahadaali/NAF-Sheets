@@ -39,7 +39,8 @@ function initial(name: string): string {
   return [...word][0] ?? ''
 }
 
-export function AppBar({ user }: { user: CurrentUser | null; showSettings?: boolean }) {
+/** `showNav={false}`: no sections, e.g. on «/denied», where every section would bounce back. */
+export function AppBar({ user, showNav = true }: { user: CurrentUser | null; showNav?: boolean }) {
   const current = sectionOf(useRoute())
   const who = user?.name || user?.email
   return (
@@ -51,14 +52,16 @@ export function AppBar({ user }: { user: CurrentUser | null; showSettings?: bool
           <span className="app-bar__tagline">{t.brand.tagline}</span>
         </span>
       </Link>
-      <nav className="app-bar__nav" aria-label={t.nav.label}>
-        {SECTIONS.map(({ id, href, label, Icon }) => (
-          <Link key={id} href={href} className="app-bar__nav-link" aria-current={current === id ? 'page' : undefined}>
-            <Icon className="icon" aria-hidden="true" />
-            <span>{label}</span>
-          </Link>
-        ))}
-      </nav>
+      {showNav ? (
+        <nav className="app-bar__nav" aria-label={t.nav.label}>
+          {SECTIONS.map(({ id, href, label, Icon }) => (
+            <Link key={id} href={href} className="app-bar__nav-link" aria-current={current === id ? 'page' : undefined}>
+              <Icon className="icon" aria-hidden="true" />
+              <span>{label}</span>
+            </Link>
+          ))}
+        </nav>
+      ) : null}
       {who ? (
         <span className="app-bar__user" title={who}>
           <span className="app-bar__avatar" aria-hidden="true">
