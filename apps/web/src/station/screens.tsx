@@ -2,7 +2,7 @@
 // name matching. The platform shows no sheet of its own: it only links.
 
 import { useEffect, useState, type ReactNode } from 'react'
-import { ArrowLeftRight, ChevronLeft, CircleCheck, ExternalLink, FileSpreadsheet, LoaderCircle, Pause, Play, Plus, RefreshCw, Trash2, TriangleAlert, Unlink } from 'lucide-react'
+import { ArrowLeftRight, ChevronLeft, CircleCheck, ExternalLink, FileSpreadsheet, LoaderCircle, Pause, Play, Plus, RefreshCw, RotateCcw, Trash2, TriangleAlert, Unlink } from 'lucide-react'
 import type { CurrentUser } from '@naf-sheets/shared'
 import { AppBar } from '../components/AppBar'
 import { PageHeader } from '../components/PageHeader'
@@ -493,15 +493,40 @@ function LinkActions({
   )
 }
 
-type LinkTab = 'problems' | 'tabs' | 'history'
+type LinkTab = 'problems' | 'tabs' | 'history' | 'deleted'
+
+interface ConflictDetail {
+  field: string
+  localValue: unknown
+  remoteValue: unknown
+  winner: 'local' | 'remote'
+  restoredAt?: string
+}
+
+/** A conflict's losing value, as the sheet would show it. */
+function lostValue(c: ConflictDetail): string {
+  const v = c.winner === 'local' ? c.remoteValue : c.localValue
+  if (c.field === 'completed') return s.link.doneValue(v === true)
+  return typeof v === 'string' && v !== '' ? v : s.link.emptyValue
+}
+
+function conflictOf(detailJson: string | null): ConflictDetail | null {
+  if (!detailJson) return null
+  try {
+    return JSON.parse(detailJson) as ConflictDetail
+  } catch {
+    return null
+  }
+}
 
 function LinkBody({ detail, isAdmin, busy, act }: { detail: LinkDetail; isAdmin: boolean; busy: boolean; act: (fn: () => Promise<unknown>, done?: string) => Promise<void> }) {
-  const { link, tabs, problems, log } = detail
+  const { link, tabs, problems, log, deleted } = detail
   const [view, setView] = useState<LinkTab>(problems.length > 0 ? 'problems' : 'tabs')
   const views: { id: LinkTab; label: string }[] = [
     { id: 'problems', label: s.link.problemsTab(problems.length) },
     { id: 'tabs', label: s.link.tabs },
     { id: 'history', label: s.link.history },
+    { id: 'deleted', label: s.link.deletedTab(deleted.filter((d) => !d.restoredAt).length) },
   ]
   return (
     <div className="stack">
@@ -565,13 +590,16 @@ function LinkBody({ detail, isAdmin, busy, act }: { detail: LinkDetail; isAdmin:
           <div className="table-wrap">
             <table className="data-table">
               <tbody>
-                {log.map((l, i) => (
-                  <tr key={i}>
+                {log.map((l) => (
+                  <tr key={l.id}>
                     <td>
                       <bdi dir="ltr">{s.date(l.at)}</bdi>
                     </td>
                     <td>{l.direction === 'to_sheet' ? s.link.toSheet : s.link.toBasecamp}</td>
-                    <td>{s.link.actions[l.action] ?? l.action}</td>
+                    <td>
+                      {s.link.actions[l.action] ?? l.action}
+                      {l.action === 'conflict' ? <ConflictLine linkId={link.id} logId={l.id} conflict={conflictOf(l.detail_json)} isAdmin={isAdmin} busy={busy} act={act} /> : null}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -579,7 +607,91 @@ function LinkBody({ detail, isAdmin, busy, act }: { detail: LinkDetail; isAdmin:
           </div>
         </section>
       ) : null}
+      {view === 'deleted' ? <DeletedPanel linkId={link.id} deleted={deleted} isAdmin={isAdmin} busy={busy} act={act} /> : null}
     </div>
+  )
+}
+
+function ConflictLine({
+  linkId,
+  logId,
+  conflict,
+  isAdmin,
+  busy,
+  act,
+}: {
+  linkId: string
+  logId: number
+  conflict: ConflictDetail | null
+  isAdmin: boolean
+  busy: boolean
+  act: (fn: () => Promise<unknown>, done?: string) => Promise<void>
+}) {
+  if (!conflict) return null
+  const field = s.link.conflictField[conflict.field]
+  return (
+    <div className="row-actions small">
+      <span className="muted">{field ? s.link.conflictLost(field, lostValue(conflict)) : null}</span>
+      {conflict.restoredAt ? (
+        <span className="badge badge--neutral">{s.link.valueRestored}</span>
+      ) : isAdmin && field ? (
+        <button type="button" className="button button--small button--ghost" disabled={busy} onClick={() => void act(() => stationApi.restoreConflict(linkId, logId), s.link.restoreValueDone)}>
+          <RotateCcw className="icon" aria-hidden="true" />
+          {s.link.restoreValue}
+        </button>
+      ) : null}
+    </div>
+  )
+}
+
+function DeletedPanel({
+  linkId,
+  deleted,
+  isAdmin,
+  busy,
+  act,
+}: {
+  linkId: string
+  deleted: LinkDetail['deleted']
+  isAdmin: boolean
+  busy: boolean
+  act: (fn: () => Promise<unknown>, done?: string) => Promise<void>
+}) {
+  return (
+    <section className="card stack" role="tabpanel" id="panel-deleted" aria-labelledby="view-deleted">
+      <p className="muted small">{s.link.deletedLead}</p>
+      {deleted.length === 0 ? <p className="muted">{s.link.noDeleted}</p> : null}
+      {deleted.length > 0 ? (
+        <div className="table-wrap">
+          <table className="data-table">
+            <tbody>
+              {deleted.map((d) => (
+                <tr key={d.id}>
+                  <td>
+                    <strong>
+                      <bdi>{d.title}</bdi>
+                    </strong>
+                  </td>
+                  <td className="muted small">
+                    {s.link.deletedAt} <bdi dir="ltr">{s.date(d.deletedAt)}</bdi>
+                  </td>
+                  <td>
+                    {d.restoredAt ? (
+                      <span className="badge badge--neutral">{s.link.restored}</span>
+                    ) : isAdmin ? (
+                      <button type="button" className="button button--small" disabled={busy} onClick={() => void act(() => stationApi.restoreDeleted(linkId, d.id), s.link.restoreDone)}>
+                        <RotateCcw className="icon" aria-hidden="true" />
+                        {s.link.restore}
+                      </button>
+                    ) : null}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
+    </section>
   )
 }
 

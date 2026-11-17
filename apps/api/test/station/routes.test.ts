@@ -137,6 +137,57 @@ describe('pause and unlink', () => {
   })
 })
 
+describe('restoring from the link screen (owner, 2026-11-17)', () => {
+  it('creates a subtask deleted for good again from its snapshot (admin only, once); the next run gives it its row back', async () => {
+    const s = await setup()
+    const { id } = await json<{ id: string }>(await call(s.app, 'POST', '/api/station/links', { user: s.admin, body: { source: SID, bcProjectId: s.project.id, tabs: [2] }, env: s.h.env }))
+    const run = () => runStation(s.h.env, id, { ...s.h.deps, google: s.sheet })
+    await run()
+    s.sheet.deleteRows('السوشل ميديا', 2)
+    await run()
+    expect([...s.h.fake.subtasks.values()]).toHaveLength(0)
+
+    const detail = await json<{ deleted: { id: number; title: string; restoredAt: string | null }[] }>(await call(s.app, 'GET', `/api/station/links/${id}`, { user: s.viewer, env: s.h.env }))
+    expect(detail.deleted).toMatchObject([{ title: 'بنك الأفكار', restoredAt: null }])
+    const path = `/api/station/links/${id}/deleted/${detail.deleted[0]!.id}/restore`
+    expect((await call(s.app, 'POST', path, { user: s.viewer, env: s.h.env })).status).toBe(403)
+    expect((await call(s.app, 'POST', path, { user: s.admin, env: s.h.env })).status).toBe(200)
+    expect([...s.h.fake.subtasks.values()].map((x) => [x.title, x.assigneeIds])).toEqual([['بنك الأفكار', [s.omarId]]])
+    const again = await call(s.app, 'POST', path, { user: s.admin, env: s.h.env })
+    expect(again.status).toBe(409)
+    expect(isArabic((await json<{ message: string }>(again)).message)).toBe(true)
+
+    await run()
+    const rows = s.sheet.tab('السوشل ميديا').rows
+    expect(rows.some((r) => r[1] === 'بنك الأفكار' && r[2] === 'مسؤول السوشل ميديا')).toBe(true)
+  })
+
+  it('writes a conflict’s losing value back into the sheet, and the next run sends it to Basecamp', async () => {
+    const s = await setup()
+    const { id } = await json<{ id: string }>(await call(s.app, 'POST', '/api/station/links', { user: s.admin, body: { source: SID, bcProjectId: s.project.id, tabs: [2] }, env: s.h.env }))
+    const run = () => runStation(s.h.env, id, { ...s.h.deps, google: s.sheet })
+    await run()
+    const sub = [...s.h.fake.subtasks.values()][0]!
+    // Both sides change the title before the next run: the later edit wins.
+    s.sheet.set('السوشل ميديا', 2, 1, 'من الملف')
+    sub.title = 'من Basecamp'
+    sub.updatedAt = new Date(Date.UTC(2030, 0, 1)).toISOString()
+    await run()
+    const detail = await json<{ log: { id: number; action: string; detail_json: string }[] }>(await call(s.app, 'GET', `/api/station/links/${id}`, { user: s.viewer, env: s.h.env }))
+    const conflict = detail.log.find((l) => l.action === 'conflict')!
+    expect(JSON.parse(conflict.detail_json)).toMatchObject({ field: 'title', winner: 'remote', localValue: 'من الملف' })
+    expect(s.sheet.tab('السوشل ميديا').rows[2]![1]).toBe('من Basecamp')
+
+    const path = `/api/station/links/${id}/conflicts/${conflict.id}/restore`
+    expect((await call(s.app, 'POST', path, { user: s.viewer, env: s.h.env })).status).toBe(403)
+    expect((await call(s.app, 'POST', path, { user: s.admin, env: s.h.env })).status).toBe(200)
+    expect(s.sheet.tab('السوشل ميديا').rows[2]![1]).toBe('من الملف')
+    expect((await call(s.app, 'POST', path, { user: s.admin, env: s.h.env })).status).toBe(409)
+    await run()
+    expect(s.h.fake.subtasks.get(sub.id)!.title).toBe('من الملف')
+  })
+})
+
 describe('linking the same file again', () => {
   it('to the same project takes the unlinked link back: same tasks, nothing created twice', async () => {
     const s = await setup()

@@ -11,6 +11,8 @@
 //   DELETE /links/:id                 unlink: stops syncing; nothing deleted in the file, Basecamp or the
 //                                     sync record, which linking the same file to the same project takes back (admin)
 //   POST   /links/:id/sync            «مزامنة الآن» (admin)
+//   POST   /links/:id/deleted/:n/restore     create a subtask deleted for good again from its snapshot (admin)
+//   POST   /links/:id/conflicts/:n/restore   write a conflict's losing value back into the sheet (admin)
 //   GET    /names                     the name directory, unmapped names, Basecamp people
 //   PUT    /names                     map a name to a person (admin)
 //   DELETE /names?name=…              unmap a name (admin)
@@ -18,7 +20,9 @@
 
 import { Hono, type Context } from 'hono'
 import type { ApiErrorCode } from '@naf-sheets/shared'
-import { findColumns, readTab, readRoles, type CellValue } from '@naf-sheets/station-sheet'
+import { STATUS, findColumns, readTab, readRoles, textCell, type CellValue } from '@naf-sheets/station-sheet'
+import type { FieldConflict, RemoteSubtask } from '@naf-sheets/shared'
+import { recreateSubtaskFromSnapshot } from '@naf-sheets/sync-engine'
 import { BasecampError, NotFoundError } from '@naf-sheets/basecamp'
 import { withServiceToken } from '../basecamp-link'
 import { onLinkError } from '../basecamp-link/errors'
@@ -261,10 +265,13 @@ export function stationRoutes(depsIn?: StationDeps): Hono<AppEnv> {
       .bind(id)
       .first()
     if (!link) return fail(c, 404, 'link_not_found', 'لم يُعثر على هذا الربط، فربما فُكّ. حدّث الصفحة.')
-    const [tabs, problems, log] = await Promise.all([
+    const [tabs, problems, log, deleted] = await Promise.all([
       c.env.DB.prepare(`SELECT google_sheet_id, title, bc_todolist_id FROM station_tabs WHERE link_id = ?1 AND unlinked_at IS NULL ORDER BY rowid`).bind(id).all(),
       c.env.DB.prepare(`SELECT key, alert_json, first_seen, emailed_at FROM station_alerts WHERE link_id = ?1 AND resolved_at IS NULL ORDER BY first_seen`).bind(id).all<{ key: string; alert_json: string; first_seen: string; emailed_at: string | null }>(),
-      c.env.DB.prepare(`SELECT at, direction, action, task_uid, detail_json FROM station_log WHERE link_id = ?1 ORDER BY id DESC LIMIT 50`).bind(id).all(),
+      c.env.DB.prepare(`SELECT id, at, direction, action, task_uid, detail_json FROM station_log WHERE link_id = ?1 ORDER BY id DESC LIMIT 50`).bind(id).all(),
+      c.env.DB.prepare(`SELECT rowid AS id, snapshot_json, deleted_at, restored_at FROM station_deleted WHERE link_id = ?1 ORDER BY deleted_at DESC LIMIT 50`)
+        .bind(id)
+        .all<{ id: number; snapshot_json: string; deleted_at: string; restored_at: string | null }>(),
     ])
     const account = (c.env as { BASECAMP_ACCOUNT_ID?: string }).BASECAMP_ACCOUNT_ID?.trim() ?? ''
     const projectUrl = /^[1-9]\d{0,15}$/.test(account) ? `https://3.basecamp.com/${account}/projects/${(link as { bc_project_id: number }).bc_project_id}` : null
@@ -275,6 +282,10 @@ export function stationRoutes(depsIn?: StationDeps): Hono<AppEnv> {
       tabs: tabs.results,
       problems: problems.results.map((p) => ({ key: p.key, alert: JSON.parse(p.alert_json), firstSeen: p.first_seen, emailedAt: p.emailed_at })),
       log: log.results,
+      deleted: deleted.results.map((d) => {
+        const snapshot = JSON.parse(d.snapshot_json) as RemoteSubtask
+        return { id: d.id, title: snapshot.title, dueOn: snapshot.dueOn, completed: snapshot.completed, deletedAt: d.deleted_at, restoredAt: d.restored_at }
+      }),
     })
   })
 
@@ -331,6 +342,103 @@ export function stationRoutes(depsIn?: StationDeps): Hono<AppEnv> {
     if (!link) return fail(c, 404, 'link_not_found', 'لم يُعثر على هذا الربط، فربما فُكّ. حدّث الصفحة.')
     await requestRun(c.env, c.req.param('id'), 'manual')
     return c.json({ ok: true }, 202)
+  })
+
+  // A subtask deleted for good (its row left the sheet; Basecamp has no trash
+  // for subtasks) is created again from its snapshot under the same to-do. The
+  // next run gives it a row in the sheet, like any record created in Basecamp.
+  routes.post('/links/:id/deleted/:n/restore', async (c) => {
+    if (!isAdmin(c)) return fail(c, 403, 'admin_only', ADMIN_ONLY)
+    const linkId = c.req.param('id')
+    const row = await c.env.DB.prepare(
+      `SELECT d.rowid AS id, d.snapshot_json, d.restored_at FROM station_deleted d JOIN station_links l ON l.id = d.link_id
+       WHERE d.rowid = ?1 AND d.link_id = ?2 AND l.unlinked_at IS NULL`,
+    )
+      .bind(Number(c.req.param('n')), linkId)
+      .first<{ id: number; snapshot_json: string; restored_at: string | null }>()
+    if (!row) return fail(c, 404, 'restore_not_found', 'لم يُعثر على هذه المهمة المحذوفة. حدّث الصفحة.')
+    if (row.restored_at) return fail(c, 409, 'already_restored', 'أُعيد إنشاء هذه المهمة من قبل. ستجدها في الملف وفي Basecamp.')
+    const snapshot = JSON.parse(row.snapshot_json) as RemoteSubtask
+    const ctx = syncContext(c.env, deps())
+    const created = await withServiceToken(ctx, async (token) => {
+      const client = readClient(ctx)
+      let parent
+      try {
+        parent = await client.todos.get(token, snapshot.todoId)
+      } catch (error) {
+        if (error instanceof NotFoundError) parent = null
+        else throw error
+      }
+      if (!parent || parent.status !== 'active') return null
+      const action = recreateSubtaskFromSnapshot(snapshot, { uid: `restore:${row.id}`, position: snapshot.position ?? 1 })
+      if (action.type !== 'create_subtask') throw new Error('station: unexpected restore action')
+      const sub = await client.subtasks.create(token, action.parentTodoId, action.create)
+      if (snapshot.completed) await client.subtasks.complete(token, sub.id)
+      return sub
+    })
+    if (!created) {
+      return fail(c, 409, 'todo_not_in_basecamp', 'مهمتها الرئيسية لم تعد في Basecamp، فلا يمكن إعادتها تحتها. استرجع المهمة الرئيسية من سلة Basecamp أولاً، ثم أعد المحاولة.')
+    }
+    const at = new Date(deps().now()).toISOString()
+    await c.env.DB.batch([
+      c.env.DB.prepare(`UPDATE station_deleted SET restored_at = ?2, restored_bc_id = ?3 WHERE rowid = ?1`).bind(row.id, at, created.id),
+      c.env.DB.prepare(
+        `INSERT INTO audit_log (at, actor_id, action, entity_type, entity_id, workbook_id, details_json) VALUES (?1, ?2, 'station.subtask.restore', 'station_link', ?3, NULL, ?4)`,
+      ).bind(at, callerOf(c).id, linkId, JSON.stringify({ deletedBcId: snapshot.id, bcId: created.id })),
+    ])
+    await requestRun(c.env, linkId, 'manual')
+    return c.json({ ok: true, bcId: created.id })
+  })
+
+  // A conflict (last edit won, §4.3): the losing value is written into the
+  // sheet's cell; the next run sends it to Basecamp like any edit of the sheet.
+  routes.post('/links/:id/conflicts/:n/restore', async (c) => {
+    if (!isAdmin(c)) return fail(c, 403, 'admin_only', ADMIN_ONLY)
+    const linkId = c.req.param('id')
+    const entry = await c.env.DB.prepare(
+      `SELECT g.id, g.task_uid, g.detail_json, l.spreadsheet_id FROM station_log g JOIN station_links l ON l.id = g.link_id
+       WHERE g.id = ?1 AND g.link_id = ?2 AND g.action = 'conflict' AND l.unlinked_at IS NULL`,
+    )
+      .bind(Number(c.req.param('n')), linkId)
+      .first<{ id: number; task_uid: string; detail_json: string; spreadsheet_id: string }>()
+    if (!entry) return fail(c, 404, 'restore_not_found', 'لم يُعثر على هذا التعارض في السجل. حدّث الصفحة.')
+    const detail = JSON.parse(entry.detail_json) as FieldConflict & { restoredAt?: string }
+    if (detail.restoredAt) return fail(c, 409, 'already_restored', 'استُعيدت هذه القيمة من قبل.')
+    if (detail.field !== 'title' && detail.field !== 'dueOn' && detail.field !== 'completed') {
+      return fail(c, 409, 'not_restorable', 'هذا الحقل ليس له عمود في الملف، فلا تُستعاد قيمته من هنا. عدّله في Basecamp.')
+    }
+    const task = await c.env.DB.prepare(`SELECT level, google_sheet_id FROM station_tasks WHERE uid = ?1 AND link_id = ?2`)
+      .bind(entry.task_uid, linkId)
+      .first<{ level: 0 | 1; google_sheet_id: number }>()
+    const tab = task
+      ? await c.env.DB.prepare(`SELECT title FROM station_tabs WHERE link_id = ?1 AND google_sheet_id = ?2 AND unlinked_at IS NULL`)
+          .bind(linkId, task.google_sheet_id)
+          .first<{ title: string }>()
+      : null
+    const g = google(c)
+    const place = task && tab ? (await g.rowIdentities(entry.spreadsheet_id)).find((r) => r.uid === entry.task_uid && r.sheetId === task.google_sheet_id) : undefined
+    if (!task || !tab || !place) return fail(c, 409, 'row_not_found', 'لم يعد صف هذه المهمة في الملف، فلا مكان تُكتب فيه القيمة. أضفها في الملف يدوياً.')
+    const header = ((await g.tabValues(entry.spreadsheet_id, [tab.title])).get(tab.title) ?? [])[0] ?? []
+    const found = findColumns(header as CellValue[])
+    if (!found.ok) return fail(c, 409, 'row_not_found', found.message)
+    const loser = detail.winner === 'local' ? detail.remoteValue : detail.localValue
+    const columns = found.columns
+    const cell =
+      detail.field === 'title'
+        ? { column: task.level === 0 ? columns.main : columns.sub, value: textCell(String(loser ?? '')) }
+        : detail.field === 'dueOn'
+          ? { column: columns.due, value: typeof loser === 'string' ? loser : '' }
+          : { column: columns.status, value: loser === true ? STATUS.done : STATUS.inProgress }
+    await g.write(entry.spreadsheet_id, { cells: [{ tabTitle: tab.title, row: place.row, ...cell }] })
+    const at = new Date(deps().now()).toISOString()
+    await c.env.DB.batch([
+      c.env.DB.prepare(`UPDATE station_log SET detail_json = json_set(detail_json, '$.restoredAt', ?2) WHERE id = ?1`).bind(entry.id, at),
+      c.env.DB.prepare(
+        `INSERT INTO audit_log (at, actor_id, action, entity_type, entity_id, workbook_id, details_json) VALUES (?1, ?2, 'station.conflict.restore', 'station_link', ?3, NULL, ?4)`,
+      ).bind(at, callerOf(c).id, linkId, JSON.stringify({ logId: entry.id, field: detail.field })),
+    ])
+    await requestRun(c.env, linkId, 'manual')
+    return c.json({ ok: true })
   })
 
   routes.get('/names', async (c) => {

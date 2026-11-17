@@ -48,7 +48,9 @@ export interface LinkDetail {
   projectUrl: string | null
   tabs: { google_sheet_id: number; title: string; bc_todolist_id: number | null }[]
   problems: { key: string; alert: StationAlert; firstSeen: string; emailedAt: string | null }[]
-  log: { at: string; direction: 'to_basecamp' | 'to_sheet'; action: string; task_uid: string | null; detail_json: string | null }[]
+  /** Subtasks deleted from Basecamp for good, newest first (their snapshots are kept). */
+  deleted: { id: number; title: string; dueOn: string | null; completed: boolean; deletedAt: string; restoredAt: string | null }[]
+  log: { id: number; at: string; direction: 'to_basecamp' | 'to_sheet'; action: string; task_uid: string | null; detail_json: string | null }[]
 }
 
 export interface NamesResponse {
@@ -108,6 +110,8 @@ export const stationApi = {
   updateLink: (id: string, body: { state?: 'active' | 'paused'; rolesTab?: string }) => request<object>('PATCH', linkPath(id), body),
   deleteLink: (id: string) => request<object>('DELETE', linkPath(id)),
   syncNow: (id: string) => request<object>('POST', `${linkPath(id)}/sync`),
+  restoreDeleted: (id: string, n: number) => request<object>('POST', `${linkPath(id)}/deleted/${n}/restore`),
+  restoreConflict: (id: string, n: number) => request<object>('POST', `${linkPath(id)}/conflicts/${n}/restore`),
   names: (signal?: AbortSignal) => request<NamesResponse>('GET', '/api/station/names', undefined, signal),
   putName: (name: string, bcPersonId: number) => request<object>('PUT', '/api/station/names', { name, bcPersonId }),
   deleteName: (name: string) => request<object>('DELETE', `/api/station/names?${new URLSearchParams({ name }).toString()}`),
