@@ -189,6 +189,21 @@ describe('sheet → Basecamp', () => {
     expect(w.fake.todos.get(events.id)!.status).toBe('trashed')
   })
 
+  it('lets go of a row deleted from the sheet whose to-do is already gone from Basecamp', async () => {
+    const w = await world(SOCIAL)
+    await w.run()
+    const events = w.todos().find((t) => t.content === 'المناسبات')!
+    w.fake.todos.delete(events.id)
+    await w.run()
+    // The row (and its subtask row) is then deleted from the sheet: no error, nothing left to do.
+    w.sheet.deleteRows(TAB, 4, 2)
+    const report = await w.run()
+    expect(report.status).toBe('ok')
+    const again = await w.run()
+    expect(again.status).toBe('ok')
+    expect(again.deleted).toBe(0)
+  })
+
   it('never deletes when a tab reads empty', async () => {
     const w = await world(SOCIAL)
     await w.run()

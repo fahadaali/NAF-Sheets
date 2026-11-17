@@ -397,7 +397,12 @@ export async function syncLink(linkId: string, deps: RunDeps): Promise<RunReport
       const plan = planDeletion(requests)
       if (!plan.ok) throw new Error(`station: deletion plan refused: ${plan.error.message}`)
       for (const action of plan.value) {
-        if (action.type === 'trash_todo') await basecamp.todos.trash(token, action.todoId)
+        if (action.type === 'trash_todo') {
+          // Already gone from Basecamp (deleted there, or purged from its trash): nothing left to trash.
+          await basecamp.todos.trash(token, action.todoId).catch((error: unknown) => {
+            if (!(error instanceof NotFoundError)) throw error
+          })
+        }
         if (action.type === 'delete_subtask') {
           await db
             .prepare(`INSERT INTO station_deleted (uid, link_id, bc_type, bc_id, snapshot_json, deleted_at) VALUES (?1, ?2, 'subtask', ?3, ?4, ?5)`)
