@@ -61,9 +61,11 @@ describe('setup status', () => {
 })
 
 describe('wizard and links', () => {
-  it('inspects a file: linkable tabs with counts, others with the reason', async () => {
+  it('inspects a file (admin only): linkable tabs with counts, others with the reason', async () => {
     const s = await setup()
-    const res = await call(s.app, 'GET', `/api/station/inspect?source=${encodeURIComponent(`https://docs.google.com/spreadsheets/d/${SID}/edit?usp=sharing`)}`, { user: s.viewer, env: s.h.env })
+    const path = `/api/station/inspect?source=${encodeURIComponent(`https://docs.google.com/spreadsheets/d/${SID}/edit?usp=sharing`)}`
+    expect((await call(s.app, 'GET', path, { user: s.viewer, env: s.h.env })).status).toBe(403)
+    const res = await call(s.app, 'GET', path, { user: s.admin, env: s.h.env })
     expect(res.status).toBe(200)
     const body = await json<{ spreadsheetId: string; hasRolesTab: boolean; tabs: { title: string; linkable: boolean; todos?: number; subtasks?: number; reason?: string }[] }>(res)
     expect(body.spreadsheetId).toBe(SID)
